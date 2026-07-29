@@ -56,12 +56,27 @@ export type MaintenanceClaim =
       storageKey: string;
       thumbnailKey?: string;
       removePhysical: boolean;
+      removeThumbnail: boolean;
     }
   | {
       kind: "migration";
       migrationId: string;
       entryId: string;
       galleryKind: "image" | "uploader";
+      targetStorageKind: "shared" | "user";
+      targetStorageRoot: string;
+      targetFolderSegments: string[];
+      fileName: string;
+      sourceStorageKey: string;
+      sourceThumbnailKey?: string;
+      sha256: string;
+      extension: string;
+    }
+  | {
+      kind: "entryMove";
+      jobId: string;
+      entryId: string;
+      galleryKind: "image";
       targetStorageKind: "shared" | "user";
       targetStorageRoot: string;
       targetFolderSegments: string[];

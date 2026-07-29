@@ -10,7 +10,7 @@ The implementation is split deliberately:
 - The Node storage API streams shared/protected files to hash-sharded mounts
   and serves protected uploader downloads. A separate process from the same
   image claims durable Convex jobs for user-backed reconciliation,
-  image/video thumbnails, bounded EXIF extraction, deletion, and migration.
+  image/video thumbnails, bounded media metadata extraction, deletion, and migration.
 - Nginx serves the React application and image-gallery originals directly from
   the public mounts. Protected uploader storage is never mounted into an Nginx
   location.
@@ -27,13 +27,19 @@ gallery-level CSS variables plus an owner-supplied scoped CSS override.
 Requirements: Node.js 24+, pnpm 11+, and `ffmpeg` if video thumbnails are
 required locally.
 
-Provision or select a Convex deployment first. Upgallery's development and
-Compose commands expect it to exist; they do not start or manage a Convex
-instance. Configure the Convex CLI for that deployment, then install packages:
+Install packages, then configure the Convex CLI for a local development
+deployment if this checkout does not already have one:
 
 ```bash
 pnpm install
+pnpm convex:dev --once
 ```
+
+The one-time Convex command creates or selects the local deployment and writes
+its selector to the ignored local environment configuration. After that,
+`pnpm dev` starts `convex dev` alongside Vite and both storage processes, so
+the local Convex backend, function deployment, code generation, and file
+watching are part of the normal development command.
 
 Put the selected deployment values in `.env.local`, with exactly one copy of
 each browser variable:
@@ -89,15 +95,19 @@ this exact Authorized redirect URI:
 http://localhost:3211/auth/google/callback
 ```
 
-Then start the web, storage API, and storage worker:
+Then start the local Convex development deployment, web server, storage API,
+and storage worker:
 
 ```bash
 pnpm dev
 ```
 
 The web UI is at `http://localhost:5173`; the local storage API is proxied
-automatically. The worker waits and retries when the configured Convex HTTP
-Actions service is temporarily unavailable.
+automatically. The worker waits and retries when the local Convex HTTP Actions
+service is temporarily unavailable.
+
+Docker and Compose remain deployment-only concerns: they consume an externally
+provisioned Convex deployment and do not create or manage Convex containers.
 
 Vite reads browser variables only at startup, so restart `pnpm dev` after
 changing `.env.local`. The browser origin must also exactly match `SITE_URL`;

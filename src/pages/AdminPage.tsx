@@ -76,12 +76,7 @@ export function AdminPage() {
           ) : (
             <p>Create a gallery to get started.</p>
           )}
-          {profile.isSystemAdmin ? (
-            <>
-              <SystemUsers />
-              <FileIconAdmin />
-            </>
-          ) : null}
+          {profile.isSystemAdmin ? <SystemUsers /> : null}
         </section>
       </div>
     </PageFrame>
@@ -219,6 +214,8 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         </form>
       </Section>
 
+      <FileIconAdmin galleryId={gallery._id} setMessage={setMessage} />
+
       <Section title="Permissions">
         <form
           className={styles.inlineForm}
@@ -317,34 +314,71 @@ function SystemUsers() {
   );
 }
 
-function FileIconAdmin() {
-  const icons = useQuery(api.fileTypeIcons.list);
+function FileIconAdmin(props: {
+  galleryId: Id<"galleries">;
+  setMessage: (value: string) => void;
+}) {
+  const icons = useQuery(api.fileTypeIcons.list, {
+    galleryId: props.galleryId,
+  });
   const upsert = useMutation(api.fileTypeIcons.upsert);
   const remove = useMutation(api.fileTypeIcons.remove);
   if (icons === undefined) return null;
   return (
     <Section title="File-type thumbnails">
+      <p>
+        Add an override for this gallery. Removing it restores the bundled
+        default.
+      </p>
       <form
         className={styles.inlineForm}
         onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           void upsert({
+            galleryId: props.galleryId,
             extension: String(data.get("extension")),
             label: String(data.get("label")),
             icon: String(data.get("icon")),
             thumbnailUrl: String(data.get("thumbnailUrl") || "") || undefined,
-          }).then(() => event.currentTarget.reset());
+          })
+            .then(() => {
+              event.currentTarget.reset();
+              props.setMessage("File-type override saved");
+            })
+            .catch(showError(props.setMessage));
         }}
       >
         <input name="extension" placeholder="ext" required />
         <input name="label" placeholder="Label" required />
-        <input name="icon" placeholder="Icon/text" required />
+        <input name="icon" placeholder="Text fallback" required />
         <input name="thumbnailUrl" placeholder="Optional thumbnail URL" />
         <button type="submit">Save</button>
       </form>
       <div className={styles.rows}>
-        {icons.map((icon) => <div className={styles.row} key={icon._id}><span>.{icon.extension} · {icon.icon} · {icon.label}</span><span>{icon.thumbnailUrl ?? "hardcoded fallback"}</span><button type="button" onClick={() => void remove({ iconId: icon._id })}>Remove</button></div>)}
+        {icons.map((icon) => (
+          <div className={styles.row} key={icon._id}>
+            <span className={styles.iconSummary}>
+              {icon.thumbnailUrl ? (
+                <img src={icon.thumbnailUrl} alt="" />
+              ) : (
+                <span className={styles.iconText}>{icon.icon}</span>
+              )}
+              <span>.{icon.extension} · {icon.label}</span>
+            </span>
+            <span>{icon.thumbnailUrl ?? "Text-only override"}</span>
+            <button
+              type="button"
+              onClick={() =>
+                void remove({ iconId: icon._id })
+                  .then(() => props.setMessage("Default restored"))
+                  .catch(showError(props.setMessage))
+              }
+            >
+              Restore default
+            </button>
+          </div>
+        ))}
       </div>
     </Section>
   );

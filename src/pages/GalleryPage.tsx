@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -6,6 +12,11 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import {
+  MoveIcon,
+  SelectListIcon,
+  TrashIcon,
+} from "../components/ActionIcons";
 import { publicMediaUrl, formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
 import { friendlyError } from "../lib/errors";
@@ -27,12 +38,24 @@ export function GalleryPage(props: {
   });
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
+  const removeEntries = useMutation(api.entries.removeMany);
+  const moveEntries = useMutation(api.entries.moveMany);
   const fileInput = useRef<HTMLInputElement>(null);
+  const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
   const { upload, uploading, error } = useUpload();
   const [folderDialog, setFolderDialog] = useState<"create" | "settings" | null>(
     null,
   );
   const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedEntryIds, setSelectedEntryIds] = useState<
+    Set<Id<"entries">>
+  >(new Set());
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [moveDialog, setMoveDialog] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
+  const [draggingEntries, setDraggingEntries] = useState(false);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -62,12 +85,34 @@ export function GalleryPage(props: {
   };
 
   useEffect(() => {
-    if (!listing?.access.canUpload) return;
+    if (!listing?.access.canUpload && !selectMode) return;
     const onDragOver = (event: DragEvent) => {
+      if (
+        selectMode &&
+        event.dataTransfer?.types.includes(
+          "application/x-upgallery-entry-ids",
+        )
+      ) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        return;
+      }
+      if (!listing?.access.canUpload) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
     };
     const onDrop = (event: DragEvent) => {
+      if (
+        event.dataTransfer?.types.includes(
+          "application/x-upgallery-entry-ids",
+        )
+      ) {
+        event.preventDefault();
+        draggedEntryIds.current = [];
+        setDraggingEntries(false);
+        return;
+      }
+      if (!listing?.access.canUpload) return;
       event.preventDefault();
       if (event.dataTransfer?.files.length) {
         void uploadFiles(event.dataTransfer.files);
@@ -90,14 +135,105 @@ export function GalleryPage(props: {
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("paste", onPaste);
     };
-  }, [listing?.access.canUpload, folderId]);
+  }, [listing?.access.canUpload, folderId, selectMode]);
+
+  useEffect(() => {
+    setSelectedEntryIds(new Set());
+    setDeleteDialog(false);
+    setMoveDialog(false);
+  }, [folderId]);
+
+  useEffect(() => {
+    if (listing === undefined) return;
+    const available = new Set(listing.entries.map((entry) => entry._id));
+    setSelectedEntryIds((current) => {
+      const next = new Set([...current].filter((id) => available.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [listing]);
 
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
   }
 
+  const selectedIds = [...selectedEntryIds];
+
+  const queueMove = async (
+    entryIds: Array<Id<"entries">>,
+    destinationGalleryId: Id<"galleries">,
+    destinationFolderId: Id<"folders">,
+  ) => {
+    if (entryIds.length === 0) return;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const result = await moveEntries({
+        sourceGalleryId: props.gallery._id,
+        destinationGalleryId,
+        destinationFolderId,
+        entryIds,
+      });
+      setSelectedEntryIds(new Set());
+      setMoveDialog(false);
+      setNotice(
+        result.queued === 0
+          ? "The selected files are already in that folder."
+          : `${result.queued} file${result.queued === 1 ? "" : "s"} queued to move.`,
+      );
+    } catch (reason) {
+      setActionError(friendlyError(reason, "Could not move the selected files"));
+      throw reason;
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const dropSelectedEntries = (
+    event: ReactDragEvent<HTMLElement>,
+    destinationGalleryId: Id<"galleries">,
+    destinationFolderId: Id<"folders">,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const transferred = event.dataTransfer.getData(
+      "application/x-upgallery-entry-ids",
+    );
+    let entryIds = draggedEntryIds.current;
+    if (entryIds.length === 0 && transferred) {
+      try {
+        entryIds = JSON.parse(transferred) as Array<Id<"entries">>;
+      } catch {
+        entryIds = [];
+      }
+    }
+    draggedEntryIds.current = [];
+    setDraggingEntries(false);
+    void queueMove(
+      entryIds,
+      destinationGalleryId,
+      destinationFolderId,
+    ).catch(() => undefined);
+  };
+
   const breadcrumbs = listing.breadcrumbs.map((crumb, index) => (
-    <span key={crumb._id}>
+    <span
+      className={draggingEntries ? styles.breadcrumbDropTarget : undefined}
+      key={crumb._id}
+      onDragOver={
+        selectMode
+          ? (event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }
+          : undefined
+      }
+      onDrop={
+        selectMode
+          ? (event) =>
+              dropSelectedEntries(event, props.gallery._id, crumb._id)
+          : undefined
+      }
+    >
       {index > 0 ? <span className={layout.separator}>/</span> : null}
       <Link to={crumb._id === props.rootFolder._id ? "?" : `?folder=${crumb._id}`}>
         {crumb.name}
@@ -127,26 +263,92 @@ export function GalleryPage(props: {
               }}
             />
             <button className={layout.iconButton} type="button" onClick={() => fileInput.current?.click()} aria-label="Upload files" title="Upload files">↑</button>
-              <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("create")} aria-label="New folder" title="New folder">＋</button>
-            {listing.access.canEditFolder ? (
-              <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("settings")} aria-label="Folder settings" title="Folder settings">⚙</button>
+            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("create")} aria-label="New folder" title="New folder">＋</button>
+            </>
+          ) : null}
+          {listing.access.canManage ? (
+            <>
+              <button
+                className={`${layout.iconButton} ${selectMode ? styles.activeAction : ""}`}
+                type="button"
+                onClick={() => {
+                  setSelectMode((current) => !current);
+                  setSelectedEntryIds(new Set());
+                  setDeleteDialog(false);
+                  setMoveDialog(false);
+                }}
+                aria-label={selectMode ? "Exit select mode" : "Enter select mode"}
+                aria-pressed={selectMode}
+                title={selectMode ? "Exit select mode" : "Select files"}
+              >
+                <SelectListIcon />
+              </button>
+              {selectMode && selectedIds.length > 0 ? (
+                <>
+                  <button
+                    className={layout.iconButton}
+                    type="button"
+                    onClick={() => setDeleteDialog(true)}
+                    aria-label={`Delete ${selectedIds.length} selected files`}
+                    title="Delete selected"
+                  >
+                    <TrashIcon />
+                  </button>
+                  <button
+                    className={layout.iconButton}
+                    type="button"
+                    onClick={() => setMoveDialog(true)}
+                    aria-label={`Move ${selectedIds.length} selected files`}
+                    title="Move to…"
+                  >
+                    <MoveIcon />
+                  </button>
+                </>
               ) : null}
             </>
+          ) : null}
+          {listing.access.canEditFolder ? (
+            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("settings")} aria-label="Folder settings" title="Folder settings">⚙</button>
           ) : null}
         </>
       }
     >
-      {(uploading || error || notice) && (
-        <div className={error ? layout.errorNotice : layout.notice}>
-          {error ?? notice ?? "Uploading…"}
+      {(uploading || error || actionError || notice) && (
+        <div className={error || actionError ? layout.errorNotice : layout.notice}>
+          {error ?? actionError ?? notice ?? "Uploading…"}
         </div>
       )}
+      {selectMode ? (
+        <p className={styles.selectionHint}>
+          {selectedIds.length === 0
+            ? "Select files, then delete, move, or drag them onto a folder."
+            : `${selectedIds.length} selected`}
+        </p>
+      ) : null}
       <div className={styles.grid}>
         {listing.folders.map((folder) => (
           <Link
-            className={styles.folderCard}
+            className={`${styles.folderCard} ${draggingEntries ? styles.folderDropTarget : ""}`}
             key={folder._id}
             to={`?folder=${folder._id}`}
+            onDragOver={
+              selectMode
+                ? (event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }
+                : undefined
+            }
+            onDrop={
+              selectMode
+                ? (event) =>
+                    dropSelectedEntries(
+                      event,
+                      props.gallery._id,
+                      folder._id,
+                    )
+                : undefined
+            }
           >
             <span className={styles.folderIcon}>▰</span>
             <span>{folder.name}</span>
@@ -156,39 +358,39 @@ export function GalleryPage(props: {
           </Link>
         ))}
         {listing.entries.map((entry) => (
-          <a
-            className={styles.fileCard}
-            href={publicMediaUrl(
-              entry.storageKey,
-              entry.filesystemModifiedAt,
-            )}
+          <GalleryEntryCard
             key={entry._id}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {entry.thumbnailKey ? (
-              <img
-                className={styles.fileThumb}
-                src={publicMediaUrl(entry.thumbnailKey)}
-                alt=""
-                loading="lazy"
-              />
-            ) : entry.mediaKind === "image" ? (
-              <img
-                className={styles.fileThumb}
-                src={publicMediaUrl(
-                  entry.storageKey,
-                  entry.filesystemModifiedAt,
-                )}
-                alt=""
-                loading="lazy"
-              />
-            ) : (
-              <FileGlyph extension={entry.extension} />
-            )}
-            <span className={styles.fileName}>{entry.name}</span>
-            <small>{formatBytes(entry.size)}</small>
-          </a>
+            entry={entry}
+            selectMode={selectMode}
+            selected={selectedEntryIds.has(entry._id)}
+            onToggle={() => {
+              setSelectedEntryIds((current) => {
+                const next = new Set(current);
+                if (next.has(entry._id)) next.delete(entry._id);
+                else next.add(entry._id);
+                return next;
+              });
+            }}
+            onDragStart={(event) => {
+              const ids = selectedEntryIds.has(entry._id)
+                ? selectedIds
+                : [entry._id];
+              if (!selectedEntryIds.has(entry._id)) {
+                setSelectedEntryIds(new Set(ids));
+              }
+              draggedEntryIds.current = ids;
+              setDraggingEntries(true);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData(
+                "application/x-upgallery-entry-ids",
+                JSON.stringify(ids),
+              );
+            }}
+            onDragEnd={() => {
+              draggedEntryIds.current = [];
+              setDraggingEntries(false);
+            }}
+          />
         ))}
       </div>
       {listing.folders.length === 0 && listing.entries.length === 0 ? (
@@ -228,7 +430,309 @@ export function GalleryPage(props: {
           }}
         />
       ) : null}
+      {deleteDialog ? (
+        <Dialog
+          title="Delete selected files?"
+          onClose={() => {
+            if (!actionPending) setDeleteDialog(false);
+          }}
+        >
+          <form
+            className={layout.form}
+            onSubmit={(event) => {
+              event.preventDefault();
+              setActionPending(true);
+              setActionError(null);
+              void removeEntries({
+                galleryId: props.gallery._id,
+                entryIds: selectedIds,
+              })
+                .then((result) => {
+                  setSelectedEntryIds(new Set());
+                  setDeleteDialog(false);
+                  setNotice(
+                    `${result.removed} file${result.removed === 1 ? "" : "s"} deleted.`,
+                  );
+                })
+                .catch((reason: unknown) => {
+                  setActionError(
+                    friendlyError(
+                      reason,
+                      "Could not delete the selected files",
+                    ),
+                  );
+                })
+                .finally(() => setActionPending(false));
+            }}
+          >
+            <p className={styles.deletePrompt}>
+              Delete {selectedIds.length} selected file
+              {selectedIds.length === 1 ? "" : "s"}? This cannot be undone.
+            </p>
+            <div className={layout.buttonRow}>
+              <button
+                type="button"
+                onClick={() => setDeleteDialog(false)}
+                disabled={actionPending}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmDeleteButton}
+                type="submit"
+                disabled={actionPending}
+              >
+                {actionPending ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      ) : null}
+      {moveDialog ? (
+        <MoveDialog
+          currentGalleryId={props.gallery._id}
+          selectedCount={selectedIds.length}
+          pending={actionPending}
+          onClose={() => {
+            if (!actionPending) setMoveDialog(false);
+          }}
+          onMove={(destinationGalleryId, destinationFolderId) =>
+            queueMove(
+              selectedIds,
+              destinationGalleryId,
+              destinationFolderId,
+            )
+          }
+        />
+      ) : null}
     </PageFrame>
+  );
+}
+
+function GalleryEntryCard(props: {
+  entry: Doc<"entries">;
+  selectMode: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onDragStart: (event: ReactDragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+}) {
+  const content = (
+    <>
+      <span className={styles.thumbnailFrame}>
+        {props.entry.thumbnailKey ? (
+          <img
+            className={styles.fileThumb}
+            src={publicMediaUrl(props.entry.thumbnailKey)}
+            alt=""
+            loading="lazy"
+          />
+        ) : props.entry.mediaKind === "image" ? (
+          <img
+            className={styles.fileThumb}
+            src={publicMediaUrl(
+              props.entry.storageKey,
+              props.entry.filesystemModifiedAt,
+            )}
+            alt=""
+            loading="lazy"
+          />
+        ) : (
+          <FileGlyph
+            extension={props.entry.extension}
+            galleryId={props.entry.galleryId}
+          />
+        )}
+        {props.selectMode ? (
+          <span
+            className={`${styles.selectCircle} ${props.selected ? styles.selectCircleChecked : ""}`}
+            aria-hidden="true"
+          >
+            {props.selected ? "✓" : ""}
+          </span>
+        ) : null}
+      </span>
+      <span className={styles.fileName}>{props.entry.name}</span>
+      <small>{formatBytes(props.entry.size)}</small>
+    </>
+  );
+  return (
+    <article
+      className={`${styles.fileCard} ${props.selected ? styles.selectedCard : ""}`}
+      draggable={props.selectMode}
+      onDragStart={props.selectMode ? props.onDragStart : undefined}
+      onDragEnd={props.selectMode ? props.onDragEnd : undefined}
+    >
+      {props.selectMode ? (
+        <button
+          className={styles.fileCardContent}
+          type="button"
+          onClick={props.onToggle}
+          aria-label={`${props.selected ? "Deselect" : "Select"} ${props.entry.name}`}
+          aria-pressed={props.selected}
+        >
+          {content}
+        </button>
+      ) : (
+        <a
+          className={styles.fileCardContent}
+          href={publicMediaUrl(
+            props.entry.storageKey,
+            props.entry.filesystemModifiedAt,
+          )}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {content}
+        </a>
+      )}
+    </article>
+  );
+}
+
+function MoveDialog(props: {
+  currentGalleryId: Id<"galleries">;
+  selectedCount: number;
+  pending: boolean;
+  onClose: () => void;
+  onMove: (
+    galleryId: Id<"galleries">,
+    folderId: Id<"folders">,
+  ) => Promise<void>;
+}) {
+  const galleries = useQuery(api.galleries.listOwnedImageGalleries);
+  const [galleryId, setGalleryId] = useState<Id<"galleries"> | null>(null);
+  const [folderId, setFolderId] = useState<Id<"folders"> | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const folders = useQuery(
+    api.folders.listOwnedMoveDestinations,
+    galleryId === null ? "skip" : { galleryId },
+  );
+
+  useEffect(() => {
+    if (galleries === undefined || galleries.length === 0) return;
+    if (
+      galleryId !== null &&
+      galleries.some((gallery) => gallery._id === galleryId)
+    ) {
+      return;
+    }
+    const initial =
+      galleries.find((gallery) => gallery._id === props.currentGalleryId) ??
+      galleries[0];
+    setGalleryId(initial._id);
+    setFolderId(initial.rootFolderId);
+  }, [galleries, galleryId, props.currentGalleryId]);
+
+  useEffect(() => {
+    if (galleryId === null || galleries === undefined) return;
+    const gallery = galleries.find((candidate) => candidate._id === galleryId);
+    if (gallery !== undefined) setFolderId(gallery.rootFolderId);
+  }, [galleryId, galleries]);
+
+  const orderedFolders = useMemo(() => {
+    if (folders === undefined || galleryId === null) return [];
+    const gallery = galleries?.find((candidate) => candidate._id === galleryId);
+    if (gallery === undefined) return [];
+    const children = new Map<string, typeof folders>();
+    for (const folder of folders) {
+      const key = folder.parentId ?? "";
+      children.set(key, [...(children.get(key) ?? []), folder]);
+    }
+    for (const group of children.values()) {
+      group.sort((left, right) => left.name.localeCompare(right.name));
+    }
+    const ordered: typeof folders = [];
+    const visit = (parentId: string) => {
+      for (const folder of children.get(parentId) ?? []) {
+        ordered.push(folder);
+        visit(folder._id);
+      }
+    };
+    const root = folders.find(
+      (folder) => folder._id === gallery.rootFolderId,
+    );
+    if (root !== undefined) {
+      ordered.push(root);
+      visit(root._id);
+    }
+    return ordered;
+  }, [folders, galleries, galleryId]);
+
+  return (
+    <Dialog title={`Move ${props.selectedCount} selected file${props.selectedCount === 1 ? "" : "s"}`} onClose={props.onClose}>
+      <form
+        className={layout.form}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (galleryId === null || folderId === null) return;
+          setDialogError(null);
+          void props.onMove(galleryId, folderId).catch((reason: unknown) => {
+            setDialogError(
+              friendlyError(reason, "Could not move the selected files"),
+            );
+          });
+        }}
+      >
+        <div className={styles.movePicker}>
+          <section className={styles.moveColumn}>
+            <h3>Gallery</h3>
+            <div className={styles.moveOptions}>
+              {galleries?.map((gallery) => (
+                <button
+                  className={gallery._id === galleryId ? styles.moveOptionSelected : ""}
+                  type="button"
+                  key={gallery._id}
+                  onClick={() => setGalleryId(gallery._id)}
+                  aria-pressed={gallery._id === galleryId}
+                >
+                  {gallery.name}
+                </button>
+              ))}
+              {galleries?.length === 0 ? (
+                <p>No owned image galleries are available.</p>
+              ) : null}
+            </div>
+          </section>
+          <section className={styles.moveColumn}>
+            <h3>Folder</h3>
+            <div className={styles.moveOptions}>
+              {orderedFolders.map((folder) => (
+                <button
+                  className={folder._id === folderId ? styles.moveOptionSelected : ""}
+                  style={{
+                    paddingInlineStart: `${0.55 + folder.ancestorIds.length * 0.8}rem`,
+                  }}
+                  type="button"
+                  key={folder._id}
+                  onClick={() => setFolderId(folder._id)}
+                  aria-pressed={folder._id === folderId}
+                >
+                  {folder.name}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+        {dialogError ? <p className={layout.formError}>{dialogError}</p> : null}
+        <div className={layout.buttonRow}>
+          <button type="button" onClick={props.onClose} disabled={props.pending}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={
+              props.pending ||
+              galleryId === null ||
+              folderId === null ||
+              galleries?.length === 0
+            }
+          >
+            {props.pending ? "Moving…" : "Move here"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

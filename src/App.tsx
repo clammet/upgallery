@@ -2,8 +2,11 @@ import { useEffect, useRef } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import { getOrCreateAnonymousClaim } from "./lib/anonymousClaim";
+import { uploaderFileEntryId } from "./lib/uploaderRoutes";
 import { GalleryPage } from "./pages/GalleryPage";
+import { UploaderFilePage } from "./pages/UploaderFilePage";
 import { UploaderPage } from "./pages/UploaderPage";
 import { AdminPage } from "./pages/AdminPage";
 import { PageFrame } from "./components/PageFrame";
@@ -18,6 +21,10 @@ export function App() {
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route path="/admin/*" element={<AdminPage />} />
         <Route path="/g/:slug" element={<SlugGallery expectedKind="image" />} />
+        <Route
+          path="/up/:slug/files/:entryId/:fileName?"
+          element={<SlugUploaderFile />}
+        />
         <Route path="/up/:slug" element={<SlugGallery expectedKind="uploader" />} />
         <Route path="*" element={<HostGallery />} />
       </Routes>
@@ -65,7 +72,33 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
   return resolved.gallery.kind === "image" ? (
     <GalleryPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
   ) : (
-    <UploaderPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
+    <UploaderPage
+      gallery={resolved.gallery}
+      rootFolder={resolved.rootFolder}
+      routeRoot={`/up/${resolved.gallery.slug}`}
+    />
+  );
+}
+
+function SlugUploaderFile() {
+  const { slug = "", entryId = "" } = useParams();
+  const resolved = useQuery(api.galleries.resolveBySlug, {
+    slug,
+    anonymousClaim: getOrCreateAnonymousClaim(),
+  });
+  if (resolved === undefined) return <Loading />;
+  if (
+    resolved === null ||
+    resolved.rootFolder === null ||
+    resolved.gallery.kind !== "uploader"
+  ) {
+    return <NotFound />;
+  }
+  return (
+    <UploaderFilePage
+      gallery={resolved.gallery}
+      entryId={entryId as Id<"entries">}
+    />
   );
 }
 
@@ -80,10 +113,26 @@ function HostGallery() {
   if (resolved === null || resolved.rootFolder === null) {
     return <Landing />;
   }
+  const servedEntryId =
+    resolved.gallery.kind === "uploader"
+      ? uploaderFileEntryId(location.pathname, resolved.routeRoot)
+      : null;
+  if (servedEntryId !== null) {
+    return (
+      <UploaderFilePage
+        gallery={resolved.gallery}
+        entryId={servedEntryId as Id<"entries">}
+      />
+    );
+  }
   return resolved.gallery.kind === "image" ? (
     <GalleryPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
   ) : (
-    <UploaderPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
+    <UploaderPage
+      gallery={resolved.gallery}
+      rootFolder={resolved.rootFolder}
+      routeRoot={resolved.routeRoot}
+    />
   );
 }
 

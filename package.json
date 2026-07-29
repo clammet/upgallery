@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n web,storage-api,storage-worker \"vite\" \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
+    "dev": "concurrently -k -n convex,web,storage-api,storage-worker \"convex dev\" \"vite\" \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
     "dev:web": "vite",
     "dev:storage": "concurrently -k -n storage-api,storage-worker \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
     "dev:storage-api": "tsx watch --env-file=.env.storage.local storage/server.ts",

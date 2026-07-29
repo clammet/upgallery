@@ -254,6 +254,55 @@ export const listManaged = query({
   },
 });
 
+export const listOwnedImageGalleries = query({
+  args: {},
+  handler: async (ctx) => {
+    const profile = await getCurrentProfile(ctx);
+    if (profile === null) {
+      return [];
+    }
+    let galleries: Array<Doc<"galleries">>;
+    if (profile.isSystemAdmin) {
+      galleries = await ctx.db.query("galleries").order("desc").take(200);
+    } else {
+      const grants = await ctx.db
+        .query("galleryRoles")
+        .withIndex("by_profileId", (q) => q.eq("profileId", profile._id))
+        .take(256);
+      const galleryIds = [
+        ...new Set(
+          grants
+            .filter(
+              (grant) =>
+                grant.role === "owner" && grant.folderId === undefined,
+            )
+            .map((grant) => grant.galleryId),
+        ),
+      ];
+      galleries = [];
+      for (const galleryId of galleryIds.slice(0, 100)) {
+        const gallery = await ctx.db.get("galleries", galleryId);
+        if (gallery !== null) {
+          galleries.push(gallery);
+        }
+      }
+    }
+    return galleries
+      .filter(
+        (gallery) =>
+          gallery.kind === "image" &&
+          gallery.deletedAt === undefined &&
+          gallery.pendingMigrationId === undefined &&
+          gallery.rootFolderId !== undefined,
+      )
+      .map((gallery) => ({
+        _id: gallery._id,
+        name: gallery.name,
+        rootFolderId: gallery.rootFolderId!,
+      }));
+  },
+});
+
 export const adminDetails = query({
   args: { galleryId: v.id("galleries") },
   handler: async (ctx, args) => {

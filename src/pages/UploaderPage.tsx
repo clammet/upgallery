@@ -1,21 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import { TrashIcon } from "../components/ActionIcons";
 import { formatBytes, storageApi } from "../lib/files";
-import { friendlyError } from "../lib/errors";
 import { useUpload } from "../hooks/useUpload";
 import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import {
+  metadataLocation,
+  metadataRows,
+  openStreetMapUrls,
+  parseMetadataJson,
+} from "../lib/metadata";
+import { uploaderFileUrl } from "../lib/uploaderRoutes";
+import { friendlyError } from "../lib/errors";
 import styles from "../styles/uploader.module.css";
-import galleryStyles from "../styles/gallery.module.css";
 import layout from "../styles/layout.module.css";
 
 export function UploaderPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
+  routeRoot: string;
 }) {
   const listing = useQuery(api.folders.list, {
     anonymousClaim: getOrCreateAnonymousClaim(),
@@ -26,7 +34,12 @@ export function UploaderPage(props: {
   const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
   const [textPreview, setTextPreview] = useState<string | null>(null);
-  const [exif, setExif] = useState<string | null>(null);
+  const [metadataJson, setMetadataJson] = useState<string | null>(null);
+  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
+  const thumbnailRequest = useRef("");
+  const createThumbnailTickets = useMutation(
+    api.entries.createThumbnailTickets,
+  );
   const { upload, uploading, error } = useUpload();
   const previewUrl = useMemo(
     () => (file?.type.startsWith("image/") ? URL.createObjectURL(file) : null),
@@ -82,6 +95,50 @@ export function UploaderPage(props: {
     };
   }, []);
 
+  const thumbnailEntryIds =
+    listing?.entries
+      .filter(
+        (entry) =>
+          entry.thumbnailKey !== undefined && !entry.passwordProtected,
+      )
+      .map((entry) => entry._id) ?? [];
+  const thumbnailRequestKey = `${props.gallery._id}:${props.rootFolder._id}:${thumbnailEntryIds.join(",")}`;
+
+  useEffect(() => {
+    if (listing === undefined || thumbnailRequest.current === thumbnailRequestKey) {
+      return;
+    }
+    thumbnailRequest.current = thumbnailRequestKey;
+    if (thumbnailEntryIds.length === 0) {
+      setThumbnailUrls({});
+      return;
+    }
+    void createThumbnailTickets({
+      anonymousClaim: getOrCreateAnonymousClaim(),
+      galleryId: props.gallery._id,
+      folderId: props.rootFolder._id,
+      entryIds: thumbnailEntryIds,
+    })
+      .then((tickets) => {
+        if (thumbnailRequest.current !== thumbnailRequestKey) return;
+        setThumbnailUrls(
+          Object.fromEntries(
+            tickets.map(({ entryId, token }) => [
+              entryId,
+              storageApi(
+                `/api/storage/files/${entryId}?ticket=${encodeURIComponent(token)}`,
+              ),
+            ]),
+          ),
+        );
+      })
+      .catch(() => {
+        if (thumbnailRequest.current === thumbnailRequestKey) {
+          setThumbnailUrls({});
+        }
+      });
+  }, [createThumbnailTickets, thumbnailRequestKey]);
+
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
   }
@@ -136,14 +193,19 @@ export function UploaderPage(props: {
           <UploaderEntry
             key={entry._id}
             entry={entry}
-            onExif={() => entry.exifJson && setExif(entry.exifJson)}
+            routeRoot={props.routeRoot}
+            thumbnailUrl={thumbnailUrls[entry._id]}
+            onMetadata={() =>
+              entry.metadataJson && setMetadataJson(entry.metadataJson)
+            }
           />
         ))}
       </div>
-      {exif ? (
-        <Dialog title="EXIF metadata" onClose={() => setExif(null)}>
-          <pre className={styles.exif}>{JSON.stringify(JSON.parse(exif), null, 2)}</pre>
-        </Dialog>
+      {metadataJson ? (
+        <MetadataDialog
+          metadataJson={metadataJson}
+          onClose={() => setMetadataJson(null)}
+        />
       ) : null}
     </PageFrame>
   );
@@ -152,88 +214,213 @@ export function UploaderPage(props: {
 function UploaderEntry(props: {
   entry: Doc<"entries"> & {
     passwordProtected: boolean;
+    canDelete: boolean;
     views: number;
-    downloads: number;
   };
-  onExif: () => void;
+  routeRoot: string;
+  thumbnailUrl?: string;
+  onMetadata: () => void;
 }) {
-  const createTicket = useMutation(api.entries.createDownloadTicket);
-  const [error, setError] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [pendingDisposition, setPendingDisposition] = useState<
-    "inline" | "attachment" | null
-  >(null);
-  const open = async (
-    disposition: "inline" | "attachment",
-    suppliedPassword?: string,
-  ) => {
-    const popup = window.open("about:blank", "_blank");
-    try {
-      const { token } = await createTicket({
-        entryId: props.entry._id,
-        password: suppliedPassword || undefined,
-        disposition,
-      });
-      const url = storageApi(
-        `/api/storage/files/${props.entry._id}?ticket=${encodeURIComponent(token)}`,
-      );
-      if (popup) popup.location.href = url;
-      else window.location.href = url;
-      setError(null);
-      setPassword("");
-      setPendingDisposition(null);
-    } catch (reason) {
-      popup?.close();
-      setError(friendlyError(reason, "Could not open file"));
-    }
-  };
+  const removeEntry = useMutation(api.entries.remove);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const fileUrl = uploaderFileUrl(
+    props.routeRoot,
+    props.entry._id,
+    props.entry.name,
+  );
   return (
     <article className={styles.entry}>
-      <div className={galleryStyles.miniGlyph}>
-        <FileGlyph extension={props.entry.extension} />
+      <a
+        className={styles.previewLink}
+        href={fileUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`View ${props.entry.name}`}
+      >
+        <span className={styles.thumbnail}>
+          {props.thumbnailUrl ? (
+            <img src={props.thumbnailUrl} alt="" loading="lazy" />
+          ) : (
+            <FileGlyph
+              extension={props.entry.extension}
+              galleryId={props.entry.galleryId}
+            />
+          )}
+        </span>
+        <span className={styles.viewAction}>View</span>
+      </a>
+      <div className={styles.entryFooter}>
+        <div className={styles.entryTitle}>
+          <a
+            href={fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={props.entry.name}
+          >
+            {props.entry.name}
+          </a>
+          {props.entry.description ? <p>{props.entry.description}</p> : null}
+        </div>
+        <div className={styles.entryMetadata}>
+          <span>{formatBytes(props.entry.size)}</span>
+          <span className={styles.metadataLine}>
+            <span>
+              {props.entry.views} {props.entry.views === 1 ? "view" : "views"}
+            </span>
+            {props.entry.passwordProtected ? (
+              <span title="Password protected" aria-label="Password protected">
+                🔒
+              </span>
+            ) : null}
+            {props.entry.metadataJson ? (
+              <button
+                className={styles.metadataButton}
+                type="button"
+                onClick={props.onMetadata}
+                title="View metadata"
+                aria-label={`View metadata for ${props.entry.name}`}
+              >
+                ⓘ
+              </button>
+            ) : null}
+            {props.entry.canDelete ? (
+              <button
+                className={`${styles.metadataButton} ${styles.deleteButton}`}
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                title="Delete file"
+                aria-label={`Delete ${props.entry.name}`}
+              >
+                <TrashIcon />
+              </button>
+            ) : null}
+          </span>
+        </div>
       </div>
-      <div className={styles.entryDetails}>
-        <strong>{props.entry.name}</strong>
-        {props.entry.description ? <p>{props.entry.description}</p> : null}
-        <small>
-          {formatBytes(props.entry.size)} · {props.entry.views} views ·{" "}
-          {props.entry.downloads} downloads
-          {props.entry.passwordProtected ? " · locked" : ""}
-        </small>
-        {error ? <span className={layout.formError}>{error}</span> : null}
-      </div>
-      <div className={styles.entryActions}>
-        {props.entry.exifJson ? <button type="button" onClick={props.onExif} title="EXIF metadata">ⓘ</button> : null}
-        <button type="button" onClick={() => props.entry.passwordProtected ? setPendingDisposition("inline") : void open("inline")}>View</button>
-        <button type="button" onClick={() => props.entry.passwordProtected ? setPendingDisposition("attachment") : void open("attachment")}>Download</button>
-      </div>
-      {pendingDisposition ? (
+      {confirmDelete ? (
         <Dialog
-          title={pendingDisposition === "inline" ? "View protected file" : "Download protected file"}
-          onClose={() => setPendingDisposition(null)}
+          title="Delete file?"
+          onClose={() => {
+            if (!deleting) {
+              setConfirmDelete(false);
+              setDeleteError(null);
+              setDeletePassword("");
+            }
+          }}
         >
           <form
             className={layout.form}
             onSubmit={(event) => {
               event.preventDefault();
-              void open(pendingDisposition, password);
+              setDeleting(true);
+              setDeleteError(null);
+              void removeEntry({
+                anonymousClaim: getOrCreateAnonymousClaim(),
+                entryId: props.entry._id,
+                password: deletePassword || undefined,
+              })
+                .then(() => setConfirmDelete(false))
+                .catch((reason: unknown) => {
+                  setDeleteError(
+                    friendlyError(reason, "Could not delete the file"),
+                  );
+                })
+                .finally(() => setDeleting(false));
             }}
           >
-            <label>
-              Password
-              <input
-                type="password"
-                autoFocus
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </label>
-            {error ? <span className={layout.formError}>{error}</span> : null}
-            <button type="submit">Continue</button>
+            <p className={styles.deletePrompt}>
+              Delete <strong>{props.entry.name}</strong>? This cannot be undone.
+            </p>
+            {props.entry.passwordProtected ? (
+              <label>
+                File password
+                <input
+                  type="password"
+                  autoFocus
+                  value={deletePassword}
+                  onChange={(event) => setDeletePassword(event.target.value)}
+                  required
+                />
+              </label>
+            ) : null}
+            {deleteError ? (
+              <p className={layout.formError}>{deleteError}</p>
+            ) : null}
+            <div className={layout.buttonRow}>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmDeleteButton}
+                type="submit"
+                disabled={deleting}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
           </form>
         </Dialog>
       ) : null}
     </article>
+  );
+}
+
+function MetadataDialog(props: {
+  metadataJson: string;
+  onClose: () => void;
+}) {
+  const metadata = parseMetadataJson(props.metadataJson);
+  const rows = metadata === null ? [] : metadataRows(metadata);
+  const location = metadata === null ? null : metadataLocation(metadata);
+  const mapUrls =
+    location === null ? null : openStreetMapUrls(location);
+
+  return (
+    <Dialog title="Metadata" onClose={props.onClose}>
+      {rows.length > 0 ? (
+        <div className={styles.metadataContent}>
+          <div className={styles.metadataTableFrame}>
+            <table className={styles.metadataTable}>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.key}>
+                    <th scope="row">{row.label}</th>
+                    <td>{row.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {mapUrls ? (
+            <figure className={styles.metadataMap}>
+              <iframe
+                src={mapUrls.embed}
+                title="Media location on OpenStreetMap"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+              <figcaption>
+                <a
+                  href={mapUrls.full}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View larger map
+                </a>
+              </figcaption>
+            </figure>
+          ) : null}
+        </div>
+      ) : (
+        <p className={styles.metadataUnavailable}>Metadata is unavailable.</p>
+      )}
+    </Dialog>
   );
 }

@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { callConvex, type MediaProcessingClaim } from "./convex.js";
 import {
   createThumbnail,
-  extractExifJson,
+  extractMediaMetadataJson,
 } from "./media.js";
 import { absoluteStoragePath } from "./paths.js";
 
@@ -24,7 +24,7 @@ export async function processMediaClaim(
       mediaKind: claim.mediaKind,
       signal,
     });
-    const exifJson = await extractExifJson(
+    const metadataJson = await extractMediaMetadataJson(
       sourcePath,
       claim.mediaKind,
       signal,
@@ -34,7 +34,7 @@ export async function processMediaClaim(
     await callConvex("/internal/storage/complete-media-processing", {
       jobId: claim.jobId,
       thumbnailKey,
-      exifJson,
+      metadataJson,
     });
   } catch (error) {
     await callConvex("/internal/storage/complete-media-processing", {

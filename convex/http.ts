@@ -504,7 +504,8 @@ http.route({
       typeof body.storageKey !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.exifJson !== undefined && typeof body.exifJson !== "string") ||
+      (body.metadataJson !== undefined &&
+        typeof body.metadataJson !== "string") ||
       (body.filesystemModifiedAt !== undefined &&
         typeof body.filesystemModifiedAt !== "number") ||
       (body.filesystemIdentity !== undefined &&
@@ -543,7 +544,7 @@ http.route({
           sha256: body.sha256,
           storageKey: body.storageKey,
           thumbnailKey: body.thumbnailKey,
-          exifJson: body.exifJson,
+          metadataJson: body.metadataJson,
           filesystemModifiedAt: body.filesystemModifiedAt,
           filesystemIdentity: body.filesystemIdentity,
         },
@@ -664,6 +665,24 @@ http.route({
 });
 
 http.route({
+  path: "/internal/storage/renew-entry-move",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const body: unknown = await request.json();
+    if (!isRecord(body) || typeof body.jobId !== "string") {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    await ctx.runMutation(internal.storageGateway.renewEntryMove, {
+      jobId: body.jobId as Id<"entryMoveJobs">,
+    });
+    return json({ ok: true });
+  }),
+});
+
+http.route({
   path: "/internal/storage/complete-delete",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
@@ -680,6 +699,40 @@ http.route({
     }
     await ctx.runMutation(internal.storageGateway.completeDelete, {
       jobId: body.jobId as Id<"storageDeleteJobs">,
+      error: body.error,
+    });
+    return json({ ok: true });
+  }),
+});
+
+http.route({
+  path: "/internal/storage/complete-entry-move",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const body: unknown = await request.json();
+    if (
+      !isRecord(body) ||
+      typeof body.jobId !== "string" ||
+      (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
+      (body.thumbnailKey !== undefined &&
+        typeof body.thumbnailKey !== "string") ||
+      (body.filesystemModifiedAt !== undefined &&
+        typeof body.filesystemModifiedAt !== "number") ||
+      (body.filesystemIdentity !== undefined &&
+        typeof body.filesystemIdentity !== "string") ||
+      (body.error !== undefined && typeof body.error !== "string")
+    ) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    await ctx.runMutation(internal.storageGateway.completeEntryMove, {
+      jobId: body.jobId as Id<"entryMoveJobs">,
+      storageKey: body.storageKey,
+      thumbnailKey: body.thumbnailKey,
+      filesystemModifiedAt: body.filesystemModifiedAt,
+      filesystemIdentity: body.filesystemIdentity,
       error: body.error,
     });
     return json({ ok: true });
@@ -897,7 +950,8 @@ http.route({
       typeof body.sha256 !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.exifJson !== undefined && typeof body.exifJson !== "string")
+      (body.metadataJson !== undefined &&
+        typeof body.metadataJson !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
@@ -938,7 +992,7 @@ http.route({
             | "other",
           sha256: body.sha256,
           thumbnailKey: body.thumbnailKey,
-          exifJson: body.exifJson,
+          metadataJson: body.metadataJson,
         },
       ),
     });
@@ -1252,7 +1306,8 @@ http.route({
       typeof body.jobId !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.exifJson !== undefined && typeof body.exifJson !== "string") ||
+      (body.metadataJson !== undefined &&
+        typeof body.metadataJson !== "string") ||
       (body.error !== undefined && typeof body.error !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
@@ -1260,7 +1315,7 @@ http.route({
     await ctx.runMutation(internal.storageJobs.completeMediaProcessing, {
       jobId: body.jobId as Id<"mediaProcessingJobs">,
       thumbnailKey: body.thumbnailKey,
-      exifJson: body.exifJson,
+      metadataJson: body.metadataJson,
       error: body.error,
     });
     return json({ ok: true });

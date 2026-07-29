@@ -166,6 +166,11 @@ async function renewMaintenanceClaim(
       jobId: claim.jobId,
     });
   }
+  if (claim.kind === "entryMove") {
+    return await trackedCall("/internal/storage/renew-entry-move", {
+      jobId: claim.jobId,
+    });
+  }
   return await trackedCall("/internal/storage/renew-migration", {
     migrationId: claim.migrationId,
     entryId: claim.entryId,

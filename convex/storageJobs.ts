@@ -239,7 +239,7 @@ export const completeMediaProcessing = internalMutation({
   args: {
     jobId: v.id("mediaProcessingJobs"),
     thumbnailKey: v.optional(v.string()),
-    exifJson: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -274,7 +274,7 @@ export const completeMediaProcessing = internalMutation({
     ) {
       await ctx.db.patch("entries", entry._id, {
         thumbnailKey: args.thumbnailKey,
-        exifJson: args.exifJson,
+        metadataJson: args.metadataJson,
         updatedAt: Date.now(),
       });
     }

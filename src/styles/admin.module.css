@@ -22,6 +22,9 @@
 .inlineForm { display: grid; gap: .4rem; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin-bottom: .6rem; }
 .rows { display: grid; gap: .25rem; }
 .row { align-items: center; background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .5rem; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; padding: .45rem; }
+.iconSummary { align-items: center; display: flex; gap: .5rem; }
+.iconSummary img, .iconText { align-items: center; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: 3px; display: flex; flex: 0 0 40px; height: 40px; justify-content: center; object-fit: cover; width: 40px; }
+.iconText { color: var(--gallery-accent); font-size: .7rem; font-weight: 800; overflow: hidden; }
 .danger { border-color: #b72d33; color: #b72d33; }
 .centered { margin: 15vh auto; max-width: 500px; text-align: center; }
 @media (max-width: 800px) {

@@ -1,11 +1,45 @@
 .grid { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
-.folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .3rem; min-height: 112px; overflow: hidden; padding: .45rem; text-decoration: none; }
+.folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); min-height: 112px; overflow: hidden; text-decoration: none; }
+.folderCard { display: grid; gap: .3rem; padding: .45rem; }
 .folderCard { align-content: center; justify-items: center; }
 .folderCard:hover, .fileCard:hover { border-color: var(--gallery-accent); }
+.fileCard { position: relative; }
+.fileCardContent { background: transparent; border: 0; border-radius: 0; color: inherit; display: grid; font: inherit; gap: .3rem; height: 100%; padding: .45rem; text-align: left; text-decoration: none; width: 100%; }
+.fileCardContent:hover { background: color-mix(in srgb, var(--gallery-accent) 4%, transparent); }
+.fileCardContent small { color: var(--gallery-muted); }
+.thumbnailFrame { display: block; position: relative; width: 100%; }
 .folderIcon { color: var(--gallery-accent); font-size: 2.1rem; transform: rotate(2deg); }
 .fileThumb { aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-fg) 6%, transparent); border-radius: calc(var(--gallery-radius) - 1px); display: block; object-fit: cover; width: 100%; }
 .fileGlyph { align-items: center; aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: calc(var(--gallery-radius) - 1px); color: var(--gallery-accent); display: flex; font-size: 1.3rem; font-weight: 800; justify-content: center; letter-spacing: -.04em; width: 100%; }
 .miniGlyph { width: 64px; }
 .fileName { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activeAction { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); border-color: var(--gallery-accent); color: var(--gallery-accent); }
+.selectionHint { color: var(--gallery-muted); font-size: .78rem; margin: 0 0 var(--gallery-gap); text-align: right; }
+.selectCircle { align-items: center; background: color-mix(in srgb, var(--gallery-bg) 86%, transparent); border: 2px solid var(--gallery-surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--gallery-muted); color: white; display: flex; font-size: .72rem; font-weight: 800; height: 22px; justify-content: center; position: absolute; right: .35rem; top: .35rem; width: 22px; }
+.selectCircleChecked { background: var(--gallery-accent); box-shadow: 0 0 0 1px var(--gallery-accent); }
+.selectedCard { border-color: var(--gallery-accent); box-shadow: 0 0 0 1px var(--gallery-accent); }
+.selectedCard .fileCardContent { background: color-mix(in srgb, var(--gallery-accent) 8%, transparent); }
+.fileCard[draggable="true"] { cursor: grab; }
+.fileCard[draggable="true"]:active { cursor: grabbing; }
+.folderDropTarget { border-style: dashed; }
+.folderDropTarget:hover { background: color-mix(in srgb, var(--gallery-accent) 12%, var(--gallery-surface)); border-style: solid; }
+.breadcrumbDropTarget { border-radius: var(--gallery-radius); padding: .15rem; }
+.breadcrumbDropTarget:hover { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); outline: 1px dashed var(--gallery-accent); }
+.deletePrompt { margin: 0; }
+.confirmDeleteButton { background: #bd2c31; border-color: #bd2c31; color: white; }
+.movePicker { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); min-height: 260px; overflow: hidden; }
+.moveColumn { min-width: 0; }
+.moveColumn + .moveColumn { border-left: 1px solid var(--border); }
+.moveColumn h3 { border-bottom: 1px solid var(--border); font-size: .78rem; margin: 0; padding: .5rem .6rem; }
+.moveOptions { display: grid; max-height: 320px; overflow: auto; padding: .3rem; }
+.moveOptions button { background: transparent; border: 0; border-radius: calc(var(--gallery-radius) - 2px); color: inherit; overflow: hidden; padding: .45rem .55rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.moveOptions button:hover { background: color-mix(in srgb, var(--gallery-accent) 8%, transparent); }
+.moveOptions .moveOptionSelected { background: color-mix(in srgb, var(--gallery-accent) 16%, transparent); color: var(--gallery-accent); }
+.moveOptions p { color: var(--gallery-muted); font-size: .76rem; margin: .5rem; }
 .empty { color: var(--gallery-muted); padding: 12vh 1rem; text-align: center; }
-@media (max-width: 480px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .movePicker { grid-template-columns: 1fr; }
+  .moveColumn + .moveColumn { border-left: 0; border-top: 1px solid var(--border); }
+  .moveOptions { max-height: 190px; }
+}

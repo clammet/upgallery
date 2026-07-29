@@ -357,7 +357,7 @@ export const reconcileFilesystemFile = internalMutation({
     mediaKind,
     sha256: v.string(),
     thumbnailKey: v.optional(v.string()),
-    exifJson: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { gallery, folder } = await requireActiveSync(
@@ -373,7 +373,7 @@ export const reconcileFilesystemFile = internalMutation({
       args.extension.length > 16 ||
       args.sha256.length !== 64 ||
       args.thumbnailKey !== undefined && args.thumbnailKey.length > 1000 ||
-      args.exifJson !== undefined && args.exifJson.length > 100_000
+      args.metadataJson !== undefined && args.metadataJson.length > 100_000
     ) {
       throw new Error("Filesystem file metadata is invalid");
     }
@@ -405,7 +405,7 @@ export const reconcileFilesystemFile = internalMutation({
         storageKind: "user",
         storageKey: args.storageKey,
         thumbnailKey: args.thumbnailKey,
-        exifJson: args.exifJson,
+        metadataJson: args.metadataJson,
         filesystemModifiedAt: args.modifiedAt,
         filesystemIdentity: args.identity,
         filesystemSyncId: args.syncId,
@@ -473,7 +473,7 @@ export const reconcileFilesystemFile = internalMutation({
       storageKind: "user",
       storageKey: args.storageKey,
       thumbnailKey: args.thumbnailKey,
-      exifJson: args.exifJson,
+      metadataJson: args.metadataJson,
       filesystemModifiedAt: args.modifiedAt,
       filesystemIdentity: args.identity,
       filesystemSyncId: args.syncId,

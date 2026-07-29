@@ -201,6 +201,97 @@ describe("upgallery backend", () => {
     expect(intent?.ownerProfileId).toBe(anonymous.profileId);
   });
 
+  test("uploader file and attachment serves share one counted view metric", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Counted files",
+      slug: "counted-files",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "counted-files",
+      hosts: [{ host: "files.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const intent = await authed.mutation(api.entries.createUploadIntent, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      name: "shared-image.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    });
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 123,
+        sha256: "d".repeat(64),
+        storageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.jpg`,
+        thumbnailKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.thumb.jpg`,
+      },
+    );
+    const visitor = await seedProfile(t, { anonymous: true });
+
+    await expect(
+      t.query(api.entries.getForUploaderView, {
+        anonymousClaim: visitor.anonymousClaim,
+        galleryId,
+        entryId,
+      }),
+    ).resolves.toMatchObject({
+      name: "shared-image.jpg",
+      passwordProtected: false,
+    });
+
+    const attachmentTicket = await t.mutation(
+      api.entries.createDownloadTicket,
+      {
+        anonymousClaim: visitor.anonymousClaim,
+        galleryId,
+        entryId,
+        disposition: "attachment",
+      },
+    );
+    await t.mutation(internal.storageGateway.claimDownload, {
+      token: attachmentTicket.token,
+    });
+    await t.mutation(internal.storageGateway.claimDownload, {
+      token: attachmentTicket.token,
+    });
+
+    const [thumbnailTicket] = await t.mutation(
+      api.entries.createThumbnailTickets,
+      {
+        anonymousClaim: visitor.anonymousClaim,
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        entryIds: [entryId],
+      },
+    );
+    expect(thumbnailTicket).toBeDefined();
+    await t.mutation(internal.storageGateway.claimDownload, {
+      token: thumbnailTicket!.token,
+    });
+
+    const counter = await t.run(async (ctx) =>
+      ctx.db
+        .query("entryCounters")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+        .unique(),
+    );
+    expect(counter).toMatchObject({ views: 1, downloads: 0 });
+  });
+
   test("Google sign-in upgrades an anonymous profile without losing ownership", async () => {
     const t = convexTest(schema, modules);
     const anonymousClaim = "a".repeat(64);
@@ -550,7 +641,7 @@ describe("upgallery backend", () => {
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
       thumbnailKey: `public/shared/media-queue/cc/cc/${"c".repeat(64)}.thumb.jpg`,
-      exifJson: "{\"Make\":\"Test\"}",
+      metadataJson: "{\"Make\":\"Test\"}",
     });
     const completed = await t.run(async (ctx) => ({
       entry: await ctx.db.get("entries", entryId),
@@ -560,7 +651,7 @@ describe("upgallery backend", () => {
         .take(10),
     }));
     expect(completed.entry?.thumbnailKey).toContain(".thumb.jpg");
-    expect(completed.entry?.exifJson).toBe("{\"Make\":\"Test\"}");
+    expect(completed.entry?.metadataJson).toBe("{\"Make\":\"Test\"}");
     expect(completed.jobs).toHaveLength(0);
   });
 
@@ -698,5 +789,204 @@ describe("upgallery backend", () => {
       kind: "delete",
       jobId: seeded.deleteJobId,
     });
+  });
+
+  test("uploader deletion is visible and authorized only for the uploader", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Owned uploads",
+      slug: "owned-uploads",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "owned-uploads",
+      hosts: [{ host: "owned.example.com", rootPath: "/up" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const uploader = await seedProfile(t, { anonymous: true });
+    const entryId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("entries", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        ownerProfileId: uploader.profileId,
+        name: "mine.txt",
+        mimeType: "text/plain",
+        extension: "txt",
+        mediaKind: "text",
+        size: 12,
+        sha256: "e".repeat(64),
+        storageKind: "shared",
+        storageKey: `protected/uploaders/owned-uploads/ee/ee/${"e".repeat(64)}.txt`,
+        state: "ready",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch("galleries", galleryId, {
+        itemCount: 1,
+        totalBytes: 12,
+      });
+      return id;
+    });
+
+    const uploaderListing = await t.query(api.folders.list, {
+      anonymousClaim: uploader.anonymousClaim,
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(uploaderListing.entries[0]).toMatchObject({
+      _id: entryId,
+      canDelete: true,
+    });
+    const adminListing = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(adminListing.entries[0]).toMatchObject({
+      _id: entryId,
+      canDelete: false,
+    });
+    await expect(
+      authed.mutation(api.entries.remove, { entryId }),
+    ).rejects.toThrow("Unauthorized");
+
+    await t.mutation(api.entries.remove, {
+      anonymousClaim: uploader.anonymousClaim,
+      entryId,
+    });
+    const deleted = await t.run(async (ctx) => ({
+      entry: await ctx.db.get("entries", entryId),
+      jobs: await ctx.db
+        .query("storageDeleteJobs")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+        .take(10),
+    }));
+    expect(deleted.entry?.state).toBe("deleted");
+    expect(deleted.jobs).toHaveLength(1);
+  });
+
+  test("gallery owners can queue bulk moves and complete them across galleries", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const sourceGalleryId = await authed.mutation(api.galleries.create, {
+      name: "Move source",
+      slug: "move-source",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "move-source",
+      hosts: [{ host: "source.example.com", rootPath: "/" }],
+    });
+    const destinationGalleryId = await authed.mutation(api.galleries.create, {
+      name: "Move destination",
+      slug: "move-destination",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "move-destination",
+      hosts: [{ host: "destination.example.com", rootPath: "/" }],
+    });
+    const [sourceGallery, destinationGallery] = await t.run(async (ctx) =>
+      Promise.all([
+        ctx.db.get("galleries", sourceGalleryId),
+        ctx.db.get("galleries", destinationGalleryId),
+      ]),
+    );
+    const destinationFolder = await authed.mutation(api.folders.create, {
+      galleryId: destinationGalleryId,
+      parentId: destinationGallery!.rootFolderId!,
+      name: "Chosen folder",
+      privacy: "public",
+    });
+    if (destinationFolder.kind !== "complete") {
+      throw new Error("Shared gallery unexpectedly required filesystem I/O");
+    }
+    const intent = await authed.mutation(api.entries.createUploadIntent, {
+      galleryId: sourceGalleryId,
+      folderId: sourceGallery!.rootFolderId!,
+      name: "moving.jpg",
+      mimeType: "image/jpeg",
+      size: 45,
+    });
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 45,
+        sha256: "f".repeat(64),
+        storageKey: `public/shared/move-source/ff/ff/${"f".repeat(64)}.jpg`,
+      },
+    );
+
+    await expect(authed.query(api.galleries.listOwnedImageGalleries)).resolves
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ _id: sourceGalleryId }),
+          expect.objectContaining({ _id: destinationGalleryId }),
+        ]),
+      );
+    const move = await authed.mutation(api.entries.moveMany, {
+      sourceGalleryId,
+      destinationGalleryId,
+      destinationFolderId: destinationFolder.folderId,
+      entryIds: [entryId],
+    });
+    expect(move).toEqual({ queued: 1 });
+    const sourceListing = await authed.query(api.folders.list, {
+      galleryId: sourceGalleryId,
+      folderId: sourceGallery!.rootFolderId!,
+    });
+    expect(sourceListing.entries).toHaveLength(0);
+
+    const claim = await t.mutation(
+      internal.storageGateway.claimMaintenance,
+      {},
+    );
+    if (claim.kind !== "entryMove") {
+      throw new Error(`Expected an entry move, received ${claim.kind}`);
+    }
+    const destinationStorageKey = `public/shared/move-destination/ff/ff/${"f".repeat(64)}.jpg`;
+    await t.mutation(internal.storageGateway.completeEntryMove, {
+      jobId: claim.jobId,
+      storageKey: destinationStorageKey,
+    });
+    const completed = await t.run(async (ctx) => ({
+      entry: await ctx.db.get("entries", entryId),
+      source: await ctx.db.get("galleries", sourceGalleryId),
+      destination: await ctx.db.get("galleries", destinationGalleryId),
+      deleteJobs: await ctx.db
+        .query("storageDeleteJobs")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+        .take(10),
+    }));
+    expect(completed.entry).toMatchObject({
+      galleryId: destinationGalleryId,
+      folderId: destinationFolder.folderId,
+      storageKey: destinationStorageKey,
+      state: "ready",
+    });
+    expect(completed.entry?.migrationState).toBeUndefined();
+    expect(completed.source).toMatchObject({ itemCount: 0, totalBytes: 0 });
+    expect(completed.destination).toMatchObject({
+      itemCount: 1,
+      totalBytes: 45,
+    });
+    expect(completed.deleteJobs).toMatchObject([
+      {
+        storageKey: `public/shared/move-source/ff/ff/${"f".repeat(64)}.jpg`,
+        deleteEntry: false,
+      },
+    ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   canViewFolder,
   getCurrentProfile,
   getEffectiveRole,
+  isOwningProfile,
   requireGalleryRole,
   roleAtLeast,
   shouldListFolder,
@@ -82,21 +83,28 @@ export const list = query({
       .take(128);
     const items = [];
     for (const entry of entries) {
+      if (entry.moveJobId !== undefined) {
+        continue;
+      }
       const counter = await ctx.db
         .query("entryCounters")
         .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
         .unique();
       const locked = entry.passwordHash !== undefined;
+      const canDelete =
+        gallery.kind === "uploader" &&
+        profile !== null &&
+        (await isOwningProfile(ctx, entry.ownerProfileId, profile._id));
       items.push({
         ...entry,
         description: locked ? undefined : entry.description,
-        exifJson: locked ? undefined : entry.exifJson,
+        metadataJson: locked ? undefined : entry.metadataJson,
         passwordSalt: undefined,
         passwordHash: undefined,
         passwordIterations: undefined,
         passwordProtected: locked,
+        canDelete,
         views: counter?.views ?? 0,
-        downloads: counter?.downloads ?? 0,
       });
     }
 
@@ -211,6 +219,33 @@ export const create = mutation({
       createdAt: Date.now(),
     });
     return { kind: "complete" as const, folderId };
+  },
+});
+
+export const listOwnedMoveDestinations = query({
+  args: { galleryId: v.id("galleries") },
+  handler: async (ctx, args) => {
+    const gallery = await ctx.db.get("galleries", args.galleryId);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image" ||
+      gallery.pendingMigrationId !== undefined
+    ) {
+      throw new Error("Gallery not found");
+    }
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    const folders = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))
+      .take(512);
+    return folders.filter(
+      (folder) => folder.filesystemMissingAt === undefined,
+    );
   },
 });
 

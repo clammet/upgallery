@@ -3,6 +3,10 @@ import { stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { callConvex, type DownloadClaim } from "./convex.js";
+import {
+  contentDispositionForDownload,
+  contentTypeForDownload,
+} from "./httpHeaders.js";
 import { absoluteStoragePath } from "./paths.js";
 
 export async function handleDownload(
@@ -25,11 +29,27 @@ export async function handleDownload(
     const path = absoluteStoragePath(claim.storageKey);
     const file = await stat(path);
     const requestedRange = request.header("range");
+    // File pages embed this response in a sandboxed frame so their durable app
+    // URL stays in the address bar. Helmet's defaults otherwise allow framing
+    // only from the storage API's exact origin, which breaks split-origin dev.
+    response.removeHeader("x-frame-options");
+    const contentSecurityPolicy = response.getHeader(
+      "content-security-policy",
+    );
+    if (typeof contentSecurityPolicy === "string") {
+      response.setHeader(
+        "content-security-policy",
+        contentSecurityPolicy.replace(
+          "frame-ancestors 'self'",
+          "frame-ancestors *",
+        ),
+      );
+    }
     response.setHeader("accept-ranges", "bytes");
-    response.setHeader("content-type", claim.mimeType);
+    response.setHeader("content-type", contentTypeForDownload(claim.mimeType));
     response.setHeader(
       "content-disposition",
-      `${claim.disposition === "attachment" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(claim.fileName)}`,
+      contentDispositionForDownload(claim.disposition, claim.fileName),
     );
     response.setHeader("cache-control", "private, no-store");
 

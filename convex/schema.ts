@@ -109,7 +109,7 @@ export default defineSchema({
     storageKind,
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
-    exifJson: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
     filesystemModifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
@@ -117,6 +117,7 @@ export default defineSchema({
     passwordHash: v.optional(v.string()),
     passwordIterations: v.optional(v.number()),
     state: entryState,
+    moveJobId: v.optional(v.id("entryMoveJobs")),
     migrationState: v.optional(
       v.union(v.literal("moving"), v.literal("failed")),
     ),
@@ -138,6 +139,7 @@ export default defineSchema({
     ])
     .index("by_uploadIntentId", ["uploadIntentId"])
     .index("by_storageKey", ["storageKey"])
+    .index("by_thumbnailKey", ["thumbnailKey"])
     .index("by_ownerProfileId", ["ownerProfileId"]),
 
   filesystemSyncStates: defineTable({
@@ -232,6 +234,24 @@ export default defineSchema({
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
     .index("by_entryId", ["entryId"]),
 
+  entryMoveJobs: defineTable({
+    entryId: v.id("entries"),
+    sourceGalleryId: v.id("galleries"),
+    destinationGalleryId: v.id("galleries"),
+    destinationFolderId: v.id("folders"),
+    actorProfileId: v.id("profiles"),
+    expectedSourceStorageKey: v.string(),
+    status: jobState,
+    attempts: v.number(),
+    availableAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    leaseExpiresAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index("by_status_and_availableAt", ["status", "availableAt"])
+    .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
+    .index("by_entryId", ["entryId"]),
+
   storageMigrations: defineTable({
     galleryId: v.id("galleries"),
     sourceStorageKind: storageKind,
@@ -277,11 +297,14 @@ export default defineSchema({
     .index("by_entryId", ["entryId"]),
 
   fileTypeIcons: defineTable({
+    // Optional only so deployments containing legacy system-wide overrides can
+    // adopt the per-gallery index without a blocking data migration.
+    galleryId: v.optional(v.id("galleries")),
     extension: v.string(),
     label: v.string(),
     icon: v.string(),
     thumbnailUrl: v.optional(v.string()),
-  }).index("by_extension", ["extension"]),
+  }).index("by_galleryId_and_extension", ["galleryId", "extension"]),
 
   auditEvents: defineTable({
     actorProfileId: v.optional(v.id("profiles")),

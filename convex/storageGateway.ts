@@ -77,7 +77,7 @@ export const completeUpload = internalMutation({
     sha256: v.string(),
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
-    exifJson: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
     filesystemModifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
   },
@@ -109,7 +109,7 @@ export const completeUpload = internalMutation({
     if (
       args.storageKey.length > 1000 ||
       args.thumbnailKey !== undefined && args.thumbnailKey.length > 1000 ||
-      args.exifJson !== undefined && args.exifJson.length > 100_000
+      args.metadataJson !== undefined && args.metadataJson.length > 100_000
     ) {
       throw new Error("Storage metadata is too large");
     }
@@ -148,7 +148,7 @@ export const completeUpload = internalMutation({
         storageKind: gallery.storageKind,
         storageKey: args.storageKey,
         thumbnailKey: args.thumbnailKey,
-        exifJson: args.exifJson,
+        metadataJson: args.metadataJson,
         filesystemModifiedAt: args.filesystemModifiedAt,
         filesystemIdentity: args.filesystemIdentity,
         passwordSalt: intent.passwordSalt,
@@ -214,7 +214,7 @@ export const completeUpload = internalMutation({
       storageKind: gallery.storageKind,
       storageKey: args.storageKey,
       thumbnailKey: args.thumbnailKey,
-      exifJson: args.exifJson,
+      metadataJson: args.metadataJson,
       filesystemModifiedAt: args.filesystemModifiedAt,
       filesystemIdentity: args.filesystemIdentity,
       passwordSalt: intent.passwordSalt,
@@ -322,9 +322,10 @@ export const claimDownload = internalMutation({
         .unique();
       if (counter !== null) {
         await ctx.db.patch("entryCounters", counter._id, {
-          views: counter.views + (ticket.disposition === "inline" ? 1 : 0),
-          downloads:
-            counter.downloads + (ticket.disposition === "attachment" ? 1 : 0),
+          // A file serve is both a view and a download. `downloads` remains in
+          // the schema for backwards compatibility; `views` is the canonical
+          // count for every non-thumbnail serve.
+          views: counter.views + 1,
         });
       }
     }
@@ -372,6 +373,15 @@ export const claimMaintenance = internalMutation({
           q.eq("storageKey", deleteJob.storageKey),
         )
         .take(16);
+      const thumbnailReferences =
+        deleteJob.thumbnailKey === undefined
+          ? []
+          : await ctx.db
+              .query("entries")
+              .withIndex("by_thumbnailKey", (q) =>
+                q.eq("thumbnailKey", deleteJob.thumbnailKey),
+              )
+              .take(16);
       await ctx.db.patch("storageDeleteJobs", deleteJob._id, {
         status: "processing",
         attempts,
@@ -388,6 +398,114 @@ export const claimMaintenance = internalMutation({
           (entry) =>
             entry._id !== deleteJob.entryId && entry.state === "ready",
         ),
+        removeThumbnail: !thumbnailReferences.some(
+          (entry) =>
+            entry._id !== deleteJob.entryId && entry.state === "ready",
+        ),
+      };
+    }
+
+    const staleMoveJob = await ctx.db
+      .query("entryMoveJobs")
+      .withIndex("by_status_and_leaseExpiresAt", (q) =>
+        q.eq("status", "processing").lte("leaseExpiresAt", now),
+      )
+      .first();
+    const queuedMoveJob = await ctx.db
+      .query("entryMoveJobs")
+      .withIndex("by_status_and_availableAt", (q) =>
+        q.eq("status", "queued").lte("availableAt", now),
+      )
+      .first();
+    const moveJob = staleMoveJob ?? queuedMoveJob;
+    if (moveJob !== null) {
+      const attempts = moveJob.attempts + 1;
+      const [entry, sourceGallery, destinationGallery, destinationFolder] =
+        await Promise.all([
+          ctx.db.get("entries", moveJob.entryId),
+          ctx.db.get("galleries", moveJob.sourceGalleryId),
+          ctx.db.get("galleries", moveJob.destinationGalleryId),
+          ctx.db.get("folders", moveJob.destinationFolderId),
+        ]);
+      if (
+        attempts > STORAGE_JOB_MAX_ATTEMPTS ||
+        entry === null ||
+        entry.state !== "ready" ||
+        entry.galleryId !== moveJob.sourceGalleryId ||
+        entry.storageKey !== moveJob.expectedSourceStorageKey ||
+        entry.migrationState !== "moving" ||
+        entry.moveJobId !== moveJob._id ||
+        sourceGallery === null ||
+        sourceGallery.deletedAt !== undefined ||
+        sourceGallery.pendingMigrationId !== undefined ||
+        destinationGallery === null ||
+        destinationGallery.deletedAt !== undefined ||
+        destinationGallery.kind !== "image" ||
+        destinationGallery.pendingMigrationId !== undefined ||
+        destinationFolder === null ||
+        destinationFolder.galleryId !== destinationGallery._id ||
+        destinationFolder.filesystemMissingAt !== undefined
+      ) {
+        await ctx.db.patch("entryMoveJobs", moveJob._id, {
+          status: "failed",
+          leaseExpiresAt: undefined,
+          error:
+            attempts > STORAGE_JOB_MAX_ATTEMPTS
+              ? moveJob.error ?? "Move exhausted its retries"
+              : "Move source or destination is no longer available",
+        });
+        if (
+          entry !== null &&
+          entry.migrationState === "moving" &&
+          entry.moveJobId === moveJob._id &&
+          entry.storageKey === moveJob.expectedSourceStorageKey
+        ) {
+          await ctx.db.patch("entries", entry._id, {
+            moveJobId: undefined,
+            migrationState: undefined,
+            migrationClaimedAt: undefined,
+            migrationAttempts: undefined,
+            migrationRetryAt: undefined,
+            migrationError:
+              attempts > STORAGE_JOB_MAX_ATTEMPTS
+                ? moveJob.error ?? "Move exhausted its retries"
+                : "Move source or destination is no longer available",
+          });
+        }
+        return { kind: "none" as const };
+      }
+      await ctx.db.patch("entryMoveJobs", moveJob._id, {
+        status: "processing",
+        attempts,
+        claimedAt: now,
+        leaseExpiresAt: now + STORAGE_JOB_LEASE_MS,
+        error: undefined,
+      });
+      await ctx.db.patch("entries", entry._id, {
+        migrationClaimedAt: now,
+        migrationAttempts: attempts,
+        migrationError: undefined,
+      });
+      return {
+        kind: "entryMove" as const,
+        jobId: moveJob._id,
+        entryId: entry._id,
+        galleryKind: destinationGallery.kind,
+        targetStorageKind: destinationGallery.storageKind,
+        targetStorageRoot: destinationGallery.storageRoot,
+        targetFolderSegments:
+          destinationGallery.storageKind === "user"
+            ? await getFilesystemFolderSegments(
+                ctx,
+                destinationGallery,
+                destinationFolder,
+              )
+            : [],
+        fileName: entry.name,
+        sourceStorageKey: entry.storageKey,
+        sourceThumbnailKey: entry.thumbnailKey,
+        sha256: entry.sha256,
+        extension: entry.extension,
       };
     }
 
@@ -519,6 +637,32 @@ export const renewMigration = internalMutation({
   },
 });
 
+export const renewEntryMove = internalMutation({
+  args: { jobId: v.id("entryMoveJobs") },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get("entryMoveJobs", args.jobId);
+    if (job === null || job.status !== "processing") {
+      throw new Error("Move job is no longer active");
+    }
+    const entry = await ctx.db.get("entries", job.entryId);
+    if (
+      entry === null ||
+      entry.migrationState !== "moving" ||
+      entry.moveJobId !== job._id
+    ) {
+      throw new Error("Move entry is no longer active");
+    }
+    const now = Date.now();
+    await ctx.db.patch("entryMoveJobs", job._id, {
+      leaseExpiresAt: now + STORAGE_JOB_LEASE_MS,
+    });
+    await ctx.db.patch("entries", entry._id, {
+      migrationClaimedAt: now,
+    });
+    return null;
+  },
+});
+
 export const completeDelete = internalMutation({
   args: {
     jobId: v.id("storageDeleteJobs"),
@@ -640,6 +784,172 @@ export const completeMigration = internalMutation({
       attempts: 0,
       availableAt: 0,
     });
+    return null;
+  },
+});
+
+export const completeEntryMove = internalMutation({
+  args: {
+    jobId: v.id("entryMoveJobs"),
+    storageKey: v.optional(v.string()),
+    thumbnailKey: v.optional(v.string()),
+    filesystemModifiedAt: v.optional(v.number()),
+    filesystemIdentity: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get("entryMoveJobs", args.jobId);
+    if (job === null) {
+      return null;
+    }
+    const entry = await ctx.db.get("entries", job.entryId);
+    if (args.error !== undefined || args.storageKey === undefined) {
+      const error = args.error?.slice(0, 1000) ?? "Move failed";
+      if (job.attempts >= STORAGE_JOB_MAX_ATTEMPTS) {
+        await ctx.db.patch("entryMoveJobs", job._id, {
+          status: "failed",
+          claimedAt: undefined,
+          leaseExpiresAt: undefined,
+          error,
+        });
+        if (
+          entry !== null &&
+          entry.migrationState === "moving" &&
+          entry.moveJobId === job._id &&
+          entry.storageKey === job.expectedSourceStorageKey
+        ) {
+          await ctx.db.patch("entries", entry._id, {
+            moveJobId: undefined,
+            migrationState: undefined,
+            migrationClaimedAt: undefined,
+            migrationAttempts: undefined,
+            migrationRetryAt: undefined,
+            migrationError: error,
+          });
+        }
+      } else {
+        await ctx.db.patch("entryMoveJobs", job._id, {
+          status: "queued",
+          availableAt: Date.now() + storageJobRetryDelay(job.attempts),
+          claimedAt: undefined,
+          leaseExpiresAt: undefined,
+          error,
+        });
+        if (
+          entry !== null &&
+          entry.migrationState === "moving" &&
+          entry.moveJobId === job._id
+        ) {
+          await ctx.db.patch("entries", entry._id, {
+            migrationClaimedAt: undefined,
+            migrationError: error,
+          });
+        }
+      }
+      return null;
+    }
+    if (
+      entry === null ||
+      entry.state !== "ready" ||
+      entry.galleryId !== job.sourceGalleryId ||
+      entry.storageKey !== job.expectedSourceStorageKey ||
+      entry.migrationState !== "moving" ||
+      entry.moveJobId !== job._id
+    ) {
+      await ctx.db.patch("entryMoveJobs", job._id, {
+        status: "failed",
+        claimedAt: undefined,
+        leaseExpiresAt: undefined,
+        error: "Move source changed before completion",
+      });
+      if (entry !== null && entry.moveJobId === job._id) {
+        await ctx.db.patch("entries", entry._id, {
+          moveJobId: undefined,
+          migrationState: undefined,
+          migrationClaimedAt: undefined,
+          migrationAttempts: undefined,
+          migrationRetryAt: undefined,
+          migrationError: "Move source changed before completion",
+        });
+      }
+      return null;
+    }
+    const [sourceGallery, destinationGallery, destinationFolder] =
+      await Promise.all([
+        ctx.db.get("galleries", job.sourceGalleryId),
+        ctx.db.get("galleries", job.destinationGalleryId),
+        ctx.db.get("folders", job.destinationFolderId),
+      ]);
+    if (
+      sourceGallery === null ||
+      destinationGallery === null ||
+      destinationGallery.deletedAt !== undefined ||
+      destinationFolder === null ||
+      destinationFolder.galleryId !== destinationGallery._id
+    ) {
+      throw new Error("Move destination is no longer available");
+    }
+    const sourceStorageKey = entry.storageKey;
+    const sourceThumbnailKey = entry.thumbnailKey;
+    const now = Date.now();
+    await ctx.db.patch("entries", entry._id, {
+      galleryId: destinationGallery._id,
+      folderId: destinationFolder._id,
+      storageKind: destinationGallery.storageKind,
+      storageKey: args.storageKey,
+      thumbnailKey: args.thumbnailKey,
+      filesystemModifiedAt: args.filesystemModifiedAt,
+      filesystemIdentity: args.filesystemIdentity,
+      filesystemSyncId: undefined,
+      moveJobId: undefined,
+      migrationState: undefined,
+      migrationClaimedAt: undefined,
+      migrationAttempts: undefined,
+      migrationRetryAt: undefined,
+      migrationError: undefined,
+      updatedAt: now,
+    });
+    const counter = await ctx.db
+      .query("entryCounters")
+      .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+      .unique();
+    if (counter !== null && counter.galleryId !== destinationGallery._id) {
+      await ctx.db.patch("entryCounters", counter._id, {
+        galleryId: destinationGallery._id,
+      });
+    }
+    if (sourceGallery._id !== destinationGallery._id) {
+      await ctx.db.patch("galleries", sourceGallery._id, {
+        itemCount: Math.max(0, sourceGallery.itemCount - 1),
+        totalBytes: Math.max(0, sourceGallery.totalBytes - entry.size),
+      });
+      await ctx.db.patch("galleries", destinationGallery._id, {
+        itemCount: destinationGallery.itemCount + 1,
+        totalBytes: destinationGallery.totalBytes + entry.size,
+      });
+    }
+    if (sourceStorageKey !== args.storageKey) {
+      await ctx.db.insert("storageDeleteJobs", {
+        entryId: entry._id,
+        storageKey: sourceStorageKey,
+        thumbnailKey:
+          sourceThumbnailKey !== args.thumbnailKey
+            ? sourceThumbnailKey
+            : undefined,
+        deleteEntry: false,
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+      });
+    }
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: job.actorProfileId,
+      action: "entry.moved",
+      galleryId: destinationGallery._id,
+      detail: `${entry.name} from ${sourceGallery.name} to ${destinationFolder.name}`,
+      createdAt: now,
+    });
+    await ctx.db.delete("entryMoveJobs", job._id);
     return null;
   },
 });
