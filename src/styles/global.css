@@ -1,0 +1,18 @@
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+body { background: var(--gallery-bg); color: var(--gallery-fg); font-size: 14px; }
+a { color: inherit; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
+button, input, textarea, select { font: inherit; }
+button, select, input, textarea {
+  border: 1px solid var(--border);
+  border-radius: var(--gallery-radius);
+  color: inherit;
+}
+button { background: var(--gallery-surface); cursor: pointer; padding: 0.45rem 0.7rem; }
+button:hover { border-color: var(--gallery-accent); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+input, textarea, select { background: var(--gallery-surface); padding: 0.5rem; width: 100%; }
+textarea { resize: vertical; }
+h1, h2, h3, p { margin-top: 0; }
+small { color: var(--gallery-muted); }
+code { background: color-mix(in srgb, var(--gallery-fg) 8%, transparent); border-radius: 3px; padding: 0.1rem 0.25rem; }

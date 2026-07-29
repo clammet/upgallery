@@ -1,0 +1,9 @@
+.git
+.convex
+.storage
+.env*
+node_modules
+dist
+storage-dist
+coverage
+*.log

@@ -1,0 +1,41 @@
+.page { background: var(--gallery-bg); color: var(--gallery-fg); display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
+.header { align-items: center; background: color-mix(in srgb, var(--gallery-bg) 92%, transparent); border-bottom: 1px solid var(--border); display: grid; gap: .75rem; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr) minmax(110px, 1fr); min-height: 44px; padding: .35rem .65rem; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px); }
+.brand { font-size: 1rem; font-weight: 700; overflow: hidden; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.breadcrumb { align-items: center; display: flex; justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.breadcrumb a { overflow: hidden; text-overflow: ellipsis; }
+.separator { color: var(--gallery-muted); margin: 0 .35rem; }
+.headerActions, .authGroup { align-items: center; display: flex; gap: .35rem; justify-content: flex-end; min-width: 0; }
+.authStatus, .authName { color: var(--gallery-muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { border-radius: 50%; height: 23px; width: 23px; }
+.quietButton { background: transparent; border-color: transparent; color: var(--gallery-muted); padding: .3rem .4rem; text-decoration: none; }
+.iconButton { align-items: center; background: transparent; display: inline-flex; font-size: 1rem; height: 30px; justify-content: center; padding: 0; width: 30px; }
+.syncIndicator { align-items: center; color: var(--gallery-muted); display: inline-flex; font-size: 1.05rem; height: 30px; justify-content: center; line-height: 1; width: 24px; }
+.syncSpinner { animation: sync-spin .9s linear infinite; }
+.syncComplete { animation: sync-complete 1.6s ease both; color: var(--gallery-accent); }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@keyframes sync-complete {
+  0%, 70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .syncSpinner { animation-duration: 1.8s; }
+  .syncComplete { animation: none; }
+}
+.main { padding: var(--gallery-gap); width: 100%; }
+.footer { color: var(--gallery-muted); font-size: .72rem; padding: .5rem; text-align: center; }
+.notice, .errorNotice { border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0 0 var(--gallery-gap); padding: .5rem .65rem; }
+.notice { background: color-mix(in srgb, var(--gallery-accent) 8%, var(--gallery-surface)); }
+.errorNotice, .formError { color: #bd2c31; }
+.backdrop { align-items: center; background: rgb(0 0 0 / 45%); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 50; }
+.dialog { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); box-shadow: var(--shadow); max-height: calc(100vh - 2rem); max-width: 520px; overflow: auto; padding: 1rem; width: 100%; }
+.dialogHeader { align-items: center; display: flex; justify-content: space-between; }
+.dialogHeader h2 { font-size: 1.1rem; margin-bottom: .75rem; }
+.form { display: grid; gap: .7rem; }
+.form label { display: grid; font-size: .78rem; gap: .25rem; }
+.formError { font-size: .8rem; margin: 0; }
+.buttonRow { display: flex; gap: .5rem; }
+@media (max-width: 650px) {
+  .header { grid-template-columns: 1fr auto; }
+  .breadcrumb { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; order: 3; }
+  .authName { display: none; }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "upgallery",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,storage-api,storage-worker \"vite\" \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
+    "dev:web": "vite",
+    "dev:storage": "concurrently -k -n storage-api,storage-worker \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
+    "dev:storage-api": "tsx watch --env-file=.env.storage.local storage/server.ts",
+    "dev:storage-worker": "tsx watch --env-file=.env.storage.local storage/worker.ts",
+    "build": "tsc -b && vite build && tsc -p storage/tsconfig.json",
+    "check": "tsc -b && tsc -p storage/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start:storage": "node storage-dist/server.js",
+    "start:storage-worker": "node storage-dist/worker.js",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "convex": "^1.42.3",
+    "exifr": "^7.1.3",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "mime-types": "^3.0.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.1",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/busboy": "^1.5.4",
+    "@types/express": "^5.0.6",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/supertest": "^7.2.1",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^10.0.4",
+    "convex-test": "^0.0.54",
+    "supertest": "^7.2.2",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vite-plugin-checker": "^0.14.5",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.17.0"
+}

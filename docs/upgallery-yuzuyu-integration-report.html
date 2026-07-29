@@ -1,0 +1,2202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta
+    name="description"
+    content="Architecture and security options for integrating Upgallery with the Yuzuyu Ansible control plane."
+  >
+  <title>Upgallery ↔ Yuzuyu integration report</title>
+  <style>
+    :root {
+      --page: #f4f1ea;
+      --paper: #fffdf8;
+      --paper-2: #f8f5ee;
+      --ink: #202522;
+      --muted: #65706a;
+      --line: #d9d6cc;
+      --line-strong: #b8b6ad;
+      --accent: #1e6152;
+      --accent-2: #d15b3f;
+      --accent-soft: #dcebe5;
+      --warning: #8a5b00;
+      --warning-soft: #fff0c9;
+      --danger: #a23838;
+      --danger-soft: #f9dede;
+      --good: #216645;
+      --good-soft: #dbefe3;
+      --blue: #245a78;
+      --blue-soft: #dcebf4;
+      --shadow: 0 14px 36px rgba(42, 45, 40, 0.09);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino,
+        Georgia, serif;
+    }
+
+    html[data-theme="dark"] {
+      --page: #161a18;
+      --paper: #1f2421;
+      --paper-2: #252b27;
+      --ink: #eef2ee;
+      --muted: #aab5ae;
+      --line: #3a423d;
+      --line-strong: #59625d;
+      --accent: #79c7b2;
+      --accent-2: #f0876c;
+      --accent-soft: #213b34;
+      --warning: #f3c46d;
+      --warning-soft: #3d321d;
+      --danger: #ff9a96;
+      --danger-soft: #482828;
+      --good: #8ed5aa;
+      --good-soft: #20392a;
+      --blue: #8ec8e9;
+      --blue-soft: #203441;
+      --shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 30rem),
+        radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--accent-2) 11%, transparent), transparent 26rem),
+        var(--page);
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 0.08em;
+      text-underline-offset: 0.18em;
+    }
+
+    a:hover {
+      text-decoration-thickness: 0.14em;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    code,
+    pre {
+      font-family: var(--mono);
+    }
+
+    code {
+      font-size: 0.9em;
+      background: color-mix(in srgb, var(--accent) 9%, transparent);
+      border-radius: 0.35em;
+      padding: 0.08em 0.3em;
+    }
+
+    pre {
+      overflow: auto;
+      margin: 1rem 0 0;
+      padding: 1.1rem 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #17201d;
+      color: #eaf4ef;
+      font-size: 0.82rem;
+      line-height: 1.55;
+      tab-size: 2;
+    }
+
+    pre code {
+      padding: 0;
+      color: inherit;
+      background: transparent;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 15rem) minmax(0, 69rem);
+      gap: 2rem;
+      width: min(100% - 2rem, 88rem);
+      margin: 0 auto;
+      padding: 1rem 0 5rem;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 1rem;
+      align-self: start;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--paper) 91%, transparent);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 50%;
+      color: white;
+      background: var(--accent);
+      font-family: var(--serif);
+      font-size: 1.3rem;
+      font-weight: 700;
+    }
+
+    .brand small {
+      display: block;
+      color: var(--muted);
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .toc {
+      display: grid;
+      gap: 0.2rem;
+    }
+
+    .toc a {
+      padding: 0.45rem 0.55rem;
+      border-left: 2px solid transparent;
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+      text-decoration: none;
+    }
+
+    .toc a:hover,
+    .toc a[aria-current="true"] {
+      color: var(--ink);
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .sidebar-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .sidebar-actions button {
+      min-height: 2.2rem;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      color: var(--ink);
+      background: var(--paper);
+      cursor: pointer;
+    }
+
+    .sidebar-actions button:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      min-height: 31rem;
+      padding: clamp(2rem, 6vw, 5rem);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--paper) 96%, transparent), color-mix(in srgb, var(--accent-soft) 76%, var(--paper))),
+        var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      position: absolute;
+      right: -6rem;
+      bottom: -9rem;
+      width: 24rem;
+      height: 24rem;
+      border: 4rem solid color-mix(in srgb, var(--accent-2) 10%, transparent);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin: 0 0 1rem;
+      color: var(--accent);
+      font-size: 0.74rem;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 1.8rem;
+      height: 2px;
+      background: currentColor;
+      content: "";
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+      margin-top: 0;
+      line-height: 1.13;
+    }
+
+    h1 {
+      max-width: 13ch;
+      margin-bottom: 1.3rem;
+      font-family: var(--serif);
+      font-size: clamp(2.9rem, 7vw, 6.2rem);
+      font-weight: 600;
+      letter-spacing: -0.055em;
+    }
+
+    .hero .lede {
+      max-width: 47rem;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+    }
+
+    .hero-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-top: 2.2rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2rem;
+      padding: 0.3rem 0.72rem;
+      border: 1px solid var(--line);
+      border-radius: 99px;
+      color: var(--muted);
+      background: color-mix(in srgb, var(--paper) 84%, transparent);
+      font-size: 0.78rem;
+      font-weight: 650;
+    }
+
+    section {
+      scroll-margin-top: 1.5rem;
+      margin-top: 2rem;
+      padding: clamp(1.4rem, 4vw, 3rem);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    section > header {
+      max-width: 50rem;
+      margin-bottom: 1.8rem;
+    }
+
+    section > header p:last-child {
+      margin-bottom: 0;
+      color: var(--muted);
+    }
+
+    h2 {
+      margin-bottom: 0.75rem;
+      font-family: var(--serif);
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      font-weight: 600;
+      letter-spacing: -0.035em;
+    }
+
+    h3 {
+      margin-bottom: 0.65rem;
+      font-size: 1.22rem;
+      letter-spacing: -0.015em;
+    }
+
+    h4 {
+      margin-bottom: 0.5rem;
+      font-size: 0.96rem;
+    }
+
+    p {
+      margin: 0 0 1rem;
+    }
+
+    p:last-child {
+      margin-bottom: 0;
+    }
+
+    ul,
+    ol {
+      margin: 0.65rem 0 0;
+      padding-left: 1.25rem;
+    }
+
+    li + li {
+      margin-top: 0.42rem;
+    }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 1rem;
+      padding: 1.25rem;
+      border: 1px solid color-mix(in srgb, var(--good) 35%, var(--line));
+      border-radius: 14px;
+      background: var(--good-soft);
+    }
+
+    .verdict-number {
+      display: grid;
+      place-items: center;
+      width: 2.65rem;
+      height: 2.65rem;
+      border-radius: 50%;
+      color: var(--paper);
+      background: var(--good);
+      font-weight: 800;
+    }
+
+    .verdict + .verdict {
+      margin-top: 0.75rem;
+    }
+
+    .callout {
+      margin: 1.25rem 0;
+      padding: 1rem 1.1rem;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      background: var(--accent-soft);
+    }
+
+    .callout.warning {
+      border-color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .callout.danger {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+
+    .grid-2,
+    .grid-3 {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      min-width: 0;
+      padding: 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--paper-2);
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      font-size: 0.91rem;
+    }
+
+    .card h3,
+    .card h4 {
+      color: var(--ink);
+    }
+
+    .fact {
+      position: relative;
+      padding-top: 2.6rem;
+    }
+
+    .fact::before {
+      position: absolute;
+      top: 1rem;
+      left: 1.1rem;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      content: attr(data-label);
+    }
+
+    .architecture {
+      display: grid;
+      gap: 0.75rem;
+      margin-top: 1.3rem;
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: minmax(9rem, 1fr) 2.4rem minmax(9rem, 1fr) 2.4rem minmax(9rem, 1fr);
+      align-items: stretch;
+      gap: 0.35rem;
+    }
+
+    .arch-node {
+      display: grid;
+      align-content: center;
+      min-height: 7rem;
+      padding: 1rem;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      text-align: center;
+      background: var(--paper-2);
+    }
+
+    .arch-node strong {
+      display: block;
+      margin-bottom: 0.3rem;
+    }
+
+    .arch-node small {
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .arch-node.control {
+      border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+      background: var(--accent-soft);
+    }
+
+    .arch-node.privileged {
+      border-color: color-mix(in srgb, var(--accent-2) 55%, var(--line));
+      background: color-mix(in srgb, var(--accent-2) 10%, var(--paper));
+    }
+
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 1.4rem;
+    }
+
+    .arch-note {
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      color: var(--muted);
+      background: var(--paper-2);
+      font-size: 0.84rem;
+      text-align: center;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 48rem;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+
+    th,
+    td {
+      padding: 0.75rem 0.8rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--paper-2);
+      font-size: 0.71rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+    }
+
+    .score {
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+    }
+
+    .score .on {
+      color: var(--accent);
+    }
+
+    .score .off {
+      color: var(--line-strong);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 99px;
+      font-size: 0.69rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .badge.best {
+      color: var(--good);
+      background: var(--good-soft);
+    }
+
+    .badge.useful {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .badge.caution {
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .badge.reject {
+      color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .approach {
+      padding: 1.25rem 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .approach:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .approach-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 1rem;
+      align-items: start;
+    }
+
+    .pros-cons {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-top: 1rem;
+    }
+
+    .pros,
+    .cons {
+      padding: 0.9rem 1rem;
+      border-radius: 10px;
+    }
+
+    .pros {
+      background: var(--good-soft);
+    }
+
+    .cons {
+      background: var(--danger-soft);
+    }
+
+    .pros h4 {
+      color: var(--good);
+    }
+
+    .cons h4 {
+      color: var(--danger);
+    }
+
+    .pros li,
+    .cons li {
+      font-size: 0.88rem;
+    }
+
+    .timeline {
+      counter-reset: phase;
+      display: grid;
+      gap: 0;
+      margin-top: 1.25rem;
+    }
+
+    .phase {
+      counter-increment: phase;
+      position: relative;
+      display: grid;
+      grid-template-columns: 3rem minmax(0, 1fr);
+      gap: 1rem;
+      padding-bottom: 1.5rem;
+    }
+
+    .phase::before {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 2.6rem;
+      height: 2.6rem;
+      border-radius: 50%;
+      color: var(--paper);
+      background: var(--accent);
+      font-weight: 800;
+      content: counter(phase);
+    }
+
+    .phase::after {
+      position: absolute;
+      top: 2.6rem;
+      bottom: 0;
+      left: 1.27rem;
+      width: 1px;
+      background: var(--line-strong);
+      content: "";
+    }
+
+    .phase:last-child {
+      padding-bottom: 0;
+    }
+
+    .phase:last-child::after {
+      display: none;
+    }
+
+    .phase-content {
+      padding: 0.2rem 0 0.2rem;
+    }
+
+    .phase-content p {
+      color: var(--muted);
+    }
+
+    .state-flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem;
+      margin-top: 1rem;
+    }
+
+    .state {
+      padding: 0.45rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper-2);
+      font-family: var(--mono);
+      font-size: 0.77rem;
+    }
+
+    .state-arrow {
+      color: var(--muted);
+    }
+
+    .invariants {
+      counter-reset: invariant;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+      padding: 0;
+      list-style: none;
+    }
+
+    .invariants li {
+      counter-increment: invariant;
+      position: relative;
+      min-height: 5rem;
+      margin: 0;
+      padding: 1rem 1rem 1rem 3.2rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+    }
+
+    .invariants li::before {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      display: grid;
+      place-items: center;
+      width: 1.55rem;
+      height: 1.55rem;
+      border-radius: 50%;
+      color: var(--paper);
+      background: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 800;
+      content: counter(invariant);
+    }
+
+    .references {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .reference {
+      display: grid;
+      grid-template-columns: 2.2rem minmax(0, 1fr);
+      gap: 0.75rem;
+      padding: 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-2);
+    }
+
+    .reference span {
+      display: grid;
+      place-items: center;
+      width: 2.1rem;
+      height: 2.1rem;
+      border-radius: 8px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+
+    .reference p {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .fine-print {
+      margin-top: 1.2rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 0.5rem;
+      left: 0.5rem;
+      z-index: 20;
+      transform: translateY(-200%);
+      padding: 0.55rem 0.75rem;
+      border-radius: 8px;
+      color: white;
+      background: var(--accent);
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    @media (max-width: 960px) {
+      .shell {
+        display: block;
+        width: min(100% - 1rem, 69rem);
+        padding-top: 0.5rem;
+      }
+
+      .sidebar {
+        position: relative;
+        top: auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        max-height: none;
+        margin-bottom: 1rem;
+      }
+
+      .brand {
+        margin: 0;
+      }
+
+      .toc {
+        display: none;
+      }
+
+      .sidebar-actions {
+        display: flex;
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+
+      .sidebar-actions button {
+        padding: 0.35rem 0.7rem;
+      }
+
+      .hero {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .grid-2,
+      .grid-3,
+      .pros-cons,
+      .invariants {
+        grid-template-columns: 1fr;
+      }
+
+      .arch-row {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        min-height: 1.8rem;
+        transform: rotate(90deg);
+      }
+
+      .approach-head {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 2rem 1.3rem;
+      }
+
+      section {
+        padding: 1.35rem 1rem;
+      }
+
+      .sidebar {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+      }
+    }
+
+    @media print {
+      :root {
+        --page: white;
+        --paper: white;
+        --paper-2: #f6f6f3;
+        --ink: #111;
+        --muted: #444;
+        --line: #ccc;
+        --shadow: none;
+      }
+
+      body {
+        background: white;
+        font-size: 10.5pt;
+      }
+
+      .shell {
+        display: block;
+        width: 100%;
+        padding: 0;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .hero,
+      section {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+
+      .hero {
+        min-height: 0;
+      }
+
+      section {
+        margin-top: 0.5in;
+      }
+
+      .approach,
+      .card,
+      .verdict,
+      .phase,
+      .reference {
+        break-inside: avoid;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      a[href^="http"]::after {
+        color: #666;
+        font-size: 0.75em;
+        content: " (" attr(href) ")";
+        overflow-wrap: anywhere;
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#report">Skip to report</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Report navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">U</div>
+        <div>
+          <strong>Integration report</strong>
+          <small>Upgallery × Yuzuyu</small>
+        </div>
+      </div>
+      <nav class="toc" aria-label="Contents">
+        <a href="#executive">Executive recommendation</a>
+        <a href="#findings">What the repos imply</a>
+        <a href="#boundary">Security boundary</a>
+        <a href="#options">Approach comparison</a>
+        <a href="#details">Detailed approaches</a>
+        <a href="#github">GitHub and runner controls</a>
+        <a href="#design">Recommended design</a>
+        <a href="#rollout">Rollout plan</a>
+        <a href="#sources">Sources</a>
+      </nav>
+      <div class="sidebar-actions">
+        <button id="theme-toggle" type="button" aria-label="Toggle colour theme">Theme</button>
+        <button type="button" onclick="window.print()" aria-label="Print this report">Print</button>
+      </div>
+    </aside>
+
+    <main id="report">
+      <header class="hero">
+        <p class="eyebrow">Architecture &amp; threat-model report</p>
+        <h1>Keep the app out of the control plane.</h1>
+        <p class="lede">
+          Upgallery should declare gallery intent. A narrow, auditable reconciler
+          should decide how that intent becomes nginx, TLS, and host filesystem
+          state. In the common case, one wildcard route means there is nothing to
+          provision per gallery at all.
+        </p>
+        <div class="hero-meta">
+          <span class="pill">Repository-specific</span>
+          <span class="pill">Single-host Ansible</span>
+          <span class="pill">Convex side effects</span>
+          <span class="pill">GitHub Actions / GitOps</span>
+          <span class="pill">29 July 2026</span>
+        </div>
+      </header>
+
+      <section id="executive">
+        <header>
+          <p class="eyebrow">The short answer</p>
+          <h2>Use two lanes, not one universal provisioning path.</h2>
+          <p>
+            Platform-owned subdomains and arbitrary custom domains have different
+            risk and operational requirements. Treating them identically creates
+            unnecessary privileged automation.
+          </p>
+        </header>
+
+        <div class="verdict">
+          <div class="verdict-number">1</div>
+          <div>
+            <h3>Default lane: no per-gallery Ansible</h3>
+            <p>
+              Put all platform-owned galleries behind one stable Upgallery reverse
+              proxy, wildcard DNS, and a wildcard certificate. Upgallery already
+              selects the gallery from the original Host and path, so adding a
+              gallery becomes a Convex metadata operation. The outer nginx config
+              does not change.
+            </p>
+          </div>
+        </div>
+
+        <div class="verdict">
+          <div class="verdict-number">2</div>
+          <div>
+            <h3>Exception lane: GitOps PR for custom domains or host resources</h3>
+            <p>
+              Have an internal provisioning component create a narrowly scoped
+              pull request containing typed desired state—not raw nginx or arbitrary
+              Ansible variables. Validate it on a GitHub-hosted runner, require
+              review, and deploy only after merge using one fixed playbook from the
+              protected default branch.
+            </p>
+          </div>
+        </div>
+
+        <div class="verdict">
+          <div class="verdict-number">3</div>
+          <div>
+            <h3>Later: automate approval only after the contract is proven</h3>
+            <p>
+              If custom-domain volume makes manual review painful, keep the same
+              desired-state format and replace the human gate with a policy broker
+              or AWX job template. Do not respond by giving Upgallery SSH, Vault,
+              or a generic “run any playbook” credential.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout warning">
+          <strong>Most important answer to the permissions question</strong>
+          A GitHub token is not naturally scoped to “only this playbook.” A token
+          with Actions write permission can dispatch workflows in the repository;
+          <code>repository_dispatch</code> is broader in a different way because it
+          requires Contents write. The real restriction must live in the receiving
+          workflow, repository boundary, branch protections, and runner/environment
+          policy—not in an input named <code>playbook</code>.
+        </div>
+      </section>
+
+      <section id="findings">
+        <header>
+          <p class="eyebrow">Repository findings</p>
+          <h2>The existing design already removes much of the provisioning problem.</h2>
+          <p>
+            These conclusions come from the current Upgallery and Yuzuyu source, not
+            from a generic deployment pattern.
+          </p>
+        </header>
+
+        <div class="grid-2">
+          <article class="card fact" data-label="UPGALLERY">
+            <h3>One application serves many hosts and paths</h3>
+            <p>
+              <code>convex/galleries.ts</code> stores one or more
+              <code>galleryHosts</code> per gallery and resolves the longest matching
+              root path. <code>src/App.tsx</code> passes the browser Host and path to
+              that resolver.
+            </p>
+          </article>
+
+          <article class="card fact" data-label="INNER NGINX">
+            <h3>The web container is already a shared frontend</h3>
+            <p>
+              <code>deploy/nginx.conf.template</code> serves one SPA, proxies
+              <code>/api/storage/</code>, and exposes only the public media mounts.
+              It deliberately preserves the original Host header.
+            </p>
+          </article>
+
+          <article class="card fact" data-label="STORAGE">
+            <h3>Shared gallery roots are created lazily</h3>
+            <p>
+              The storage gateway derives a safe storage key and recursively creates
+              its directory on upload. Shared image and protected uploader galleries
+              therefore do not need a separate nginx webroot per gallery.
+            </p>
+          </article>
+
+          <article class="card fact" data-label="USER STORAGE">
+            <h3>User-backed roots are the real host-side exception</h3>
+            <p>
+              User-backed galleries preserve normal filenames under a curated bind
+              mount. They may need host ownership, group, mode, or an external mount
+              before the container can write. That is a storage provisioning concern,
+              not an outer nginx site root.
+            </p>
+          </article>
+
+          <article class="card fact" data-label="YUZUYU">
+            <h3>Site configuration is declarative and convergent</h3>
+            <p>
+              Yuzuyu loads every site YAML file, creates optional host roots, mounts
+              them read-only into nginx, renders vhosts, removes stale generated
+              vhosts, validates nginx, and reloads. This is already a good GitOps
+              substrate.
+            </p>
+          </article>
+
+          <article class="card fact" data-label="ACTIONS">
+            <h3>Host convergence is already serialized</h3>
+            <p>
+              The reusable Actions workflow uses a single
+              <code>ansible-host</code> concurrency group with
+              <code>cancel-in-progress: false</code>. That is the right instinct for
+              one mutable host and should be retained.
+            </p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>Consequent simplification</strong>
+          For <code>*.gallery.example.org</code>, one nginx wildcard
+          <code>server_name</code>, one wildcard DNS record, one wildcard TLS
+          certificate, and one proxy target can cover every future gallery. Nginx
+          supports wildcard server names, and passing <code>Host $host</code> keeps
+          Upgallery’s host-based routing intact.
+          <a href="https://nginx.org/en/docs/http/server_names.html">Nginx server-name documentation</a>
+          and
+          <a href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html">proxy module documentation</a>.
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Gallery change</th>
+                <th>Convex metadata</th>
+                <th>Host filesystem</th>
+                <th>Outer nginx / TLS</th>
+                <th>Recommended treatment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>New platform subdomain under one wildcard</td>
+                <td>Yes</td>
+                <td>No, for shared/uploader</td>
+                <td>No per-gallery change</td>
+                <td>Immediate, app-only</td>
+              </tr>
+              <tr>
+                <td>New path under an Upgallery-only host</td>
+                <td>Yes</td>
+                <td>No, for shared/uploader</td>
+                <td>No if the whole host already proxies to Upgallery</td>
+                <td>Immediate, app-only</td>
+              </tr>
+              <tr>
+                <td>Custom domain</td>
+                <td>Yes</td>
+                <td>Usually no</td>
+                <td>Exact vhost, DNS readiness, certificate</td>
+                <td>Asynchronous GitOps provisioning</td>
+              </tr>
+              <tr>
+                <td>Path on a host shared with another app</td>
+                <td>Yes</td>
+                <td>Usually no</td>
+                <td>Mutates a shared vhost</td>
+                <td>Manual review by default</td>
+              </tr>
+              <tr>
+                <td>User-backed gallery</td>
+                <td>Yes</td>
+                <td>Maybe: directory, owner/group/mode, NFS/SFTP mount</td>
+                <td>Only if hostname is new</td>
+                <td>Separate storage-resource workflow</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="boundary">
+        <header>
+          <p class="eyebrow">Trust boundary</p>
+          <h2>Gallery input is data. Ansible is root-capable code execution.</h2>
+          <p>
+            Yuzuyu’s configured automation user escalates to root, while its Actions
+            jobs receive the SSH private key and usually the Vault password. A single
+            unsafe interpolation can therefore become host compromise.
+          </p>
+        </header>
+
+        <div class="architecture" aria-label="Trust boundary diagram">
+          <div class="arch-row">
+            <div class="arch-node">
+              <strong>Admin portal</strong>
+              <small>Authenticated but fallible user input</small>
+            </div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="arch-node control">
+              <strong>Desired-state boundary</strong>
+              <small>Schema, policy, idempotency, approval</small>
+            </div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="arch-node privileged">
+              <strong>Yuzuyu control plane</strong>
+              <small>SSH + sudo + Vault + Docker + nginx + TLS</small>
+            </div>
+          </div>
+          <div class="arch-note">
+            The middle box is the security control. It must be impossible for the
+            left-hand side to choose a command, playbook path, inventory, host,
+            runner label, shell argument, Jinja expression, mount path, or raw nginx
+            directive.
+          </div>
+        </div>
+
+        <h3 style="margin-top: 1.7rem;">Required invariants</h3>
+        <ol class="invariants">
+          <li>The app submits a typed route/storage request, never executable text.</li>
+          <li>The executable and inventory are fixed in trusted code on the protected branch.</li>
+          <li>Hostnames, paths, IDs, and storage classes are revalidated at the control-plane boundary.</li>
+          <li>Untrusted values are passed as structured data, never concatenated into shell commands.</li>
+          <li>One convergence runs at a time; repeated requests are safe and idempotent.</li>
+          <li>Plan/validation happens before credentials for production are released.</li>
+          <li>Deletion of routes is separate from deletion of gallery bytes or host directories.</li>
+          <li>Every request, review, run, revision, result, and retry is attributable.</li>
+        </ol>
+
+        <div class="callout danger">
+          <strong>Do not use the current generic site YAML as the app-facing API</strong>
+          Today those files can express <code>host_root</code>,
+          <code>container_root</code>, arbitrary <code>locations</code>,
+          <code>proxy_pass</code>, and an <code>extra</code> map that becomes nginx
+          directives. That flexibility is appropriate for trusted infrastructure
+          authors, but much too powerful for application-generated input.
+        </div>
+      </section>
+
+      <section id="options">
+        <header>
+          <p class="eyebrow">Decision matrix</p>
+          <h2>Practical approaches, ranked for this project.</h2>
+          <p>
+            Scores are relative to a single non-production host. Five dots is best;
+            “low effort” scores higher in the effort column.
+          </p>
+        </header>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Approach</th>
+                <th>Security</th>
+                <th>Admin UX</th>
+                <th>Audit / rollback</th>
+                <th>Low effort</th>
+                <th>Fit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Wildcard/shared route; no per-gallery run</strong></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td><span class="badge best">Default</span></td>
+              </tr>
+              <tr>
+                <td><strong>GitOps pull request + deploy on merge</strong></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●</span><span class="off">●●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●</span><span class="off">●●</span></td>
+                <td><span class="badge best">Best custom-domain start</span></td>
+              </tr>
+              <tr>
+                <td><strong>Fixed GitHub workflow dispatch</strong></td>
+                <td class="score"><span class="on">●●●</span><span class="off">●●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td><span class="badge useful">Viable with guardrails</span></td>
+              </tr>
+              <tr>
+                <td><strong>Dedicated broker / pull reconciler</strong></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●</span><span class="off">●●●</span></td>
+                <td><span class="badge useful">Best at higher volume</span></td>
+              </tr>
+              <tr>
+                <td><strong>AWX / Automation Controller job template</strong></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●</span><span class="off">●●●●</span></td>
+                <td><span class="badge caution">Heavy for one host</span></td>
+              </tr>
+              <tr>
+                <td><strong>Event-Driven Ansible webhook / rulebook</strong></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●●</span><span class="off">●●</span></td>
+                <td class="score"><span class="on">●●</span><span class="off">●●●</span></td>
+                <td><span class="badge caution">Useful when eventing already exists</span></td>
+              </tr>
+              <tr>
+                <td><strong>Restricted SSH forced command / sudo wrapper</strong></td>
+                <td class="score"><span class="on">●●</span><span class="off">●●●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td class="score"><span class="on">●●</span><span class="off">●●●</span></td>
+                <td class="score"><span class="on">●●●</span><span class="off">●●</span></td>
+                <td><span class="badge caution">Last-resort small system</span></td>
+              </tr>
+              <tr>
+                <td><strong>App receives general SSH / Ansible access</strong></td>
+                <td class="score"><span class="on">●</span><span class="off">●●●●</span></td>
+                <td class="score"><span class="on">●●●●●</span></td>
+                <td class="score"><span class="on">●</span><span class="off">●●●●</span></td>
+                <td class="score"><span class="on">●●●●</span><span class="off">●</span></td>
+                <td><span class="badge reject">Reject</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="details">
+        <header>
+          <p class="eyebrow">Detailed assessment</p>
+          <h2>How each approach works—and where it fails.</h2>
+        </header>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>A. One wildcard / shared Upgallery route</h3>
+              <p>
+                Provision Upgallery once. Give it a stable Docker network alias,
+                route <code>*.gallery.example.org</code> to the web container, pass
+                the original Host, and let Convex resolve the tenant.
+              </p>
+            </div>
+            <span class="badge best">Preferred default</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>No application-to-infrastructure credential.</li>
+                <li>Gallery creation is instant and transactional inside Convex.</li>
+                <li>No reload, race, certificate issuance, or config drift per gallery.</li>
+                <li>Smallest attack surface and operational burden.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Applies only to names under DNS zones you control.</li>
+                <li>Wildcard certificates require DNS-01 automation.</li>
+                <li>Does not by itself provision user-backed Unix directories or mounts.</li>
+              </ul>
+            </div>
+          </div>
+          <p class="fine-print">
+            Let’s Encrypt documents that DNS-01 can issue wildcard certificates and
+            recommends an API-capable DNS provider for automated renewals:
+            <a href="https://letsencrypt.org/docs/challenge-types/">challenge types</a>.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>B. GitOps pull request</h3>
+              <p>
+                Upgallery records a provisioning request. A GitHub App or narrow
+                broker writes one typed declaration on a new branch and opens a PR.
+                CI validates the declaration and renders the expected diff. A
+                CODEOWNER approves it; merge triggers the fixed deploy workflow.
+              </p>
+            </div>
+            <span class="badge best">Preferred custom domains</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Excellent audit trail, preview, approval, and rollback via Git.</li>
+                <li>The app cannot directly reach the host or deployment secrets.</li>
+                <li>Branch protection and required checks provide independent gates.</li>
+                <li>Fits Yuzuyu’s existing declarative per-site model.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Not immediate while manual approval is required.</li>
+                <li>A Contents-write GitHub App can propose changes anywhere in its installed repo; GitHub permissions are not path-scoped.</li>
+                <li>Care is required so PR validation never receives production secrets or runs on a privileged self-hosted runner.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="callout">
+            Protect <code>main</code>, require the provisioning validation check and
+            a CODEOWNER review, dismiss stale approvals, require approval of the
+            latest push, and disallow bypass. GitHub documents required reviews,
+            status checks, and code-owner enforcement in
+            <a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule">branch protection</a>.
+          </div>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>C. Direct, fixed GitHub Actions dispatch</h3>
+              <p>
+                A Convex internal action calls the GitHub workflow-dispatch API with a
+                gallery request ID. The trusted workflow fetches the canonical spec,
+                validates it, and invokes one hard-coded Upgallery reconcile playbook.
+              </p>
+            </div>
+            <span class="badge useful">Reasonable shortcut</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Fast user experience and little extra infrastructure.</li>
+                <li>Actions run history, environment gates, and existing host concurrency remain available.</li>
+                <li><code>workflow_dispatch</code> now returns run URLs/IDs, making status correlation straightforward.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Actions-write permission is not limited to one workflow.</li>
+                <li>External side effects are not atomic with gallery creation.</li>
+                <li>Passing the full gallery spec as dispatch inputs increases injection and replay risk.</li>
+              </ul>
+            </div>
+          </div>
+          <p>
+            Prefer <code>workflow_dispatch</code> over
+            <code>repository_dispatch</code> here: the former requires Actions write,
+            whereas the repository-dispatch endpoint requires Contents write. In
+            either case, the receiver must use a fixed event/workflow and must not
+            accept a playbook path. See GitHub’s
+            <a href="https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event">workflow dispatch API</a>
+            and
+            <a href="https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event">repository dispatch API</a>.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>D. Dedicated provisioning broker or pull reconciler</h3>
+              <p>
+                A small service owns the GitHub/SSH credential and exposes only
+                domain-specific operations such as
+                <code>ensureUpgalleryRoute(requestId)</code>. It can poll Convex for
+                pending desired state, so the application never calls inward.
+              </p>
+            </div>
+            <span class="badge useful">Best mature design</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Strongest application/control-plane separation.</li>
+                <li>Easy to enforce allowlists, schemas, idempotency, rate limits, and retries.</li>
+                <li>A pull model needs no public webhook ingress to the host.</li>
+                <li>Can support a fully automatic admin experience once policy is trusted.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Another service to deploy, monitor, patch, and back up.</li>
+                <li>You must design authentication and result reporting.</li>
+                <li>May be excessive until custom-domain volume justifies it.</li>
+              </ul>
+            </div>
+          </div>
+          <p>
+            A pull reconciler can use a service credential only to read pending
+            requests and write results. It compares a spec hash with the applied
+            revision, runs the fixed playbook only when they differ, and remains safe
+            under duplicates or restarts.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>E. AWX / Automation Controller</h3>
+              <p>
+                Import Yuzuyu as a project, define one job template with a fixed
+                inventory, playbook, credential, and survey, then give a service
+                account only the Execute role on that template.
+              </p>
+            </div>
+            <span class="badge caution">Secure but heavyweight</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Purpose-built job-template RBAC and credential isolation.</li>
+                <li>API, run history, approvals/workflows, surveys, and notifications.</li>
+                <li>Directly answers “only this playbook” more cleanly than GitHub tokens.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Substantial platform overhead for a single host and one narrow operation.</li>
+                <li>Requires its own upgrades, database, backups, and availability planning.</li>
+                <li>Survey/extra variables still require strict validation.</li>
+              </ul>
+            </div>
+          </div>
+          <p class="fine-print">
+            AWX’s RBAC includes an Execute role that runs assigned job templates,
+            without granting template administration:
+            <a href="https://docs.ansible.com/projects/awx/en/24.6.1/userguide/rbac.html">AWX RBAC documentation</a>.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>F. Event-Driven Ansible webhook / rulebook</h3>
+              <p>
+                Run an Ansible Rulebook event source, authenticate Upgallery events
+                with HMAC or a bearer token, match only a narrow event shape, and
+                invoke a fixed playbook or Automation Controller job template.
+              </p>
+            </div>
+            <span class="badge caution">Situational</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Purpose-built event-to-automation mapping.</li>
+                <li>The webhook source supports bearer tokens, HMAC, TLS, and mTLS inputs.</li>
+                <li>Rules can explicitly map one event type to one fixed action.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Adds a long-running event service and usually an ingress endpoint.</li>
+                <li>Push webhooks need replay protection, deduplication, retry, and downtime handling.</li>
+                <li>Without Automation Controller, audit/history and RBAC are thinner than the GitOps or AWX options.</li>
+              </ul>
+            </div>
+          </div>
+          <p>
+            This is attractive if Event-Driven Ansible is already part of the
+            infrastructure. It is not a shortcut around the desired-state boundary:
+            accept a request ID, validate canonical data, and run a fixed action.
+            Ansible’s own guidance notes that callback-style sources are sensitive to
+            data loss when the receiver is unavailable. See
+            <a href="https://docs.ansible.com/projects/rulebook/en/v1.3.0/sources.html">Rulebook event sources</a>.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>G. Restricted SSH forced command or sudo wrapper</h3>
+              <p>
+                A dedicated key is restricted in <code>authorized_keys</code> to a
+                fixed wrapper. The wrapper accepts a request ID or tightly validated
+                hostname and runs exactly one local command.
+              </p>
+            </div>
+            <span class="badge caution">Use only if GitHub is unwanted</span>
+          </div>
+          <div class="pros-cons">
+            <div class="pros">
+              <h4>Pros</h4>
+              <ul>
+                <li>Small and fast; no new automation platform.</li>
+                <li>Can be narrower than the existing general Ansible SSH key.</li>
+                <li>Works without GitHub Actions availability.</li>
+              </ul>
+            </div>
+            <div class="cons">
+              <h4>Cons</h4>
+              <ul>
+                <li>Custom security boundary that is easy to weaken with quoting, environment, or path mistakes.</li>
+                <li>Weak workflow history, approval, diff, and rollback story.</li>
+                <li>Places a host-reaching credential closer to the app.</li>
+              </ul>
+            </div>
+          </div>
+          <p>
+            If used, the key must have a forced command, no PTY, no forwarding, a
+            source-address restriction where practical, and no general shell. The
+            wrapper should accept an opaque request ID and retrieve canonical data,
+            not accept arbitrary <code>--extra-vars</code>.
+          </p>
+        </article>
+
+        <article class="approach">
+          <div class="approach-head">
+            <div>
+              <h3>H. Give Upgallery Ansible, SSH, or Docker access</h3>
+              <p>
+                The app container receives Yuzuyu’s SSH key/Vault password, mounts the
+                repo or Docker socket, or can construct an
+                <code>ansible-playbook</code> command.
+              </p>
+            </div>
+            <span class="badge reject">Do not do this</span>
+          </div>
+          <div class="callout danger">
+            A compromised app, vulnerable dependency, stolen admin session, or input
+            validation bug would become root-equivalent access to the host. Ansible
+            tags are task-selection controls, not an authorization boundary. A
+            playbook allowlist enforced by the caller is meaningless after the caller
+            itself is compromised.
+          </div>
+        </article>
+      </section>
+
+      <section id="github">
+        <header>
+          <p class="eyebrow">GitHub-specific answer</p>
+          <h2>Runners can be restricted; tokens and workflows need separate controls.</h2>
+        </header>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>Can a token run only one workflow?</h3>
+            <p>
+              Not as a per-workflow repository permission. The dispatch API requires
+              Actions write. That permission also covers other workflow-management
+              operations in the repository. Use a GitHub App with minimum repository
+              access, but assume the token is repository-scoped—not workflow-scoped.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Can a runner accept only selected workflows?</h3>
+            <p>
+              Yes, organization/enterprise runner groups can be limited to selected
+              repositories and selected workflow paths pinned to a branch, tag, or
+              SHA. Only jobs directly defined in those workflows receive access.
+              Availability depends on account/organization configuration.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Should this run on the Yuzuyu host?</h3>
+            <p>
+              Prefer the current GitHub-hosted runner + SSH model. A persistent runner
+              on the managed host turns workflow code execution into local host
+              execution and expands the blast radius. If a self-hosted runner is used,
+              isolate it from the host and restrict its runner group to the exact
+              deployment workflow.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Can an environment protect the SSH key?</h3>
+            <p>
+              Yes. Put deployment secrets in a production environment and reference
+              that environment only from the deploy job. Protection rules can require
+              reviewers and restrict branches before the job starts or receives
+              secrets, subject to GitHub plan and repository visibility.
+            </p>
+          </article>
+        </div>
+
+        <h3 style="margin-top: 1.6rem;">Recommended GitHub controls</h3>
+        <ol>
+          <li>
+            Add a dedicated deploy workflow with no <code>playbook</code>,
+            <code>inventory</code>, <code>limit</code>, <code>runner</code>, or shell
+            input. Hard-code the Upgallery reconcile playbook.
+          </li>
+          <li>
+            Run untrusted PR validation on a GitHub-hosted runner with read-only
+            <code>GITHUB_TOKEN</code>, no SSH/Vault secrets, and no production
+            environment.
+          </li>
+          <li>
+            Deploy only on a push to protected <code>main</code>, using a production
+            environment and the existing global host concurrency group.
+          </li>
+          <li>
+            Protect the workflow, provisioning schema, renderer, and
+            <code>CODEOWNERS</code> file themselves with code ownership and no-bypass
+            rules.
+          </li>
+          <li>
+            Pin third-party actions to full commit SHAs. GitHub states this is the
+            only immutable way to reference an action; Yuzuyu currently uses movable
+            major-version tags for checkout and Python setup.
+          </li>
+          <li>
+            Keep the verified <code>KNOWN_HOSTS</code> secret mandatory for automated
+            production reconciliation; remove the current disable-checking fallback
+            from this narrow workflow.
+          </li>
+          <li>
+            Give the GitHub App only the repository permissions needed for its mode.
+            GitHub Apps start with no permissions, and GitHub recommends selecting the
+            minimum required permissions.
+          </li>
+        </ol>
+
+        <div class="callout warning">
+          <strong>Self-hosted runner warning</strong>
+          GitHub explicitly notes that self-hosted runners are not guaranteed to be
+          clean or ephemeral and can be persistently compromised by untrusted workflow
+          code. Environment approvals do not make the machine isolated. See
+          <a href="https://docs.github.com/en/actions/reference/security/secure-use">Secure use reference</a>
+          and
+          <a href="https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access">runner-group access controls</a>.
+        </div>
+      </section>
+
+      <section id="design">
+        <header>
+          <p class="eyebrow">Recommended target design</p>
+          <h2>Declare, review, converge, report.</h2>
+          <p>
+            Keep the contract small enough that it can be fully validated and safely
+            rendered without trusting application-supplied infrastructure syntax.
+          </p>
+        </header>
+
+        <div class="architecture" aria-label="Recommended workflow diagram">
+          <div class="arch-row">
+            <div class="arch-node">
+              <strong>1. Convex mutation</strong>
+              <small>Gallery + desired route + provisioning request commit atomically</small>
+            </div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="arch-node control">
+              <strong>2. GitOps adapter</strong>
+              <small>Opaque request ID, schema, policy, spec hash, PR</small>
+            </div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="arch-node">
+              <strong>3. Protected merge</strong>
+              <small>Checks, diff, CODEOWNER or later policy approval</small>
+            </div>
+          </div>
+          <div class="arch-row">
+            <div class="arch-node">
+              <strong>6. Convex status</strong>
+              <small>Ready / failed / retryable with applied revision and run URL</small>
+            </div>
+            <div class="arrow" aria-hidden="true">←</div>
+            <div class="arch-node privileged">
+              <strong>5. Host converge</strong>
+              <small>Render → nginx -t → reload → certificate check → health probe</small>
+            </div>
+            <div class="arrow" aria-hidden="true">←</div>
+            <div class="arch-node control">
+              <strong>4. Fixed workflow</strong>
+              <small>Trusted main, environment secrets, one playbook, serialized</small>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 1.7rem;">A deliberately narrow declaration</h3>
+        <pre><code>apiVersion: infrastructure.nyanya.org/v1
+kind: UpgalleryRoute
+metadata:
+  requestId: "provisioning-request-id"
+  galleryId: "convex-gallery-id"
+spec:
+  hostname: "photos.customer.example"
+  pathPrefix: "/"
+  tlsMode: "http01"
+  storageClass: "shared"</code></pre>
+
+        <p class="fine-print">
+          The control plane—not the declaration—owns the upstream service name,
+          container network, nginx template, filesystem base directories, certificate
+          paths, SSH inventory, and playbook. Reject unknown fields. For
+          platform-owned names, also enforce an allowed suffix. For custom domains,
+          verify DNS ownership/readiness before certificate issuance.
+        </p>
+
+        <div class="grid-2" style="margin-top: 1.25rem;">
+          <article class="card">
+            <h3>Yuzuyu changes</h3>
+            <ul>
+              <li>Add an Upgallery service wrapper, container/network definitions, and stable aliases.</li>
+              <li>Add one wildcard vhost for platform subdomains.</li>
+              <li>Add a separate typed declaration directory for custom routes.</li>
+              <li>Build a renderer that rejects unknown fields and derives all nginx directives.</li>
+              <li>Add one <code>reconcile_routes.yml</code> playbook and a dedicated workflow.</li>
+              <li>Use a one-site certificate task or a safely filtered reconciliation, rather than exposing “certbot all” as an app-selected action.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Upgallery changes</h3>
+            <ul>
+              <li>Add a provisioning request/outbox table separate from gallery content state.</li>
+              <li>Track desired and applied spec hashes, attempt count, external run/PR URL, timestamps, and errors.</li>
+              <li>Schedule an internal action only after the gallery mutation commits.</li>
+              <li>Show <code>provisioning</code>, <code>awaiting DNS</code>, <code>awaiting review</code>, <code>ready</code>, and <code>failed</code> in admin.</li>
+              <li>Do not treat an unprovisioned host as a fully active OAuth return origin.</li>
+              <li>Make retry explicit and idempotent; never roll back content metadata because an external call timed out.</li>
+            </ul>
+          </article>
+        </div>
+
+        <h3 style="margin-top: 1.7rem;">Suggested lifecycle</h3>
+        <div class="state-flow" aria-label="Provisioning states">
+          <span class="state">draft</span><span class="state-arrow">→</span>
+          <span class="state">pending</span><span class="state-arrow">→</span>
+          <span class="state">awaiting_dns</span><span class="state-arrow">→</span>
+          <span class="state">awaiting_review</span><span class="state-arrow">→</span>
+          <span class="state">deploying</span><span class="state-arrow">→</span>
+          <span class="state">ready</span>
+        </div>
+        <div class="state-flow" aria-label="Failure and retirement states">
+          <span class="state">failed_retryable</span><span class="state-arrow">↻</span>
+          <span class="state">pending</span>
+          <span class="state-arrow" style="margin-left: 1rem;">|</span>
+          <span class="state">retiring</span><span class="state-arrow">→</span>
+          <span class="state">route_removed</span>
+        </div>
+
+        <div class="callout">
+          <strong>Why an outbox is necessary</strong>
+          Convex mutations are transactional, but actions that call external APIs have
+          side effects and are not automatically retried. Scheduling an internal
+          action from the creation mutation is atomically tied to the commit, but the
+          external operation still needs an idempotency key, observed status, and
+          explicit retry/reconciliation. Convex documents these guarantees in
+          <a href="https://docs.convex.dev/scheduling/scheduled-functions">Scheduled Functions</a>
+          and
+          <a href="https://docs.convex.dev/functions/actions">Actions</a>.
+        </div>
+
+        <h3 style="margin-top: 1.7rem;">Failure semantics worth deciding up front</h3>
+        <div class="grid-3">
+          <article class="card">
+            <h4>Duplicate event</h4>
+            <p>
+              Same request ID + same spec hash returns the existing PR/run/result.
+              Same request ID + different spec is rejected.
+            </p>
+          </article>
+          <article class="card">
+            <h4>DNS not ready</h4>
+            <p>
+              Remain in <code>awaiting_dns</code>; do not repeatedly hit ACME. Offer a
+              recheck button and bounded background retry.
+            </p>
+          </article>
+          <article class="card">
+            <h4>nginx test fails</h4>
+            <p>
+              Do not reload. Preserve current live config, mark the requested revision
+              failed, and surface the sanitized validation error.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Run status is lost</h4>
+            <p>
+              Reconcile desired spec hash against the applied marker on the host or
+              merged Git revision; never infer success from an HTTP timeout.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Gallery deleted</h4>
+            <p>
+              Remove routing after a grace period. Do not recursively remove storage
+              roots or certificates in the same operation.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Two simultaneous edits</h4>
+            <p>
+              Last desired revision wins, but host convergence remains serialized and
+              records exactly which revision became active.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="rollout">
+        <header>
+          <p class="eyebrow">Pragmatic rollout</p>
+          <h2>Start with the design that is safest to change later.</h2>
+        </header>
+
+        <div class="timeline">
+          <article class="phase">
+            <div class="phase-content">
+              <h3>Remove avoidable per-gallery work</h3>
+              <p>
+                Deploy Upgallery as one Yuzuyu-managed service. Add one stable outer
+                proxy and platform-owned wildcard DNS/TLS. Make this the default
+                gallery hostname mode in admin.
+              </p>
+            </div>
+          </article>
+
+          <article class="phase">
+            <div class="phase-content">
+              <h3>Define the narrow desired-state schema</h3>
+              <p>
+                Separate route requests from general Yuzuyu nginx site YAML. Add
+                strict schema validation, hostname/path normalization, allowed storage
+                classes, spec hashing, and render-only tests.
+              </p>
+            </div>
+          </article>
+
+          <article class="phase">
+            <div class="phase-content">
+              <h3>Add PR-based custom-domain onboarding</h3>
+              <p>
+                Create provisioning branches/PRs with a GitHub App, validate without
+                secrets on GitHub-hosted runners, and require a protected merge. Keep
+                Upgallery’s admin state asynchronous and link to the PR.
+              </p>
+            </div>
+          </article>
+
+          <article class="phase">
+            <div class="phase-content">
+              <h3>Deploy from protected main only</h3>
+              <p>
+                Use a dedicated workflow, production environment, explicit secrets,
+                mandatory host-key verification, pinned actions, and the existing
+                global single-host concurrency group.
+              </p>
+            </div>
+          </article>
+
+          <article class="phase">
+            <div class="phase-content">
+              <h3>Automate policy, not authority</h3>
+              <p>
+                Once the request schema and failure modes are stable, auto-approve
+                low-risk cases such as verified custom domains at <code>/</code>.
+                Continue requiring review for shared-host path edits, user mounts, and
+                all destructive operations.
+              </p>
+            </div>
+          </article>
+        </div>
+
+        <div class="callout warning">
+          <strong>One Yuzuyu-specific hardening item before automation</strong>
+          The current reusable workflow inherits repository secrets and can disable
+          SSH host-key checking when <code>KNOWN_HOSTS</code> is missing. That escape
+          hatch may be useful for manual bootstrap, but the automated Upgallery
+          reconciliation workflow should fail closed instead.
+        </div>
+
+        <h3 style="margin-top: 1.7rem;">Final recommendation by use case</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Use case</th>
+                <th>Recommendation</th>
+                <th>Human approval?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Platform subdomain</td>
+                <td>Wildcard route; Convex-only gallery creation</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <td>Path on dedicated Upgallery host</td>
+                <td>Proxy whole host once; Convex resolves path</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <td>Customer custom domain</td>
+                <td>Typed GitOps PR, DNS check, exact vhost + TLS</td>
+                <td>Initially yes</td>
+              </tr>
+              <tr>
+                <td>Path on a shared host</td>
+                <td>Typed PR modifying shared-host declaration</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>User-backed directory / network mount</td>
+                <td>Separate storage-resource request and playbook</td>
+                <td>Yes until heavily constrained</td>
+              </tr>
+              <tr>
+                <td>High custom-domain volume later</td>
+                <td>Policy broker/pull reconciler or AWX template</td>
+                <td>Policy-dependent</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="sources">
+        <header>
+          <p class="eyebrow">Sources &amp; basis</p>
+          <h2>Primary documentation and inspected repository files.</h2>
+          <p>
+            Product behavior and permission claims were checked against current
+            first-party documentation. Repository observations reflect the local
+            source as inspected on 29 July 2026.
+          </p>
+        </header>
+
+        <div class="references">
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event">Workflow dispatch REST API</a></strong>
+              <p>Dispatch behavior, workflow ID/ref/inputs, response run ID, and Actions-write token requirement.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event">Repository dispatch REST API</a></strong>
+              <p>External-event dispatch and its Contents-write token requirement.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments">Deployments and environments</a></strong>
+              <p>Required reviewers, branch restrictions, protection rules, and delayed release of environment secrets.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access">Runner group access</a></strong>
+              <p>Selected repository and selected workflow restrictions for self-hosted runner groups.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/actions/reference/security/secure-use">GitHub Actions secure use</a></strong>
+              <p>Self-hosted runner risk, secret exposure, and immutable full-SHA action pinning.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>GH</span>
+            <div>
+              <strong><a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app">Choosing GitHub App permissions</a></strong>
+              <p>GitHub Apps start without permissions and should receive only the minimum required.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>AN</span>
+            <div>
+              <strong><a href="https://docs.ansible.com/projects/awx/en/24.6.1/userguide/rbac.html">AWX RBAC</a></strong>
+              <p>Resource roles, including Execute access scoped to assigned job templates.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>AN</span>
+            <div>
+              <strong><a href="https://docs.ansible.com/projects/rulebook/en/v1.3.0/sources.html">Ansible Rulebook event sources</a></strong>
+              <p>Webhook HMAC/bearer support and reliability trade-offs for push-based event sources.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>CX</span>
+            <div>
+              <strong><a href="https://docs.convex.dev/scheduling/scheduled-functions">Convex Scheduled Functions</a></strong>
+              <p>Atomic scheduling from mutations, action at-most-once behavior, and explicit retry requirements.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>CX</span>
+            <div>
+              <strong><a href="https://docs.convex.dev/functions/actions">Convex Actions</a></strong>
+              <p>Calling external services, side-effect failure ambiguity, and caller-owned retry behavior.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>NX</span>
+            <div>
+              <strong><a href="https://nginx.org/en/docs/http/server_names.html">Nginx server names</a></strong>
+              <p>Exact/wildcard name matching and correct wildcard forms.</p>
+            </div>
+          </div>
+          <div class="reference">
+            <span>LE</span>
+            <div>
+              <strong><a href="https://letsencrypt.org/docs/challenge-types/">Let’s Encrypt challenge types</a></strong>
+              <p>DNS-01 wildcard issuance and the importance of automated DNS-provider APIs.</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="fine-print">
+          Local repository basis: Upgallery’s gallery mutations and host resolver,
+          schema, storage path construction, upload directory creation, container
+          composition, inner nginx template, and deployment notes; Yuzuyu’s README,
+          Ansible configuration, reusable Actions workflow, nginx workflows/tasks,
+          site normalizer, vhost template, Docker Compose template, and Certbot
+          playbook. No repository files other than this report were modified.
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    const themeButton = document.getElementById("theme-toggle");
+    let savedTheme;
+    try {
+      savedTheme = localStorage.getItem("integration-report-theme");
+    } catch {
+      savedTheme = null;
+    }
+    const initialTheme = savedTheme ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    root.dataset.theme = initialTheme;
+
+    themeButton.addEventListener("click", () => {
+      const next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try {
+        localStorage.setItem("integration-report-theme", next);
+      } catch {
+        // The report still works when local file storage is unavailable.
+      }
+    });
+
+    const links = [...document.querySelectorAll(".toc a")];
+    const sections = links
+      .map((link) => document.querySelector(link.getAttribute("href")))
+      .filter(Boolean);
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      links.forEach((link) => {
+        const current = link.getAttribute("href") === `#${visible.target.id}`;
+        if (current) link.setAttribute("aria-current", "true");
+        else link.removeAttribute("aria-current");
+      });
+    }, { rootMargin: "-15% 0px -70% 0px", threshold: [0, 0.2, 0.5] });
+
+    sections.forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>

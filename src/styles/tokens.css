@@ -1,0 +1,25 @@
+:root {
+  color-scheme: light;
+  --gallery-accent: #126b5a;
+  --gallery-bg: #f3f5f1;
+  --gallery-fg: #17201d;
+  --gallery-surface: #ffffff;
+  --gallery-muted: #65716c;
+  --gallery-radius: 5px;
+  --gallery-gap: 0.5rem;
+  --border: color-mix(in srgb, var(--gallery-fg) 16%, transparent);
+  --shadow: 0 8px 32px rgb(15 28 23 / 8%);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --gallery-bg: #111714;
+    --gallery-fg: #e8eee9;
+    --gallery-surface: #18201c;
+    --gallery-muted: #9eaaa4;
+    --border: color-mix(in srgb, var(--gallery-fg) 20%, transparent);
+    --shadow: 0 8px 32px rgb(0 0 0 / 25%);
+  }
+}

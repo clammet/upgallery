@@ -1,0 +1,16 @@
+
+.env.local
+.env.storage.local
+node_modules/
+.pnpm-store/
+dist/
+storage-dist/
+.storage/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+
+.agents/skills/
+.claude/skills/
+skills-lock.json

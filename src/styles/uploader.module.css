@@ -1,0 +1,16 @@
+.uploadForm { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .65rem; margin: 0 auto 1rem; max-width: 700px; padding: .75rem; }
+.uploadForm label { display: grid; font-size: .78rem; gap: .25rem; }
+.filePicker { align-items: center; border: 1px dashed var(--border); cursor: pointer; min-height: 68px; padding: .8rem; text-align: center; }
+.filePicker input { margin-top: .5rem; }
+.preview { max-height: 260px; max-width: 100%; object-fit: contain; }
+.textPreview, .exif { background: var(--gallery-bg); border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0; max-height: 320px; overflow: auto; padding: .6rem; white-space: pre-wrap; }
+.entryList { display: grid; gap: .35rem; margin: 0 auto; max-width: 900px; }
+.entry { align-items: center; background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .65rem; grid-template-columns: 64px minmax(0, 1fr) auto; padding: .45rem; }
+.entryDetails { min-width: 0; }
+.entryDetails strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entryDetails p { color: var(--gallery-muted); margin: .2rem 0; }
+.entryActions { display: flex; gap: .3rem; }
+@media (max-width: 620px) {
+  .entry { grid-template-columns: 48px minmax(0, 1fr); }
+  .entryActions { grid-column: 1 / -1; justify-content: flex-end; }
+}

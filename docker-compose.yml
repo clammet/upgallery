@@ -1,0 +1,131 @@
+services:
+  storage-api:
+    build:
+      context: .
+      target: storage
+    restart: unless-stopped
+    stop_grace_period: 70s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${STORAGE_API_MEMORY_LIMIT:-1g}
+    cpus: ${STORAGE_API_CPU_LIMIT:-1.0}
+    environment:
+      PORT: 8787
+      CONVEX_SITE_URL: ${STORAGE_CONVEX_SITE_URL:?set STORAGE_CONVEX_SITE_URL}
+      STORAGE_INTERNAL_SECRET: ${STORAGE_INTERNAL_SECRET:?set STORAGE_INTERNAL_SECRET}
+      STORAGE_ROOT: /data/media
+      MAX_ABSOLUTE_UPLOAD_BYTES: ${MAX_ABSOLUTE_UPLOAD_BYTES:-10737418240}
+      STORAGE_HEARTBEAT_INTERVAL_MS: ${STORAGE_HEARTBEAT_INTERVAL_MS:-30000}
+      STORAGE_SHUTDOWN_GRACE_MS: ${STORAGE_SHUTDOWN_GRACE_MS:-60000}
+      STORAGE_TEMP_MAX_AGE_MS: ${STORAGE_TEMP_MAX_AGE_MS:-86400000}
+      STORAGE_WORKER_TASK_TIMEOUT_MS: ${STORAGE_WORKER_TASK_TIMEOUT_MS:-3600000}
+      STORAGE_MAX_CONCURRENT_UPLOADS: ${STORAGE_MAX_CONCURRENT_UPLOADS:-4}
+      STORAGE_MAX_QUEUED_UPLOADS: ${STORAGE_MAX_QUEUED_UPLOADS:-16}
+      STORAGE_MAX_CONCURRENT_DOWNLOADS: ${STORAGE_MAX_CONCURRENT_DOWNLOADS:-16}
+      STORAGE_MAX_QUEUED_DOWNLOADS: ${STORAGE_MAX_QUEUED_DOWNLOADS:-64}
+      STORAGE_MAX_CONCURRENT_FILESYSTEM_OPERATIONS: ${STORAGE_MAX_CONCURRENT_FILESYSTEM_OPERATIONS:-2}
+      STORAGE_MAX_QUEUED_FILESYSTEM_OPERATIONS: ${STORAGE_MAX_QUEUED_FILESYSTEM_OPERATIONS:-16}
+    volumes:
+      - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared
+      - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users
+      - ${UPGALLERY_UPLOADER_ROOT:-./data/uploaders}:/data/media/protected/uploaders
+      - storage-tmp:/data/media/.tmp
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  storage-worker:
+    build:
+      context: .
+      target: storage
+    command: ["node", "storage-dist/worker.js"]
+    restart: unless-stopped
+    stop_grace_period: 70s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${STORAGE_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${STORAGE_WORKER_CPU_LIMIT:-2.0}
+    environment:
+      WORKER_HEALTH_PORT: 8788
+      CONVEX_SITE_URL: ${STORAGE_CONVEX_SITE_URL:?set STORAGE_CONVEX_SITE_URL}
+      STORAGE_INTERNAL_SECRET: ${STORAGE_INTERNAL_SECRET:?set STORAGE_INTERNAL_SECRET}
+      STORAGE_ROOT: /data/media
+      STORAGE_POLL_INTERVAL_MS: ${STORAGE_POLL_INTERVAL_MS:-1000}
+      STORAGE_HEARTBEAT_INTERVAL_MS: ${STORAGE_HEARTBEAT_INTERVAL_MS:-30000}
+      STORAGE_SHUTDOWN_GRACE_MS: ${STORAGE_SHUTDOWN_GRACE_MS:-60000}
+      STORAGE_FFMPEG_TIMEOUT_MS: ${STORAGE_FFMPEG_TIMEOUT_MS:-300000}
+      STORAGE_WORKER_TASK_TIMEOUT_MS: ${STORAGE_WORKER_TASK_TIMEOUT_MS:-3600000}
+      STORAGE_MEDIA_WORKER_CONCURRENCY: ${STORAGE_MEDIA_WORKER_CONCURRENCY:-2}
+      STORAGE_SYNC_WORKER_CONCURRENCY: ${STORAGE_SYNC_WORKER_CONCURRENCY:-2}
+      STORAGE_SHARP_CONCURRENCY: ${STORAGE_SHARP_CONCURRENCY:-1}
+    volumes:
+      - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared
+      - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users
+      - ${UPGALLERY_UPLOADER_ROOT:-./data/uploaders}:/data/media/protected/uploaders
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8788/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_CONVEX_URL: ${PUBLIC_CONVEX_URL:?set PUBLIC_CONVEX_URL}
+        VITE_CONVEX_SITE_URL: ${PUBLIC_CONVEX_SITE_URL:?set PUBLIC_CONVEX_SITE_URL}
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID}
+        VITE_STORAGE_API_URL: ""
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    mem_limit: ${WEB_MEMORY_LIMIT:-256m}
+    cpus: ${WEB_CPU_LIMIT:-0.5}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    environment:
+      STORAGE_UPSTREAM: storage-api:8787
+    volumes:
+      - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared:ro
+      - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users:ro
+    depends_on:
+      storage-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  storage-tmp:

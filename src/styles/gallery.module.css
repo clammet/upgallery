@@ -1,0 +1,11 @@
+.grid { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
+.folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .3rem; min-height: 112px; overflow: hidden; padding: .45rem; text-decoration: none; }
+.folderCard { align-content: center; justify-items: center; }
+.folderCard:hover, .fileCard:hover { border-color: var(--gallery-accent); }
+.folderIcon { color: var(--gallery-accent); font-size: 2.1rem; transform: rotate(2deg); }
+.fileThumb { aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-fg) 6%, transparent); border-radius: calc(var(--gallery-radius) - 1px); display: block; object-fit: cover; width: 100%; }
+.fileGlyph { align-items: center; aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: calc(var(--gallery-radius) - 1px); color: var(--gallery-accent); display: flex; font-size: 1.3rem; font-weight: 800; justify-content: center; letter-spacing: -.04em; width: 100%; }
+.miniGlyph { width: 64px; }
+.fileName { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { color: var(--gallery-muted); padding: 12vh 1rem; text-align: center; }
+@media (max-width: 480px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
