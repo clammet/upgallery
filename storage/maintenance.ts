@@ -47,6 +47,13 @@ async function processDelete(
         },
       );
     }
+    if (claim.removePreview && claim.previewKey !== undefined) {
+      await unlink(absoluteStoragePath(claim.previewKey)).catch(
+        (error: unknown) => {
+          if (!isMissing(error)) throw error;
+        },
+      );
+    }
     await callConvex("/internal/storage/complete-delete", {
       jobId: claim.jobId,
     });
@@ -92,11 +99,26 @@ async function processMigration(
       });
       await copyAtomically(claim.sourceThumbnailKey, thumbnailKey, signal);
     }
+    let previewKey: string | undefined;
+    if (claim.sourcePreviewKey !== undefined) {
+      previewKey = buildStorageKey({
+        galleryKind: claim.galleryKind,
+        storageKind: claim.targetStorageKind,
+        storageRoot: claim.targetStorageRoot,
+        sha256: claim.sha256,
+        extension: claim.extension,
+        preview: true,
+        folderSegments: claim.targetFolderSegments,
+        fileName: claim.fileName,
+      });
+      await copyAtomically(claim.sourcePreviewKey, previewKey, signal);
+    }
     await callConvex("/internal/storage/complete-migration", {
       migrationId: claim.migrationId,
       entryId: claim.entryId,
       storageKey,
       thumbnailKey,
+      previewKey,
     });
   } catch (error) {
     await callConvex("/internal/storage/complete-migration", {
@@ -141,6 +163,20 @@ async function processEntryMove(
       });
       await copyAtomically(claim.sourceThumbnailKey, thumbnailKey, signal);
     }
+    let previewKey: string | undefined;
+    if (claim.sourcePreviewKey !== undefined) {
+      previewKey = buildStorageKey({
+        galleryKind: claim.galleryKind,
+        storageKind: claim.targetStorageKind,
+        storageRoot: claim.targetStorageRoot,
+        sha256: claim.sha256,
+        extension: claim.extension,
+        preview: true,
+        folderSegments: claim.targetFolderSegments,
+        fileName: claim.fileName,
+      });
+      await copyAtomically(claim.sourcePreviewKey, previewKey, signal);
+    }
     const filesystemMetadata =
       claim.targetStorageKind === "user"
         ? await stat(absoluteStoragePath(storageKey))
@@ -149,6 +185,7 @@ async function processEntryMove(
       jobId: claim.jobId,
       storageKey,
       thumbnailKey,
+      previewKey,
       filesystemModifiedAt: filesystemMetadata?.mtimeMs,
       filesystemIdentity:
         filesystemMetadata === undefined

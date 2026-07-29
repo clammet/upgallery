@@ -21,10 +21,30 @@ import {
   verifyPassword,
 } from "./lib/crypto";
 import { disposition } from "./lib/validators";
+import { requestMediaPreview } from "./lib/storageJobs";
 
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
 const MAX_BULK_ENTRIES = 128;
+
+function isHeifEntry(entry: {
+  mimeType: string;
+  extension: string;
+  mediaKind: string;
+}) {
+  return (
+    entry.mediaKind === "image" &&
+    (new Set([
+      "image/heic",
+      "image/heic-sequence",
+      "image/heif",
+      "image/heif-sequence",
+    ]).has(entry.mimeType.toLowerCase()) ||
+      new Set(["heic", "heics", "heif", "heifs", "hif"]).has(
+        entry.extension.toLowerCase(),
+      ))
+  );
+}
 
 async function assertCanUpload(
   ctx: Parameters<typeof getCurrentProfile>[0],
@@ -193,6 +213,86 @@ export const createDownloadTicket = mutation({
   },
 });
 
+export const requestPreview = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    entryId: v.id("entries"),
+    password: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const entry = await ctx.db.get("entries", args.entryId);
+    if (
+      entry === null ||
+      entry.galleryId !== args.galleryId ||
+      entry.state !== "ready" ||
+      !isHeifEntry(entry)
+    ) {
+      throw new Error("File not found");
+    }
+    const [gallery, folder, profile] = await Promise.all([
+      ctx.db.get("galleries", entry.galleryId),
+      ctx.db.get("folders", entry.folderId),
+      getCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      folder === null ||
+      !(await canViewFolder(ctx, folder, profile))
+    ) {
+      throw new Error("Unauthorized");
+    }
+    if (entry.passwordHash !== undefined) {
+      if (
+        args.password === undefined ||
+        entry.passwordSalt === undefined ||
+        entry.passwordIterations === undefined ||
+        !(await verifyPassword(
+          args.password,
+          entry.passwordSalt,
+          entry.passwordHash,
+          entry.passwordIterations,
+        ))
+      ) {
+        throw new Error("Incorrect password");
+      }
+    }
+    if (entry.previewKey === undefined) {
+      if (entry.previewError !== undefined) {
+        await ctx.db.patch("entries", entry._id, {
+          previewError: undefined,
+          updatedAt: Date.now(),
+        });
+      }
+      await requestMediaPreview(ctx, {
+        entryId: entry._id,
+        storageKey: entry.storageKey,
+        sha256: entry.sha256,
+      });
+      return { status: "pending" as const };
+    }
+    if (gallery.kind === "image") {
+      return {
+        status: "ready" as const,
+        previewKey: entry.previewKey,
+      };
+    }
+    const token = createToken();
+    await ctx.db.insert("downloadTickets", {
+      entryId: entry._id,
+      tokenHash: await sha256(token),
+      disposition: "preview",
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+    return {
+      status: "ready" as const,
+      previewKey: entry.previewKey,
+      token,
+    };
+  },
+});
+
 export const getForUploaderView = query({
   args: {
     anonymousClaim: v.optional(v.string()),
@@ -226,6 +326,8 @@ export const getForUploaderView = query({
       name: entry.name,
       size: entry.size,
       mimeType: entry.mimeType,
+      previewKey: entry.previewKey,
+      previewError: entry.previewError,
       passwordProtected: entry.passwordHash !== undefined,
     };
   },
@@ -405,6 +507,7 @@ export const remove = mutation({
       entryId: entry._id,
       storageKey: entry.storageKey,
       thumbnailKey: entry.thumbnailKey,
+      previewKey: entry.previewKey,
       deleteEntry: true,
       status: "queued",
       attempts: 0,
@@ -472,6 +575,7 @@ export const removeMany = mutation({
         entryId: entry._id,
         storageKey: entry.storageKey,
         thumbnailKey: entry.thumbnailKey,
+        previewKey: entry.previewKey,
         deleteEntry: true,
         status: "queued",
         attempts: 0,

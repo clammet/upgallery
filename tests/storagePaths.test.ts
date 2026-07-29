@@ -38,3 +38,19 @@ test("user-backed generated thumbnails remain hidden and sharded", async () => {
     `public/users/alice/photos/.upgallery/thumbnails/ab/cd/${"abcd".padEnd(64, "0")}.thumb.jpg`,
   );
 });
+
+test("generated previews use a separate full-resolution cache path", async () => {
+  const { buildStorageKey } = await import("../storage/paths.js");
+  expect(
+    buildStorageKey({
+      galleryKind: "image",
+      storageKind: "user",
+      storageRoot: "alice/photos",
+      sha256: "abcd".padEnd(64, "0"),
+      extension: "heic",
+      preview: true,
+    }),
+  ).toBe(
+    `public/users/alice/photos/.upgallery/previews/ab/cd/${"abcd".padEnd(64, "0")}.preview.jpg`,
+  );
+});

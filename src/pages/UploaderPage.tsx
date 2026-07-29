@@ -1,10 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import {
+  MediaViewer,
+  shouldOpenMediaViewer,
+  type MediaViewerItem,
+} from "../components/MediaViewer";
 import { TrashIcon } from "../components/ActionIcons";
 import { formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
@@ -17,6 +29,10 @@ import {
 } from "../lib/metadata";
 import { uploaderFileUrl } from "../lib/uploaderRoutes";
 import { friendlyError } from "../lib/errors";
+import {
+  isHeifImage,
+  shouldUseNativeHeifPreview,
+} from "../lib/media";
 import styles from "../styles/uploader.module.css";
 import layout from "../styles/layout.module.css";
 
@@ -36,10 +52,13 @@ export function UploaderPage(props: {
   const [textPreview, setTextPreview] = useState<string | null>(null);
   const [metadataJson, setMetadataJson] = useState<string | null>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
+  const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
   const thumbnailRequest = useRef("");
   const createThumbnailTickets = useMutation(
     api.entries.createThumbnailTickets,
   );
+  const createDownloadTicket = useMutation(api.entries.createDownloadTicket);
+  const requestPreview = useMutation(api.entries.requestPreview);
   const { upload, uploading, error } = useUpload();
   const previewUrl = useMemo(
     () => (file?.type.startsWith("image/") ? URL.createObjectURL(file) : null),
@@ -103,6 +122,60 @@ export function UploaderPage(props: {
       )
       .map((entry) => entry._id) ?? [];
   const thumbnailRequestKey = `${props.gallery._id}:${props.rootFolder._id}:${thumbnailEntryIds.join(",")}`;
+  const viewerItems = useMemo<MediaViewerItem[]>(
+    () =>
+      (listing?.entries ?? []).map((entry) => ({
+        id: entry._id,
+        title: entry.name,
+        href: uploaderFileUrl(props.routeRoot, entry._id, entry.name),
+        mediaKind: entry.mediaKind,
+        mimeType: entry.mimeType,
+        passwordProtected: entry.passwordProtected,
+        previewReady:
+          !isHeifImage(entry.mimeType, entry.name) ||
+          shouldUseNativeHeifPreview(entry.mimeType, entry.name) ||
+          entry.previewKey !== undefined,
+        previewError: entry.previewError,
+      })),
+    [listing?.entries, props.routeRoot],
+  );
+  const viewerIndex =
+    viewerEntryId === null
+      ? -1
+      : viewerItems.findIndex((item) => item.id === viewerEntryId);
+  const resolveViewerSource = useCallback(
+    async (item: MediaViewerItem, suppliedPassword?: string) => {
+      if (
+        isHeifImage(item.mimeType, item.title) &&
+        !shouldUseNativeHeifPreview(item.mimeType, item.title)
+      ) {
+        const result = await requestPreview({
+          anonymousClaim: getOrCreateAnonymousClaim(),
+          galleryId: props.gallery._id,
+          entryId: item.id as Id<"entries">,
+          password: suppliedPassword || undefined,
+        });
+        if (result.status === "pending") return null;
+        if (!("token" in result) || result.token === undefined) {
+          throw new Error("Preview ticket was not created");
+        }
+        return storageApi(
+          `/api/storage/files/${item.id}?ticket=${encodeURIComponent(result.token)}`,
+        );
+      }
+      const { token } = await createDownloadTicket({
+        anonymousClaim: getOrCreateAnonymousClaim(),
+        galleryId: props.gallery._id,
+        entryId: item.id as Id<"entries">,
+        password: suppliedPassword || undefined,
+        disposition: "inline",
+      });
+      return storageApi(
+        `/api/storage/files/${item.id}?ticket=${encodeURIComponent(token)}`,
+      );
+    },
+    [createDownloadTicket, props.gallery._id, requestPreview],
+  );
 
   useEffect(() => {
     if (listing === undefined || thumbnailRequest.current === thumbnailRequestKey) {
@@ -195,6 +268,7 @@ export function UploaderPage(props: {
             entry={entry}
             routeRoot={props.routeRoot}
             thumbnailUrl={thumbnailUrls[entry._id]}
+            onOpen={() => setViewerEntryId(entry._id)}
             onMetadata={() =>
               entry.metadataJson && setMetadataJson(entry.metadataJson)
             }
@@ -205,6 +279,14 @@ export function UploaderPage(props: {
         <MetadataDialog
           metadataJson={metadataJson}
           onClose={() => setMetadataJson(null)}
+        />
+      ) : null}
+      {viewerIndex >= 0 ? (
+        <MediaViewer
+          items={viewerItems}
+          initialIndex={viewerIndex}
+          resolveSource={resolveViewerSource}
+          onClose={() => setViewerEntryId(null)}
         />
       ) : null}
     </PageFrame>
@@ -219,6 +301,7 @@ function UploaderEntry(props: {
   };
   routeRoot: string;
   thumbnailUrl?: string;
+  onOpen: () => void;
   onMetadata: () => void;
 }) {
   const removeEntry = useMutation(api.entries.remove);
@@ -239,6 +322,11 @@ function UploaderEntry(props: {
         target="_blank"
         rel="noopener noreferrer"
         aria-label={`View ${props.entry.name}`}
+        onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+          if (!shouldOpenMediaViewer(event)) return;
+          event.preventDefault();
+          props.onOpen();
+        }}
       >
         <span className={styles.thumbnail}>
           {props.thumbnailUrl ? (

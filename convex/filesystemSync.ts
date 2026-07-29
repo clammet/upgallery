@@ -394,6 +394,8 @@ export const reconcileFilesystemFile = internalMutation({
     const now = Date.now();
     if (existing !== null && existing.galleryId === gallery._id) {
       const wasReady = existing.state === "ready";
+      const contentChanged = existing.sha256 !== args.sha256;
+      const stalePreviewKey = contentChanged ? existing.previewKey : undefined;
       await ctx.db.patch("entries", existing._id, {
         folderId: folder._id,
         name: args.name,
@@ -405,6 +407,8 @@ export const reconcileFilesystemFile = internalMutation({
         storageKind: "user",
         storageKey: args.storageKey,
         thumbnailKey: args.thumbnailKey,
+        previewKey: contentChanged ? undefined : existing.previewKey,
+        previewError: contentChanged ? undefined : existing.previewError,
         metadataJson: args.metadataJson,
         filesystemModifiedAt: args.modifiedAt,
         filesystemIdentity: args.identity,
@@ -419,6 +423,18 @@ export const reconcileFilesystemFile = internalMutation({
         .take(16);
       for (const job of deleteJobs) {
         await ctx.db.delete("storageDeleteJobs", job._id);
+      }
+      if (stalePreviewKey !== undefined) {
+        await ctx.db.insert("storageDeleteJobs", {
+          entryId: existing._id,
+          storageKey: args.storageKey,
+          previewKey: stalePreviewKey,
+          deleteOriginal: false,
+          deleteEntry: false,
+          status: "queued",
+          attempts: 0,
+          availableAt: 0,
+        });
       }
       let counter = await ctx.db
         .query("entryCounters")
@@ -550,6 +566,22 @@ export const completeFilesystemSync = internalMutation({
         if (counter !== null) {
           await ctx.db.delete("entryCounters", counter._id);
         }
+        if (
+          entry.thumbnailKey !== undefined ||
+          entry.previewKey !== undefined
+        ) {
+          await ctx.db.insert("storageDeleteJobs", {
+            entryId: entry._id,
+            storageKey: entry.storageKey,
+            thumbnailKey: entry.thumbnailKey,
+            previewKey: entry.previewKey,
+            deleteOriginal: false,
+            deleteEntry: false,
+            status: "queued",
+            attempts: 0,
+            availableAt: 0,
+          });
+        }
         await ctx.db.delete("entries", entry._id);
         removedItems += 1;
         removedBytes += entry.size;
@@ -634,6 +666,22 @@ export const cleanupMissingFolder = internalMutation({
         .unique();
       if (counter !== null) {
         await ctx.db.delete("entryCounters", counter._id);
+      }
+      if (
+        entry.thumbnailKey !== undefined ||
+        entry.previewKey !== undefined
+      ) {
+        await ctx.db.insert("storageDeleteJobs", {
+          entryId: entry._id,
+          storageKey: entry.storageKey,
+          thumbnailKey: entry.thumbnailKey,
+          previewKey: entry.previewKey,
+          deleteOriginal: false,
+          deleteEntry: false,
+          status: "queued",
+          attempts: 0,
+          availableAt: 0,
+        });
       }
       await ctx.db.delete("entries", entry._id);
       removedBytes += entry.size;

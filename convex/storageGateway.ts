@@ -134,6 +134,8 @@ export const completeUpload = internalMutation({
     const now = Date.now();
     if (existing !== null) {
       const wasReady = existing.state === "ready";
+      const contentChanged = existing.sha256 !== args.sha256;
+      const stalePreviewKey = contentChanged ? existing.previewKey : undefined;
       await ctx.db.patch("entries", existing._id, {
         folderId: intent.folderId,
         ownerProfileId: intent.ownerProfileId,
@@ -148,6 +150,8 @@ export const completeUpload = internalMutation({
         storageKind: gallery.storageKind,
         storageKey: args.storageKey,
         thumbnailKey: args.thumbnailKey,
+        previewKey: contentChanged ? undefined : existing.previewKey,
+        previewError: contentChanged ? undefined : existing.previewError,
         metadataJson: args.metadataJson,
         filesystemModifiedAt: args.filesystemModifiedAt,
         filesystemIdentity: args.filesystemIdentity,
@@ -164,6 +168,18 @@ export const completeUpload = internalMutation({
         .take(16);
       for (const job of pendingDeleteJobs) {
         await ctx.db.delete("storageDeleteJobs", job._id);
+      }
+      if (stalePreviewKey !== undefined) {
+        await ctx.db.insert("storageDeleteJobs", {
+          entryId: existing._id,
+          storageKey: args.storageKey,
+          previewKey: stalePreviewKey,
+          deleteOriginal: false,
+          deleteEntry: false,
+          status: "queued",
+          attempts: 0,
+          availableAt: 0,
+        });
       }
       const counter = await ctx.db
         .query("entryCounters")
@@ -302,12 +318,17 @@ export const claimDownload = internalMutation({
     if (entry === null || entry.state !== "ready") {
       throw new Error("File not found");
     }
-    const storageKey =
-      ticket.disposition === "thumbnail"
-        ? entry.thumbnailKey
+    const usesThumbnail = ticket.disposition === "thumbnail";
+    const usesPreview = ticket.disposition === "preview";
+    const storageKey = usesThumbnail
+      ? entry.thumbnailKey
+      : usesPreview
+        ? entry.previewKey
         : entry.storageKey;
     if (storageKey === undefined) {
-      throw new Error("Thumbnail is not available");
+      throw new Error(
+        usesPreview ? "Preview is not available" : "Thumbnail is not available",
+      );
     }
     const firstClaim = ticket.claimedAt === undefined;
     if (firstClaim) {
@@ -332,8 +353,7 @@ export const claimDownload = internalMutation({
     return {
       entryId: entry._id,
       storageKey,
-      mimeType:
-        ticket.disposition === "thumbnail" ? "image/jpeg" : entry.mimeType,
+      mimeType: usesThumbnail || usesPreview ? "image/jpeg" : entry.mimeType,
       fileName: entry.name,
       disposition: ticket.disposition,
     };
@@ -382,6 +402,15 @@ export const claimMaintenance = internalMutation({
                 q.eq("thumbnailKey", deleteJob.thumbnailKey),
               )
               .take(16);
+      const previewReferences =
+        deleteJob.previewKey === undefined
+          ? []
+          : await ctx.db
+              .query("entries")
+              .withIndex("by_previewKey", (q) =>
+                q.eq("previewKey", deleteJob.previewKey),
+              )
+              .take(16);
       await ctx.db.patch("storageDeleteJobs", deleteJob._id, {
         status: "processing",
         attempts,
@@ -394,11 +423,18 @@ export const claimMaintenance = internalMutation({
         jobId: deleteJob._id,
         storageKey: deleteJob.storageKey,
         thumbnailKey: deleteJob.thumbnailKey,
-        removePhysical: !references.some(
+        previewKey: deleteJob.previewKey,
+        removePhysical:
+          deleteJob.deleteOriginal !== false &&
+          !references.some(
+            (entry) =>
+              entry._id !== deleteJob.entryId && entry.state === "ready",
+          ),
+        removeThumbnail: !thumbnailReferences.some(
           (entry) =>
             entry._id !== deleteJob.entryId && entry.state === "ready",
         ),
-        removeThumbnail: !thumbnailReferences.some(
+        removePreview: !previewReferences.some(
           (entry) =>
             entry._id !== deleteJob.entryId && entry.state === "ready",
         ),
@@ -504,6 +540,7 @@ export const claimMaintenance = internalMutation({
         fileName: entry.name,
         sourceStorageKey: entry.storageKey,
         sourceThumbnailKey: entry.thumbnailKey,
+        sourcePreviewKey: entry.previewKey,
         sha256: entry.sha256,
         extension: entry.extension,
       };
@@ -592,6 +629,7 @@ export const claimMaintenance = internalMutation({
       fileName: entry.name,
       sourceStorageKey: entry.storageKey,
       sourceThumbnailKey: entry.thumbnailKey,
+      sourcePreviewKey: entry.previewKey,
       sha256: entry.sha256,
       extension: entry.extension,
     };
@@ -715,6 +753,7 @@ export const completeMigration = internalMutation({
     entryId: v.id("entries"),
     storageKey: v.optional(v.string()),
     thumbnailKey: v.optional(v.string()),
+    previewKey: v.optional(v.string()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -758,10 +797,12 @@ export const completeMigration = internalMutation({
     }
     const sourceStorageKey = entry.storageKey;
     const sourceThumbnailKey = entry.thumbnailKey;
+    const sourcePreviewKey = entry.previewKey;
     await ctx.db.patch("entries", entry._id, {
       storageKind: migration.targetStorageKind,
       storageKey: args.storageKey,
       thumbnailKey: args.thumbnailKey,
+      previewKey: args.previewKey,
       filesystemModifiedAt: undefined,
       filesystemIdentity: undefined,
       filesystemSyncId: undefined,
@@ -779,6 +820,7 @@ export const completeMigration = internalMutation({
       entryId: entry._id,
       storageKey: sourceStorageKey,
       thumbnailKey: sourceThumbnailKey,
+      previewKey: sourcePreviewKey,
       deleteEntry: false,
       status: "queued",
       attempts: 0,
@@ -793,6 +835,7 @@ export const completeEntryMove = internalMutation({
     jobId: v.id("entryMoveJobs"),
     storageKey: v.optional(v.string()),
     thumbnailKey: v.optional(v.string()),
+    previewKey: v.optional(v.string()),
     filesystemModifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
     error: v.optional(v.string()),
@@ -891,6 +934,7 @@ export const completeEntryMove = internalMutation({
     }
     const sourceStorageKey = entry.storageKey;
     const sourceThumbnailKey = entry.thumbnailKey;
+    const sourcePreviewKey = entry.previewKey;
     const now = Date.now();
     await ctx.db.patch("entries", entry._id, {
       galleryId: destinationGallery._id,
@@ -898,6 +942,7 @@ export const completeEntryMove = internalMutation({
       storageKind: destinationGallery.storageKind,
       storageKey: args.storageKey,
       thumbnailKey: args.thumbnailKey,
+      previewKey: args.previewKey,
       filesystemModifiedAt: args.filesystemModifiedAt,
       filesystemIdentity: args.filesystemIdentity,
       filesystemSyncId: undefined,
@@ -935,6 +980,10 @@ export const completeEntryMove = internalMutation({
         thumbnailKey:
           sourceThumbnailKey !== args.thumbnailKey
             ? sourceThumbnailKey
+            : undefined,
+        previewKey:
+          sourcePreviewKey !== args.previewKey
+            ? sourcePreviewKey
             : undefined,
         deleteEntry: false,
         status: "queued",

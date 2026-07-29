@@ -719,6 +719,8 @@ http.route({
       (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
+      (body.previewKey !== undefined &&
+        typeof body.previewKey !== "string") ||
       (body.filesystemModifiedAt !== undefined &&
         typeof body.filesystemModifiedAt !== "number") ||
       (body.filesystemIdentity !== undefined &&
@@ -731,6 +733,7 @@ http.route({
       jobId: body.jobId as Id<"entryMoveJobs">,
       storageKey: body.storageKey,
       thumbnailKey: body.thumbnailKey,
+      previewKey: body.previewKey,
       filesystemModifiedAt: body.filesystemModifiedAt,
       filesystemIdentity: body.filesystemIdentity,
       error: body.error,
@@ -754,6 +757,8 @@ http.route({
       (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
+      (body.previewKey !== undefined &&
+        typeof body.previewKey !== "string") ||
       (body.error !== undefined && typeof body.error !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
@@ -763,6 +768,7 @@ http.route({
       entryId: body.entryId as Id<"entries">,
       storageKey: body.storageKey,
       thumbnailKey: body.thumbnailKey,
+      previewKey: body.previewKey,
       error: body.error,
     });
     return json({ ok: true });
@@ -1306,6 +1312,8 @@ http.route({
       typeof body.jobId !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
+      (body.previewKey !== undefined &&
+        typeof body.previewKey !== "string") ||
       (body.metadataJson !== undefined &&
         typeof body.metadataJson !== "string") ||
       (body.error !== undefined && typeof body.error !== "string")
@@ -1315,6 +1323,7 @@ http.route({
     await ctx.runMutation(internal.storageJobs.completeMediaProcessing, {
       jobId: body.jobId as Id<"mediaProcessingJobs">,
       thumbnailKey: body.thumbnailKey,
+      previewKey: body.previewKey,
       metadataJson: body.metadataJson,
       error: body.error,
     });

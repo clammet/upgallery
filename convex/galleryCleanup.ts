@@ -20,6 +20,7 @@ export const queueEntries = internalMutation({
         entryId: entry._id,
         storageKey: entry.storageKey,
         thumbnailKey: entry.thumbnailKey,
+        previewKey: entry.previewKey,
         deleteEntry: true,
         status: "queued",
         attempts: 0,

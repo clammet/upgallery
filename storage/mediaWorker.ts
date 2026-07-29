@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { callConvex, type MediaProcessingClaim } from "./convex.js";
 import {
+  createPreview,
   createThumbnail,
   extractMediaMetadataJson,
 } from "./media.js";
@@ -14,7 +15,7 @@ export async function processMediaClaim(
     const sourcePath = absoluteStoragePath(claim.storageKey);
     const before = await stat(sourcePath);
     assertExpectedUserFile(claim, before);
-    const thumbnailKey = await createThumbnail({
+    const mediaInput = {
       sourcePath,
       galleryKind: claim.galleryKind,
       storageKind: claim.storageKind,
@@ -23,18 +24,23 @@ export async function processMediaClaim(
       extension: claim.extension,
       mediaKind: claim.mediaKind,
       signal,
-    });
-    const metadataJson = await extractMediaMetadataJson(
-      sourcePath,
-      claim.mediaKind,
-      signal,
-    );
+    };
+    const thumbnailKey = claim.processThumbnail
+      ? await createThumbnail(mediaInput)
+      : undefined;
+    const metadataJson = claim.processMetadata
+      ? await extractMediaMetadataJson(sourcePath, claim.mediaKind, signal)
+      : undefined;
+    const previewKey = claim.generatePreview
+      ? await createPreview(mediaInput)
+      : undefined;
     const after = await stat(sourcePath);
     assertExpectedUserFile(claim, after);
     await callConvex("/internal/storage/complete-media-processing", {
       jobId: claim.jobId,
       thumbnailKey,
       metadataJson,
+      previewKey,
     });
   } catch (error) {
     await callConvex("/internal/storage/complete-media-processing", {

@@ -24,8 +24,22 @@ gallery-level CSS variables plus an owner-supplied scoped CSS override.
 
 ## Local development
 
-Requirements: Node.js 24+, pnpm 11+, and `ffmpeg` if video thumbnails are
-required locally.
+Requirements: Node.js 24+, pnpm 11+, `ffmpeg` for video/BMP thumbnails, and a
+libvips build with libheif support for HEIC/HEIF thumbnails and previews. On
+macOS, Homebrew provides the required native libraries:
+
+```bash
+brew install vips libheif ffmpeg pkgconf
+pnpm install
+pnpm sharp:build-heic
+pnpm sharp:check-heic
+```
+
+Run `pnpm sharp:build-heic` again after upgrading or reinstalling Sharp. The
+build command sets `SHARP_FORCE_GLOBAL_LIBVIPS=1`, so the native Sharp addon
+links to Homebrew's libvips rather than its bundled decoder. The check command
+fails with an actionable message if `.heic` and `.heif` input support is not
+available.
 
 Install packages, then configure the Convex CLI for a local development
 deployment if this checkout does not already have one:
@@ -122,6 +136,7 @@ See [Google OAuth client setup](docs/google-oauth.md) for the complete flow and
 pnpm check
 pnpm test
 pnpm build
+pnpm sharp:check-heic
 ```
 
 ## Main routes

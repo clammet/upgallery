@@ -45,7 +45,7 @@ export type DownloadClaim = {
   storageKey: string;
   mimeType: string;
   fileName: string;
-  disposition: "inline" | "attachment" | "thumbnail";
+  disposition: "inline" | "attachment" | "thumbnail" | "preview";
 };
 
 export type MaintenanceClaim =
@@ -55,8 +55,10 @@ export type MaintenanceClaim =
       jobId: string;
       storageKey: string;
       thumbnailKey?: string;
+      previewKey?: string;
       removePhysical: boolean;
       removeThumbnail: boolean;
+      removePreview: boolean;
     }
   | {
       kind: "migration";
@@ -69,6 +71,7 @@ export type MaintenanceClaim =
       fileName: string;
       sourceStorageKey: string;
       sourceThumbnailKey?: string;
+      sourcePreviewKey?: string;
       sha256: string;
       extension: string;
     }
@@ -83,6 +86,7 @@ export type MaintenanceClaim =
       fileName: string;
       sourceStorageKey: string;
       sourceThumbnailKey?: string;
+      sourcePreviewKey?: string;
       sha256: string;
       extension: string;
     };
@@ -111,6 +115,9 @@ export type MediaProcessingClaim =
       storageRoot: string;
       size: number;
       filesystemModifiedAt?: number;
+      processThumbnail: boolean;
+      processMetadata: boolean;
+      generatePreview: boolean;
     };
 
 export type FilesystemOperationClaim = {

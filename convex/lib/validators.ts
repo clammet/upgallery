@@ -61,6 +61,7 @@ export const disposition = v.union(
   v.literal("inline"),
   v.literal("attachment"),
   v.literal("thumbnail"),
+  v.literal("preview"),
 );
 
 export const themeValidator = v.object({

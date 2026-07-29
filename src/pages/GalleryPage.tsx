@@ -1,9 +1,11 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
@@ -13,6 +15,11 @@ import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
 import {
+  MediaViewer,
+  shouldOpenMediaViewer,
+  type MediaViewerItem,
+} from "../components/MediaViewer";
+import {
   MoveIcon,
   SelectListIcon,
   TrashIcon,
@@ -21,6 +28,10 @@ import { publicMediaUrl, formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
 import { friendlyError } from "../lib/errors";
 import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import {
+  isHeifImage,
+  shouldUseNativeHeifPreview,
+} from "../lib/media";
 import styles from "../styles/gallery.module.css";
 import layout from "../styles/layout.module.css";
 
@@ -40,6 +51,7 @@ export function GalleryPage(props: {
   const updateFolder = useMutation(api.folders.update);
   const removeEntries = useMutation(api.entries.removeMany);
   const moveEntries = useMutation(api.entries.moveMany);
+  const requestPreview = useMutation(api.entries.requestPreview);
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
   const { upload, uploading, error } = useUpload();
@@ -56,6 +68,56 @@ export function GalleryPage(props: {
   const [moveDialog, setMoveDialog] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [draggingEntries, setDraggingEntries] = useState(false);
+  const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
+
+  const viewerItems = useMemo<MediaViewerItem[]>(
+    () =>
+      (listing?.entries ?? []).map((entry) => {
+        const sourceUrl = publicMediaUrl(
+          entry.storageKey,
+          entry.filesystemModifiedAt,
+        );
+        const heif = isHeifImage(entry.mimeType, entry.name);
+        const nativeHeifPreview = shouldUseNativeHeifPreview(
+          entry.mimeType,
+          entry.name,
+        );
+        const viewerSourceUrl = !heif || nativeHeifPreview
+          ? sourceUrl
+          : entry.previewKey === undefined
+            ? undefined
+            : publicMediaUrl(entry.previewKey);
+        return {
+          id: entry._id,
+          title: entry.name,
+          href: sourceUrl,
+          sourceUrl: viewerSourceUrl,
+          mediaKind: entry.mediaKind,
+          mimeType: entry.mimeType,
+          previewReady:
+            !heif || nativeHeifPreview || entry.previewKey !== undefined,
+          previewError: nativeHeifPreview ? undefined : entry.previewError,
+        };
+      }),
+    [listing?.entries],
+  );
+  const resolveViewerSource = useCallback(
+    async (item: MediaViewerItem) => {
+      const result = await requestPreview({
+        anonymousClaim: getOrCreateAnonymousClaim(),
+        galleryId: props.gallery._id,
+        entryId: item.id as Id<"entries">,
+      });
+      return result.status === "pending"
+        ? null
+        : publicMediaUrl(result.previewKey);
+    },
+    [props.gallery._id, requestPreview],
+  );
+  const viewerIndex =
+    viewerEntryId === null
+      ? -1
+      : viewerItems.findIndex((item) => item.id === viewerEntryId);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -363,6 +425,7 @@ export function GalleryPage(props: {
             entry={entry}
             selectMode={selectMode}
             selected={selectedEntryIds.has(entry._id)}
+            onOpen={() => setViewerEntryId(entry._id)}
             onToggle={() => {
               setSelectedEntryIds((current) => {
                 const next = new Set(current);
@@ -395,6 +458,14 @@ export function GalleryPage(props: {
       </div>
       {listing.folders.length === 0 && listing.entries.length === 0 ? (
         <p className={styles.empty}>This folder is empty.</p>
+      ) : null}
+      {viewerIndex >= 0 ? (
+        <MediaViewer
+          items={viewerItems}
+          initialIndex={viewerIndex}
+          resolveSource={resolveViewerSource}
+          onClose={() => setViewerEntryId(null)}
+        />
       ) : null}
 
       {folderDialog === "create" ? (
@@ -513,6 +584,7 @@ function GalleryEntryCard(props: {
   entry: Doc<"entries">;
   selectMode: boolean;
   selected: boolean;
+  onOpen: () => void;
   onToggle: () => void;
   onDragStart: (event: ReactDragEvent<HTMLElement>) => void;
   onDragEnd: () => void;
@@ -582,6 +654,11 @@ function GalleryEntryCard(props: {
           )}
           target="_blank"
           rel="noreferrer"
+          onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+            if (!shouldOpenMediaViewer(event)) return;
+            event.preventDefault();
+            props.onOpen();
+          }}
         >
           {content}
         </a>

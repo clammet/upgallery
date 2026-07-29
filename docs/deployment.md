@@ -25,18 +25,20 @@ names:
 ```text
 public/shared/family/9f/a2/9fa2…c1.jpg
 public/shared/family/9f/a2/9fa2…c1.thumb.jpg
+public/shared/family/9f/a2/9fa2…c1.preview.jpg
 public/users/alice/photos/2026/July/beach sunset.png
 public/users/alice/photos/.upgallery/thumbnails/31/7b/317b…20.thumb.jpg
+public/users/alice/photos/.upgallery/previews/31/7b/317b…20.preview.jpg
 protected/uploaders/support/0c/44/0c44…aa.zip
 ```
 
 The hidden `.upgallery` directory contains generated, content-addressed
-thumbnails and is never exposed as a gallery folder. Shared and protected
-content paths prevent very large single directories and can deduplicate
-identical bytes inside one storage namespace. User-backed originals remain
-ordinary files that can be managed through SFTP, SCP, rsync, or the application.
-Deletion checks for other live metadata references before unlinking shared
-bytes.
+thumbnails and full-resolution compatibility previews and is never exposed as
+a gallery folder. Shared and protected content paths prevent very large single
+directories and can deduplicate identical bytes inside one storage namespace.
+User-backed originals remain ordinary files that can be managed through SFTP,
+SCP, rsync, or the application. Deletion checks for other live metadata
+references before unlinking shared bytes or derivatives.
 
 Never mount `protected/uploaders` into the Nginx container. Uploader downloads
 must pass through the gateway so password checks and view/download counters
@@ -194,6 +196,14 @@ limits.
    docker compose up -d --build
    ```
 
+   The storage image compiles the pinned libvips release during the image
+   build, with Alpine's libheif decoder enabled, then compiles Sharp against
+   that libvips. Both the builder and final storage stage run
+   `scripts/check-sharp-heic.mjs`, so an image build fails instead of shipping
+   without HEIC/HEIF support. This belongs at image-build time: Compose only
+   starts immutable services and does not download compilers or mutate native
+   libraries at deployment startup.
+
 7. Put a TLS reverse proxy in front of the public gallery domains and use the
    infrastructure-provided Convex origins. Preserve the original Host header
    for gallery host/path resolution.
@@ -242,9 +252,14 @@ the deployment under representative media sizes.
   has a lower or equal configurable limit.
 - Nginx request buffering is disabled for `/api/storage/` so uploads stream
   through the gateway instead of being duplicated in proxy temp storage.
-- Thumbnail generation uses Sharp for images and ffmpeg for videos. It runs as
-  durable worker work after the original is committed, has bounded concurrency,
-  and retries failures without failing the original upload.
+- Thumbnail generation uses the custom libheif-enabled Sharp build for images,
+  libheif's `heif-thumbnailer` as a defensive fallback, and ffmpeg for videos.
+  Non-Safari HEIC/HEIF modal requests add a full-resolution JPEG derivative to
+  the same durable media job. Safari continues to receive the original. The
+  cached preview is reused by later viewers and follows the entry through
+  moves, migrations, and deletion. Media work has bounded concurrency and
+  retries without failing the original upload. A media processor version
+  requeues jobs that permanently failed before a newly deployed decoder fix.
 - The API and worker expose `/healthz` and `/readyz`; Compose uses readiness
   checks that include connectivity to the provisioned Convex HTTP Actions
   origin.

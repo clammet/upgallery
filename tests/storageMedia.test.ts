@@ -6,6 +6,8 @@ import sharp from "sharp";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 let storageRoot: string;
+let previousHeifThumbnailerCommand: string | undefined;
+let previousFakeHeifImage: string | undefined;
 
 beforeAll(async () => {
   storageRoot = await mkdtemp(join(tmpdir(), "upgallery-bmp-thumbnail-"));
@@ -13,10 +15,50 @@ beforeAll(async () => {
   process.env.STORAGE_INTERNAL_SECRET =
     "test-storage-secret-with-more-than-24-characters";
   process.env.STORAGE_ROOT = storageRoot;
+  previousHeifThumbnailerCommand =
+    process.env.STORAGE_HEIF_THUMBNAILER_COMMAND;
+  previousFakeHeifImage = process.env.UPGALLERY_FAKE_HEIF_IMAGE;
+  const decodedImagePath = join(storageRoot, "fake-heif-decoded.png");
+  await sharp({
+    create: {
+      width: 12,
+      height: 8,
+      channels: 3,
+      background: "#884422",
+    },
+  })
+    .png()
+    .toFile(decodedImagePath);
+  const fakeThumbnailerPath = join(storageRoot, "fake-heif-thumbnailer");
+  await writeFile(
+    fakeThumbnailerPath,
+    [
+      "#!/bin/sh",
+      'for output in "$@"; do',
+      "  :",
+      "done",
+      'cp "$UPGALLERY_FAKE_HEIF_IMAGE" "$output"',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  process.env.STORAGE_HEIF_THUMBNAILER_COMMAND = fakeThumbnailerPath;
+  process.env.UPGALLERY_FAKE_HEIF_IMAGE = decodedImagePath;
 });
 
 afterAll(async () => {
   await rm(storageRoot, { recursive: true, force: true });
+  if (previousHeifThumbnailerCommand === undefined) {
+    delete process.env.STORAGE_HEIF_THUMBNAILER_COMMAND;
+  } else {
+    process.env.STORAGE_HEIF_THUMBNAILER_COMMAND =
+      previousHeifThumbnailerCommand;
+  }
+  if (previousFakeHeifImage === undefined) {
+    delete process.env.UPGALLERY_FAKE_HEIF_IMAGE;
+  } else {
+    process.env.UPGALLERY_FAKE_HEIF_IMAGE = previousFakeHeifImage;
+  }
 });
 
 test("BMP images generate JPEG thumbnails", async () => {
@@ -51,6 +93,34 @@ test("BMP images generate JPEG thumbnails", async () => {
   expect(mediaMetadata).toMatchObject({ Resolution: "2 × 2" });
 });
 
+test("HEIC images fall back to the libheif thumbnailer", async () => {
+  const sourcePath = join(storageRoot, "source.heic");
+  await writeFile(sourcePath, "fake HEIC input");
+  const { createThumbnail } = await import("../storage/media.js");
+
+  const sha256 = "h".repeat(64);
+  const thumbnailKey = await createThumbnail({
+    sourcePath,
+    galleryKind: "uploader",
+    storageKind: "shared",
+    storageRoot: "heic-test",
+    sha256,
+    extension: "heic",
+    mediaKind: "image",
+  });
+
+  expect(thumbnailKey).toBe(
+    `protected/uploaders/heic-test/hh/hh/${sha256}.thumb.jpg`,
+  );
+  const thumbnail = await readFile(join(storageRoot, thumbnailKey!));
+  const metadata = await sharp(thumbnail).metadata();
+  expect(metadata).toMatchObject({
+    format: "jpeg",
+    width: 12,
+    height: 8,
+  });
+});
+
 test("image metadata includes auto-oriented resolution", async () => {
   const sourcePath = join(storageRoot, "resolution.jpg");
   await sharp({
@@ -68,6 +138,43 @@ test("image metadata includes auto-oriented resolution", async () => {
   const json = await extractMediaMetadataJson(sourcePath, "image");
 
   expect(JSON.parse(json!)).toMatchObject({ Resolution: "12 × 8" });
+});
+
+test("full-resolution previews preserve the source pixel dimensions", async () => {
+  const sourcePath = join(storageRoot, "preview-source.jpg");
+  await sharp({
+    create: {
+      width: 123,
+      height: 77,
+      channels: 3,
+      background: "#224466",
+    },
+  })
+    .jpeg()
+    .toFile(sourcePath);
+  const { createPreview } = await import("../storage/media.js");
+  const sha256 = "c".repeat(64);
+
+  const previewKey = await createPreview({
+    sourcePath,
+    galleryKind: "uploader",
+    storageKind: "shared",
+    storageRoot: "preview-test",
+    sha256,
+    extension: "jpg",
+    mediaKind: "image",
+  });
+
+  expect(previewKey).toBe(
+    `protected/uploaders/preview-test/cc/cc/${sha256}.preview.jpg`,
+  );
+  await expect(
+    sharp(join(storageRoot, previewKey)).metadata(),
+  ).resolves.toMatchObject({
+    format: "jpeg",
+    width: 123,
+    height: 77,
+  });
 });
 
 test("QuickTime metadata includes display resolution and decoded location", async () => {

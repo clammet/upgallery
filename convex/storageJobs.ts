@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import {
+  MEDIA_PROCESSOR_VERSION,
   STORAGE_JOB_LEASE_MS,
   STORAGE_JOB_MAX_ATTEMPTS,
   storageJobRetryDelay,
@@ -170,7 +171,15 @@ export const claimMediaProcessing = internalMutation({
         q.eq("status", "queued").lte("availableAt", now),
       )
       .first();
-    const job = stale ?? queued;
+    const failedFromOlderProcessor = await ctx.db
+      .query("mediaProcessingJobs")
+      .withIndex("by_status_and_processorVersion", (q) =>
+        q
+          .eq("status", "failed")
+          .lt("processorVersion", MEDIA_PROCESSOR_VERSION),
+      )
+      .first();
+    const job = stale ?? queued ?? failedFromOlderProcessor;
     if (job === null) {
       return { kind: "none" as const };
     }
@@ -188,11 +197,12 @@ export const claimMediaProcessing = internalMutation({
       await ctx.db.delete("mediaProcessingJobs", job._id);
       return { kind: "none" as const };
     }
-    const attempts = job.attempts + 1;
+    const attempts = job.status === "failed" ? 1 : job.attempts + 1;
     if (attempts > STORAGE_JOB_MAX_ATTEMPTS) {
       await ctx.db.patch("mediaProcessingJobs", job._id, {
         status: "failed",
         leaseExpiresAt: undefined,
+        processorVersion: MEDIA_PROCESSOR_VERSION,
         error: job.error ?? "Media processing exhausted its retries",
       });
       return { kind: "none" as const };
@@ -202,6 +212,7 @@ export const claimMediaProcessing = internalMutation({
       attempts,
       claimedAt: now,
       leaseExpiresAt: now + STORAGE_JOB_LEASE_MS,
+      processorVersion: MEDIA_PROCESSOR_VERSION,
       error: undefined,
     });
     return {
@@ -217,6 +228,12 @@ export const claimMediaProcessing = internalMutation({
       storageRoot: gallery.storageRoot,
       size: entry.size,
       filesystemModifiedAt: entry.filesystemModifiedAt,
+      processThumbnail: entry.thumbnailKey === undefined,
+      processMetadata: entry.metadataJson === undefined,
+      generatePreview:
+        job.previewRequested === true &&
+        entry.previewKey === undefined &&
+        entry.thumbnailKey !== undefined,
     };
   },
 });
@@ -239,6 +256,7 @@ export const completeMediaProcessing = internalMutation({
   args: {
     jobId: v.id("mediaProcessingJobs"),
     thumbnailKey: v.optional(v.string()),
+    previewKey: v.optional(v.string()),
     metadataJson: v.optional(v.string()),
     error: v.optional(v.string()),
   },
@@ -254,6 +272,21 @@ export const completeMediaProcessing = internalMutation({
           leaseExpiresAt: undefined,
           error,
         });
+        if (job.previewRequested === true) {
+          const entry = await ctx.db.get("entries", job.entryId);
+          if (
+            entry !== null &&
+            entry.state === "ready" &&
+            entry.storageKey === job.expectedStorageKey &&
+            entry.sha256 === job.expectedSha256
+          ) {
+            await ctx.db.patch("entries", entry._id, {
+              previewError:
+                "The full-resolution preview could not be generated. Please try again.",
+              updatedAt: Date.now(),
+            });
+          }
+        }
       } else {
         await ctx.db.patch("mediaProcessingJobs", job._id, {
           status: "queued",
@@ -273,10 +306,35 @@ export const completeMediaProcessing = internalMutation({
       entry.sha256 === job.expectedSha256
     ) {
       await ctx.db.patch("entries", entry._id, {
-        thumbnailKey: args.thumbnailKey,
-        metadataJson: args.metadataJson,
+        ...(args.thumbnailKey === undefined
+          ? {}
+          : { thumbnailKey: args.thumbnailKey }),
+        ...(args.metadataJson === undefined
+          ? {}
+          : { metadataJson: args.metadataJson }),
+        ...(args.previewKey === undefined
+          ? {}
+          : {
+              previewKey: args.previewKey,
+              previewError: undefined,
+            }),
         updatedAt: Date.now(),
       });
+      if (
+        job.previewRequested === true &&
+        args.previewKey === undefined &&
+        entry.previewKey === undefined
+      ) {
+        await ctx.db.patch("mediaProcessingJobs", job._id, {
+          status: "queued",
+          attempts: 0,
+          availableAt: 0,
+          claimedAt: undefined,
+          leaseExpiresAt: undefined,
+          error: undefined,
+        });
+        return null;
+      }
     }
     await ctx.db.delete("mediaProcessingJobs", job._id);
     return null;

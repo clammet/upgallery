@@ -109,6 +109,8 @@ export default defineSchema({
     storageKind,
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
+    previewKey: v.optional(v.string()),
+    previewError: v.optional(v.string()),
     metadataJson: v.optional(v.string()),
     filesystemModifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
@@ -140,6 +142,7 @@ export default defineSchema({
     .index("by_uploadIntentId", ["uploadIntentId"])
     .index("by_storageKey", ["storageKey"])
     .index("by_thumbnailKey", ["thumbnailKey"])
+    .index("by_previewKey", ["previewKey"])
     .index("by_ownerProfileId", ["ownerProfileId"]),
 
   filesystemSyncStates: defineTable({
@@ -221,6 +224,8 @@ export default defineSchema({
     entryId: v.id("entries"),
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
+    previewKey: v.optional(v.string()),
+    deleteOriginal: v.optional(v.boolean()),
     deleteEntry: v.boolean(),
     status: jobState,
     error: v.optional(v.string()),
@@ -290,8 +295,11 @@ export default defineSchema({
     claimedAt: v.optional(v.number()),
     leaseExpiresAt: v.optional(v.number()),
     error: v.optional(v.string()),
+    processorVersion: v.optional(v.number()),
+    previewRequested: v.optional(v.boolean()),
   })
     .index("by_status", ["status"])
+    .index("by_status_and_processorVersion", ["status", "processorVersion"])
     .index("by_status_and_availableAt", ["status", "availableAt"])
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
     .index("by_entryId", ["entryId"]),

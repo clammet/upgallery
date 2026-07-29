@@ -37,6 +37,8 @@ export const config = {
     24 * 60 * 60 * 1000,
   ),
   ffmpegTimeoutMs: positiveInteger("STORAGE_FFMPEG_TIMEOUT_MS", 5 * 60 * 1000),
+  heifThumbnailerCommand:
+    process.env.STORAGE_HEIF_THUMBNAILER_COMMAND?.trim() || "heif-thumbnailer",
   workerTaskTimeoutMs: positiveInteger(
     "STORAGE_WORKER_TASK_TIMEOUT_MS",
     60 * 60 * 1000,

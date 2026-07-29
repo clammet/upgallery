@@ -18,20 +18,24 @@ export function buildStorageKey(input: {
   sha256: string;
   extension: string;
   thumbnail?: boolean;
+  preview?: boolean;
   folderSegments?: string[];
   fileName?: string;
 }): string {
+  if (input.thumbnail && input.preview) {
+    throw new Error("A storage key cannot be both a thumbnail and a preview");
+  }
   if (input.galleryKind === "image" && input.storageKind === "user") {
-    if (input.thumbnail) {
+    if (input.thumbnail || input.preview) {
       return [
         "public",
         "users",
         input.storageRoot,
         ".upgallery",
-        "thumbnails",
+        input.preview ? "previews" : "thumbnails",
         input.sha256.slice(0, 2),
         input.sha256.slice(2, 4),
-        `${input.sha256}.thumb.jpg`,
+        `${input.sha256}.${input.preview ? "preview" : "thumb"}.jpg`,
       ].join("/");
     }
     if (input.fileName === undefined) {
@@ -50,7 +54,11 @@ export function buildStorageKey(input: {
       : input.storageKind === "shared"
         ? "shared"
         : "users";
-  const suffix = input.thumbnail ? ".thumb.jpg" : `.${input.extension}`;
+  const suffix = input.preview
+    ? ".preview.jpg"
+    : input.thumbnail
+      ? ".thumb.jpg"
+      : `.${input.extension}`;
   return [
     visibility,
     bucket,

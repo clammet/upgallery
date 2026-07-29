@@ -33,5 +33,8 @@ describe("storage download headers", () => {
     expect(
       contentDispositionForDownload("attachment", "I'm here.txt"),
     ).toBe("attachment; filename*=UTF-8''I%27m%20here.txt");
+    expect(
+      contentDispositionForDownload("preview", "photo.heic"),
+    ).toBe("inline; filename*=UTF-8''photo.heic");
   });
 });

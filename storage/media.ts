@@ -18,6 +18,13 @@ export type MediaKind =
   | "other";
 
 const ffmpegImageExtensions = new Set(["bmp", "dib"]);
+const heifImageExtensions = new Set([
+  "heic",
+  "heics",
+  "heif",
+  "heifs",
+  "hif",
+]);
 
 export function classifyMedia(mimeType: string): MediaKind {
   if (mimeType.startsWith("image/")) return "image";
@@ -81,6 +88,7 @@ export async function createThumbnail(input: {
   const thumbnailKey = buildStorageKey({ ...input, thumbnail: true });
   const thumbnailPath = absoluteStoragePath(thumbnailKey);
   const temporaryPath = `${thumbnailPath}.partial-${randomUUID()}.jpg`;
+  const decodedHeifPath = `${thumbnailPath}.partial-${randomUUID()}.png`;
   try {
     input.signal?.throwIfAborted();
     await mkdir(dirname(thumbnailPath), { recursive: true });
@@ -88,11 +96,22 @@ export async function createThumbnail(input: {
       input.mediaKind === "image" &&
       !ffmpegImageExtensions.has(input.extension.toLocaleLowerCase())
     ) {
-      await sharp(input.sourcePath)
-        .rotate()
-        .resize(480, 360, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 82, mozjpeg: true })
-        .toFile(temporaryPath);
+      try {
+        await writeSharpThumbnail(input.sourcePath, temporaryPath);
+      } catch (error) {
+        if (
+          !heifImageExtensions.has(input.extension.toLocaleLowerCase()) &&
+          !(await isHeifContainer(input.sourcePath))
+        ) {
+          throw error;
+        }
+        await runHeifThumbnailer(
+          input.sourcePath,
+          decodedHeifPath,
+          input.signal,
+        );
+        await writeSharpThumbnail(decodedHeifPath, temporaryPath);
+      }
     } else {
       await runFfmpeg(
         input.sourcePath,
@@ -106,11 +125,79 @@ export async function createThumbnail(input: {
     return thumbnailKey;
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);
+    const detail = error instanceof Error ? `: ${error.message}` : "";
     throw new Error(
-      `Thumbnail generation failed for ${extname(input.sourcePath)}`,
+      `Thumbnail generation failed for ${extname(input.sourcePath)}${detail}`,
+      { cause: error },
+    );
+  } finally {
+    await unlink(decodedHeifPath).catch(() => undefined);
+  }
+}
+
+export async function createPreview(input: {
+  sourcePath: string;
+  galleryKind: "image" | "uploader";
+  storageKind: "shared" | "user";
+  storageRoot: string;
+  sha256: string;
+  extension: string;
+  mediaKind: MediaKind;
+  signal?: AbortSignal;
+}): Promise<string> {
+  if (input.mediaKind !== "image") {
+    throw new Error("Full-resolution previews are only supported for images");
+  }
+  const previewKey = buildStorageKey({ ...input, preview: true });
+  const previewPath = absoluteStoragePath(previewKey);
+  const temporaryPath = `${previewPath}.partial-${randomUUID()}.jpg`;
+  try {
+    input.signal?.throwIfAborted();
+    await mkdir(dirname(previewPath), { recursive: true });
+    await sharp(input.sourcePath)
+      .rotate()
+      .jpeg({ quality: 88, mozjpeg: true })
+      .toFile(temporaryPath);
+    input.signal?.throwIfAborted();
+    await rename(temporaryPath, previewPath);
+    return previewKey;
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined);
+    const detail = error instanceof Error ? `: ${error.message}` : "";
+    throw new Error(
+      `Preview generation failed for ${extname(input.sourcePath)}${detail}`,
       { cause: error },
     );
   }
+}
+
+async function isHeifContainer(sourcePath: string): Promise<boolean> {
+  const metadata = await sharp(sourcePath).metadata().catch(() => undefined);
+  return metadata?.format === "heif";
+}
+
+async function writeSharpThumbnail(
+  sourcePath: string,
+  outputPath: string,
+): Promise<void> {
+  await sharp(sourcePath)
+    .rotate()
+    .resize(480, 360, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82, mozjpeg: true })
+    .toFile(outputPath);
+}
+
+async function runHeifThumbnailer(
+  sourcePath: string,
+  outputPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await runMediaCommand(
+    config.heifThumbnailerCommand,
+    ["-s", "480", "-p", sourcePath, outputPath],
+    "HEIF thumbnailer",
+    signal,
+  );
 }
 
 async function runFfmpeg(
@@ -119,25 +206,37 @@ async function runFfmpeg(
   seekVideo: boolean,
   signal?: AbortSignal,
 ): Promise<void> {
+  await runMediaCommand(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      ...(seekVideo ? ["-ss", "00:00:01"] : []),
+      "-i",
+      sourcePath,
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=480:360:force_original_aspect_ratio=decrease",
+      "-y",
+      outputPath,
+    ],
+    "ffmpeg",
+    signal,
+  );
+}
+
+async function runMediaCommand(
+  command: string,
+  args: string[],
+  label: string,
+  signal?: AbortSignal,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "ffmpeg",
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        ...(seekVideo ? ["-ss", "00:00:01"] : []),
-        "-i",
-        sourcePath,
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=480:360:force_original_aspect_ratio=decrease",
-        "-y",
-        outputPath,
-      ],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
+    const child = spawn(command, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
     let stderr = "";
     let settled = false;
     const finish = (error?: Error) => {
@@ -153,12 +252,12 @@ async function runFfmpeg(
       finish(
         signal?.reason instanceof Error
           ? signal.reason
-          : new Error("ffmpeg was aborted"),
+          : new Error(`${label} was aborted`),
       );
     };
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
-      finish(new Error(`ffmpeg exceeded ${config.ffmpegTimeoutMs}ms`));
+      finish(new Error(`${label} exceeded ${config.ffmpegTimeoutMs}ms`));
     }, config.ffmpegTimeoutMs);
     timeout.unref();
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -170,7 +269,7 @@ async function runFfmpeg(
     child.on("error", (error) => finish(error));
     child.on("exit", (code) => {
       if (code === 0) finish();
-      else finish(new Error(stderr || `ffmpeg exited with ${code}`));
+      else finish(new Error(stderr || `${label} exited with ${code}`));
     });
   });
 }

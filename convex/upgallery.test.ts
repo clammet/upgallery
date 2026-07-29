@@ -240,6 +240,11 @@ describe("upgallery backend", () => {
         thumbnailKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.thumb.jpg`,
       },
     );
+    await t.run(async (ctx) => {
+      await ctx.db.patch("entries", entryId, {
+        previewKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.preview.jpg`,
+      });
+    });
     const visitor = await seedProfile(t, { anonymous: true });
 
     await expect(
@@ -283,13 +288,168 @@ describe("upgallery backend", () => {
       token: thumbnailTicket!.token,
     });
 
+    const previewTicket = await t.mutation(
+      api.entries.createDownloadTicket,
+      {
+        anonymousClaim: visitor.anonymousClaim,
+        galleryId,
+        entryId,
+        disposition: "preview",
+      },
+    );
+    await expect(
+      t.mutation(internal.storageGateway.claimDownload, {
+        token: previewTicket.token,
+      }),
+    ).resolves.toMatchObject({
+      storageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.preview.jpg`,
+      mimeType: "image/jpeg",
+      disposition: "preview",
+    });
+
     const counter = await t.run(async (ctx) =>
       ctx.db
         .query("entryCounters")
         .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
         .unique(),
     );
-    expect(counter).toMatchObject({ views: 1, downloads: 0 });
+    expect(counter).toMatchObject({ views: 2, downloads: 0 });
+
+    const failedJobId = await t.run(async (ctx) =>
+      ctx.db.insert("mediaProcessingJobs", {
+        entryId,
+        expectedStorageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.jpg`,
+        expectedSha256: "d".repeat(64),
+        status: "failed",
+        attempts: 5,
+        availableAt: 0,
+        error: "Unsupported decoder",
+      }),
+    );
+    await expect(
+      t.mutation(internal.storageJobs.claimMediaProcessing, {}),
+    ).resolves.toMatchObject({
+      kind: "ready",
+      jobId: failedJobId,
+    });
+    const replayedJob = await t.run(async (ctx) =>
+      ctx.db.get("mediaProcessingJobs", failedJobId),
+    );
+    expect(replayedJob).toMatchObject({
+      status: "processing",
+      attempts: 1,
+      processorVersion: 2,
+    });
+  });
+
+  test("HEIC preview requests reuse the durable media-processing queue", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "HEIC previews",
+      slug: "heic-previews",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "heic-previews",
+      hosts: [{ host: "heic.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const intent = await authed.mutation(api.entries.createUploadIntent, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      name: "iphone.heic",
+      mimeType: "image/heic",
+      size: 456,
+    });
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const sha = "e".repeat(64);
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "image/heic",
+        extension: "heic",
+        mediaKind: "image",
+        size: 456,
+        sha256: sha,
+        storageKey: `protected/uploaders/heic-previews/ee/ee/${sha}.heic`,
+      },
+    );
+    const visitor = await seedProfile(t, { anonymous: true });
+    const initialClaim = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    expect(initialClaim).toMatchObject({
+      kind: "ready",
+      entryId,
+      processThumbnail: true,
+      generatePreview: false,
+    });
+    if (initialClaim.kind !== "ready") {
+      throw new Error("Expected initial media work");
+    }
+
+    await expect(
+      t.mutation(api.entries.requestPreview, {
+        anonymousClaim: visitor.anonymousClaim,
+        galleryId,
+        entryId,
+      }),
+    ).resolves.toEqual({ status: "pending" });
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: initialClaim.jobId,
+      thumbnailKey:
+        `protected/uploaders/heic-previews/ee/ee/${sha}.thumb.jpg`,
+      metadataJson: "{\"Resolution\":\"4032 × 3024\"}",
+    });
+
+    const claim = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    expect(claim).toMatchObject({
+      kind: "ready",
+      entryId,
+      processThumbnail: false,
+      processMetadata: false,
+      generatePreview: true,
+    });
+    if (claim.kind !== "ready") throw new Error("Expected preview work");
+    const previewKey =
+      `protected/uploaders/heic-previews/ee/ee/${sha}.preview.jpg`;
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: claim.jobId,
+      previewKey,
+    });
+
+    const ready = await t.mutation(api.entries.requestPreview, {
+      anonymousClaim: visitor.anonymousClaim,
+      galleryId,
+      entryId,
+    });
+    expect(ready).toMatchObject({
+      status: "ready",
+      previewKey,
+    });
+    if (ready.status !== "ready" || !("token" in ready)) {
+      throw new Error("Expected a protected preview ticket");
+    }
+    await expect(
+      t.mutation(internal.storageGateway.claimDownload, {
+        token: ready.token!,
+      }),
+    ).resolves.toMatchObject({
+      storageKey: previewKey,
+      mimeType: "image/jpeg",
+      disposition: "preview",
+    });
   });
 
   test("Google sign-in upgrades an anonymous profile without losing ownership", async () => {
@@ -630,6 +790,7 @@ describe("upgallery backend", () => {
     expect(job).toMatchObject({
       status: "queued",
       attempts: 0,
+      processorVersion: 2,
       expectedSha256: "c".repeat(64),
     });
 
