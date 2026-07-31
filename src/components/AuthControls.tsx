@@ -29,10 +29,9 @@ export function AuthControls() {
   }
   return (
     <div className={styles.authGroup}>
-      {profile.image ? (
-        <img className={styles.avatar} src={profile.image} alt="" />
-      ) : null}
-      <span className={styles.authName}>{profile.displayName ?? profile.email}</span>
+      <span className={styles.authName} title={profile.email}>
+        {profile.displayName ?? profile.email}
+      </span>
       <button
         className={styles.quietButton}
         type="button"

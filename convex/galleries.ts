@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
+  folderPreviewMode,
   galleryKind,
   storageKind,
   themeValidator,
@@ -28,6 +29,24 @@ const hostInput = v.object({
   host: v.string(),
   rootPath: v.string(),
 });
+
+const MIN_THUMBNAIL_FRAME_SIZE = 96;
+const MAX_THUMBNAIL_FRAME_SIZE = 512;
+
+function validateThumbnailFrameSize(theme: {
+  thumbnailFrameSize?: number;
+}) {
+  if (
+    theme.thumbnailFrameSize !== undefined &&
+    (!Number.isSafeInteger(theme.thumbnailFrameSize) ||
+      theme.thumbnailFrameSize < MIN_THUMBNAIL_FRAME_SIZE ||
+      theme.thumbnailFrameSize > MAX_THUMBNAIL_FRAME_SIZE)
+  ) {
+    throw new Error(
+      `Thumbnail frame size must be between ${MIN_THUMBNAIL_FRAME_SIZE} and ${MAX_THUMBNAIL_FRAME_SIZE} pixels`,
+    );
+  }
+}
 
 async function assertHostsAvailable(
   ctx: Parameters<typeof requireSystemAdmin>[0],
@@ -95,6 +114,7 @@ export const create = mutation({
     maxFileSize: v.optional(v.number()),
     uploaderAccess: v.optional(uploaderAccess),
     hosts: v.array(hostInput),
+    folderPreviewMode: v.optional(folderPreviewMode),
     theme: v.optional(themeValidator),
   },
   handler: async (ctx, args) => {
@@ -127,6 +147,7 @@ export const create = mutation({
       host: normalizeHost(route.host),
       rootPath: normalizeRootPath(route.rootPath),
     }));
+    validateThumbnailFrameSize(args.theme ?? {});
     await assertHostsAvailable(ctx, hosts);
 
     const galleryId = await ctx.db.insert("galleries", {
@@ -138,6 +159,7 @@ export const create = mutation({
       maxFileSize,
       uploaderAccess:
         args.uploaderAccess ?? (args.kind === "uploader" ? "anonymous" : "sso"),
+      folderPreviewMode: args.folderPreviewMode ?? "first",
       theme: args.theme ?? {},
       itemCount: 0,
       totalBytes: 0,
@@ -346,6 +368,7 @@ export const update = mutation({
     maxFileSize: v.number(),
     uploaderAccess,
     hosts: v.array(hostInput),
+    folderPreviewMode: v.optional(folderPreviewMode),
     theme: themeValidator,
   },
   handler: async (ctx, args) => {
@@ -362,6 +385,7 @@ export const update = mutation({
       host: normalizeHost(route.host),
       rootPath: normalizeRootPath(route.rootPath),
     }));
+    validateThumbnailFrameSize(args.theme);
     await assertHostsAvailable(ctx, hosts, gallery._id);
     if (
       !Number.isSafeInteger(args.maxFileSize) ||
@@ -387,6 +411,8 @@ export const update = mutation({
       name: args.name.trim(),
       maxFileSize: args.maxFileSize,
       uploaderAccess: args.uploaderAccess,
+      folderPreviewMode:
+        args.folderPreviewMode ?? gallery.folderPreviewMode ?? "first",
       theme: args.theme,
     });
     if (rootFolder !== null) {

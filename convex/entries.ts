@@ -21,7 +21,10 @@ import {
   verifyPassword,
 } from "./lib/crypto";
 import { disposition } from "./lib/validators";
-import { requestMediaPreview } from "./lib/storageJobs";
+import {
+  MEDIA_METADATA_VERSION,
+  requestMediaPreview,
+} from "./lib/storageJobs";
 
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
@@ -44,6 +47,22 @@ function isHeifEntry(entry: {
         entry.extension.toLowerCase(),
       ))
   );
+}
+
+function metadataHasLocation(metadataJson?: string): boolean {
+  if (metadataJson === undefined) return false;
+  try {
+    const parsed: unknown = JSON.parse(metadataJson);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      "GPSLatitude" in parsed &&
+      "GPSLongitude" in parsed
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function assertCanUpload(
@@ -98,6 +117,7 @@ export const createUploadIntent = mutation({
     mimeType: v.string(),
     size: v.number(),
     password: v.optional(v.string()),
+    removeLocationData: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { gallery, profile } = await assertCanUpload(
@@ -142,6 +162,7 @@ export const createUploadIntent = mutation({
       description: cleanDescription(args.description),
       declaredMimeType: args.mimeType || "application/octet-stream",
       declaredSize: args.size,
+      removeLocationData: args.removeLocationData || undefined,
       tokenHash: await sha256(token),
       passwordSalt: password?.salt,
       passwordHash: password?.hash,
@@ -290,6 +311,181 @@ export const requestPreview = mutation({
       previewKey: entry.previewKey,
       token,
     };
+  },
+});
+
+export const removeLocationData = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    entryId: v.id("entries"),
+  },
+  handler: async (ctx, args) => {
+    const [gallery, entry] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("entries", args.entryId),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      entry === null ||
+      entry.galleryId !== gallery._id ||
+      entry.state !== "ready" ||
+      entry.mediaKind !== "image"
+    ) {
+      throw new Error("Image not found");
+    }
+    const [folder, actor] = await Promise.all([
+      ctx.db.get("folders", entry.folderId),
+      requireCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (folder === null || folder.galleryId !== gallery._id) {
+      throw new Error("Image not found");
+    }
+    const allowed =
+      gallery.kind === "image"
+        ? roleAtLeast(
+            await getEffectiveRole(ctx, gallery._id, folder, actor),
+            "editor",
+          )
+        : await isOwningProfile(
+            ctx,
+            entry.ownerProfileId,
+            actor._id,
+          );
+    if (!allowed) {
+      throw new Error("Unauthorized");
+    }
+    if (!metadataHasLocation(entry.metadataJson)) {
+      throw new Error("This image does not contain location data");
+    }
+
+    const jobs = await ctx.db
+      .query("mediaProcessingJobs")
+      .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+      .take(16);
+    const activeRemoval = jobs.find(
+      (job) =>
+        job.removeLocationData === true &&
+        (job.status === "queued" || job.status === "processing"),
+    );
+    if (activeRemoval !== undefined) {
+      return { queued: false };
+    }
+
+    const reusable = jobs.find((job) => job.status === "queued") ??
+      jobs.find((job) => job.status === "failed");
+    if (reusable !== undefined) {
+      await ctx.db.patch("mediaProcessingJobs", reusable._id, {
+        removeLocationData: true,
+        ...(reusable.status === "failed"
+          ? {
+              status: "queued" as const,
+              attempts: 0,
+              availableAt: 0,
+              claimedAt: undefined,
+              leaseExpiresAt: undefined,
+              processorVersion: undefined,
+              error: undefined,
+            }
+          : {}),
+      });
+    } else {
+      await ctx.db.insert("mediaProcessingJobs", {
+        entryId: entry._id,
+        expectedStorageKey: entry.storageKey,
+        expectedSha256: entry.sha256,
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+        removeLocationData: true,
+      });
+    }
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "entry.location_removal_requested",
+      galleryId: gallery._id,
+      detail: entry.name,
+      createdAt: Date.now(),
+    });
+    return { queued: true };
+  },
+});
+
+export const refreshMetadata = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    entryId: v.id("entries"),
+  },
+  handler: async (ctx, args) => {
+    const [gallery, entry] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("entries", args.entryId),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      entry === null ||
+      entry.galleryId !== gallery._id ||
+      entry.state !== "ready" ||
+      (entry.mediaKind !== "image" && entry.mediaKind !== "video")
+    ) {
+      throw new Error("Media not found");
+    }
+    if (entry.metadataVersion === MEDIA_METADATA_VERSION) {
+      return { queued: false };
+    }
+    const [folder, actor] = await Promise.all([
+      ctx.db.get("folders", entry.folderId),
+      requireCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (folder === null || folder.galleryId !== gallery._id) {
+      throw new Error("Media not found");
+    }
+    const allowed =
+      gallery.kind === "image"
+        ? roleAtLeast(
+            await getEffectiveRole(ctx, gallery._id, folder, actor),
+            "editor",
+          )
+        : await isOwningProfile(
+            ctx,
+            entry.ownerProfileId,
+            actor._id,
+          );
+    if (!allowed) throw new Error("Unauthorized");
+
+    const jobs = await ctx.db
+      .query("mediaProcessingJobs")
+      .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+      .take(16);
+    const active = jobs.find(
+      (job) => job.status === "queued" || job.status === "processing",
+    );
+    if (active !== undefined) return { queued: false };
+    const failed = jobs.find((job) => job.status === "failed");
+    if (failed !== undefined) {
+      await ctx.db.patch("mediaProcessingJobs", failed._id, {
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+        claimedAt: undefined,
+        leaseExpiresAt: undefined,
+        processorVersion: undefined,
+        error: undefined,
+      });
+    } else {
+      await ctx.db.insert("mediaProcessingJobs", {
+        entryId: entry._id,
+        expectedStorageKey: entry.storageKey,
+        expectedSha256: entry.sha256,
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+      });
+    }
+    return { queued: true };
   },
 });
 

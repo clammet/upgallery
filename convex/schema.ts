@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import {
   disposition,
   entryState,
+  folderPreviewMode,
   galleryKind,
   galleryRole,
   jobState,
@@ -55,6 +56,7 @@ export default defineSchema({
     maxFileSize: v.number(),
     uploaderAccess,
     rootFolderId: v.optional(v.id("folders")),
+    folderPreviewMode: v.optional(folderPreviewMode),
     theme: themeValidator,
     itemCount: v.number(),
     totalBytes: v.number(),
@@ -77,6 +79,7 @@ export default defineSchema({
     name: v.string(),
     slug: v.string(),
     privacy,
+    previewMode: v.optional(folderPreviewMode),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
     filesystemMissingAt: v.optional(v.number()),
@@ -112,6 +115,7 @@ export default defineSchema({
     previewKey: v.optional(v.string()),
     previewError: v.optional(v.string()),
     metadataJson: v.optional(v.string()),
+    metadataVersion: v.optional(v.number()),
     filesystemModifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
@@ -132,6 +136,14 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index("by_folderId_and_state", ["folderId", "state"])
+    .index(
+      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_name",
+      ["folderId", "state", "mediaKind", "moveJobId", "name"],
+    )
+    .index(
+      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
+      ["folderId", "state", "mediaKind", "moveJobId", "sha256"],
+    )
     .index("by_galleryId_and_state", ["galleryId", "state"])
     .index("by_galleryId_and_storageKind", ["galleryId", "storageKind"])
     .index("by_galleryId_and_storageKind_and_state", [
@@ -166,6 +178,7 @@ export default defineSchema({
     kind: v.union(v.literal("mkdir"), v.literal("rename")),
     name: v.string(),
     privacy,
+    previewMode: v.optional(folderPreviewMode),
     tokenHash: v.string(),
     expiresAt: v.number(),
     state: uploadState,
@@ -196,6 +209,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     declaredMimeType: v.string(),
     declaredSize: v.number(),
+    removeLocationData: v.optional(v.boolean()),
     tokenHash: v.string(),
     passwordSalt: v.optional(v.string()),
     passwordHash: v.optional(v.string()),
@@ -297,6 +311,7 @@ export default defineSchema({
     error: v.optional(v.string()),
     processorVersion: v.optional(v.number()),
     previewRequested: v.optional(v.boolean()),
+    removeLocationData: v.optional(v.boolean()),
   })
     .index("by_status", ["status"])
     .index("by_status_and_processorVersion", ["status", "processorVersion"])

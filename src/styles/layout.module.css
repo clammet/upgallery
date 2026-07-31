@@ -6,7 +6,6 @@
 .separator { color: var(--gallery-muted); margin: 0 .35rem; }
 .headerActions, .authGroup { align-items: center; display: flex; gap: .35rem; justify-content: flex-end; min-width: 0; }
 .authStatus, .authName { color: var(--gallery-muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.avatar { border-radius: 50%; height: 23px; width: 23px; }
 .quietButton { background: transparent; border-color: transparent; color: var(--gallery-muted); padding: .3rem .4rem; text-decoration: none; }
 .iconButton { align-items: center; background: transparent; display: inline-flex; font-size: 1rem; height: 30px; justify-content: center; padding: 0; width: 30px; }
 .syncIndicator { align-items: center; color: var(--gallery-muted); display: inline-flex; font-size: 1.05rem; height: 30px; justify-content: center; line-height: 1; width: 24px; }

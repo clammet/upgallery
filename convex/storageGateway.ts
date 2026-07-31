@@ -63,6 +63,7 @@ export const claimUpload = internalMutation({
           ? await getFilesystemFolderSegments(ctx, gallery, folder)
           : [],
       maxFileSize: gallery.maxFileSize,
+      removeLocationData: intent.removeLocationData === true,
     };
   },
 });

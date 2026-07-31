@@ -1,3 +1,5 @@
+import exifr from "exifr";
+
 export type MediaMetadata = Record<string, string | number>;
 
 export type MediaLocation = {
@@ -9,6 +11,18 @@ export type MetadataRow = {
   key: string;
   label: string;
   value: string;
+};
+
+type MetadataInput = Parameters<typeof exifr.gps>[0];
+
+type ExifrFileProbe = {
+  getString: (offset: number, length: number) => string;
+  getUint16: (offset: number) => number;
+};
+
+type ExifrFileParser = {
+  canHandle: (file: ExifrFileProbe, firstTwoBytes: number) => boolean;
+  upgalleryHeicPatched?: boolean;
 };
 
 const preferredOrder = [
@@ -147,6 +161,22 @@ export function openStreetMapUrls(location: MediaLocation): {
   };
 }
 
+export async function fileHasLocationMetadata(
+  file: MetadataInput,
+): Promise<boolean> {
+  installModernHeicDetection();
+  const location = await exifr.gps(file).catch(() => undefined);
+  return (
+    location !== undefined &&
+    Number.isFinite(location.latitude) &&
+    location.latitude >= -90 &&
+    location.latitude <= 90 &&
+    Number.isFinite(location.longitude) &&
+    location.longitude >= -180 &&
+    location.longitude <= 180
+  );
+}
+
 function formatValue(key: string, value: string | number): string {
   if (typeof value === "string") return value;
   switch (key) {
@@ -195,4 +225,40 @@ function decimalCoordinate(value: number): string {
 
 function trimmedDecimal(value: number, digits: number): string {
   return value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+function installModernHeicDetection(): void {
+  const parser = exifr.fileParsers.get("heic") as
+    | ExifrFileParser
+    | undefined;
+  if (parser === undefined || parser.upgalleryHeicPatched === true) return;
+
+  const originalCanHandle = parser.canHandle;
+  parser.canHandle = function (
+    file: ExifrFileProbe,
+    firstTwoBytes: number,
+  ): boolean {
+    if (originalCanHandle.call(this, file, firstTwoBytes)) return true;
+    if (firstTwoBytes !== 0) return false;
+    const ftypLength = file.getUint16(2);
+    if (ftypLength < 16 || ftypLength > 4096) return false;
+    for (let offset = 8; offset + 4 <= ftypLength; offset += 4) {
+      if (
+        new Set([
+          "heic",
+          "heix",
+          "hevc",
+          "hevx",
+          "heim",
+          "heis",
+          "hevm",
+          "hevs",
+        ]).has(file.getString(offset, 4))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+  parser.upgalleryHeicPatched = true;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
+import { ExternalLink, Plus } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -12,6 +13,7 @@ import layout from "../styles/layout.module.css";
 
 type GalleryKind = "image" | "uploader";
 type StorageKind = "shared" | "user";
+type FolderPreviewMode = "first" | "random" | "first3" | "random3";
 
 export function AdminPage() {
   const profile = useQuery(api.profiles.current, {
@@ -129,7 +131,9 @@ function CreateGallery(props: {
       <div className={layout.buttonRow}><button type="submit">Create</button><button type="button" onClick={() => setOpen(false)}>Cancel</button></div>
     </form>
   ) : (
-    <button type="button" className={styles.newButton} onClick={() => setOpen(true)}>＋ New gallery</button>
+    <button type="button" className={styles.newButton} onClick={() => setOpen(true)}>
+      <Plus aria-hidden="true" size={16} /> New gallery
+    </button>
   );
 }
 
@@ -164,6 +168,10 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         | "anonymous"
         | "sso"
         | "restricted",
+      folderPreviewMode:
+        gallery.kind === "image"
+          ? (data.get("folderPreviewMode") as FolderPreviewMode)
+          : gallery.folderPreviewMode ?? "first",
       hosts,
       theme: {
         accent: String(data.get("accent") || "") || undefined,
@@ -173,6 +181,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         muted: String(data.get("muted") || "") || undefined,
         radius: Number(data.get("radius") || 4),
         density: data.get("density") as "compact" | "comfortable",
+        thumbnailFrameSize: Number(data.get("thumbnailFrameSize") || 218),
         customCss: String(data.get("customCss") || "") || undefined,
       },
     })
@@ -187,7 +196,9 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           <span className={styles.eyebrow}>{gallery.kind}</span>
           <h2>{gallery.name}</h2>
         </div>
-        <Link to={`/${gallery.kind === "image" ? "g" : "up"}/${gallery.slug}`}>Open ↗</Link>
+        <Link to={`/${gallery.kind === "image" ? "g" : "up"}/${gallery.slug}`}>
+          Open <ExternalLink aria-hidden="true" size={15} />
+        </Link>
       </div>
       <div className={styles.stats}>
         <Stat label="Items" value={gallery.itemCount.toLocaleString()} />
@@ -202,6 +213,17 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           <label>Maximum bytes<input name="maxFileSize" type="number" defaultValue={gallery.maxFileSize} /></label>
           <label>Uploader access<select name="uploaderAccess" defaultValue={gallery.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
           <label>Density<select name="density" defaultValue={gallery.theme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
+          <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={gallery.theme.thumbnailFrameSize ?? 218} /></label>
+          {gallery.kind === "image" ? (
+            <label>Folder preview default
+              <select name="folderPreviewMode" defaultValue={gallery.folderPreviewMode ?? "first"}>
+                <option value="first">First image</option>
+                <option value="random">Random</option>
+                <option value="first3">First 3</option>
+                <option value="random3">Random 3</option>
+              </select>
+            </label>
+          ) : null}
           <label>Accent<input name="accent" type="color" defaultValue={gallery.theme.accent ?? "#126b5a"} /></label>
           <label>Background<input name="background" type="color" defaultValue={gallery.theme.background ?? "#f6f7f4"} /></label>
           <label>Foreground<input name="foreground" type="color" defaultValue={gallery.theme.foreground ?? "#17201d"} /></label>

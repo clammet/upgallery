@@ -18,6 +18,7 @@ export function useUpload() {
       folderId: Id<"folders">;
       description?: string;
       password?: string;
+      removeLocationData?: boolean;
     }) => {
       setUploading(true);
       setError(null);
@@ -31,6 +32,7 @@ export function useUpload() {
           mimeType: input.file.type || "application/octet-stream",
           size: input.file.size,
           password: input.password || undefined,
+          removeLocationData: input.removeLocationData || undefined,
         });
         const form = new FormData();
         form.append("file", input.file, input.file.name);

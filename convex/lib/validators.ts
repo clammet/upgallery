@@ -28,6 +28,13 @@ export const uploaderAccess = v.union(
   v.literal("restricted"),
 );
 
+export const folderPreviewMode = v.union(
+  v.literal("first"),
+  v.literal("random"),
+  v.literal("first3"),
+  v.literal("random3"),
+);
+
 export const entryState = v.union(
   v.literal("ready"),
   v.literal("deleted"),
@@ -72,5 +79,6 @@ export const themeValidator = v.object({
   muted: v.optional(v.string()),
   radius: v.optional(v.number()),
   density: v.optional(v.union(v.literal("compact"), v.literal("comfortable"))),
+  thumbnailFrameSize: v.optional(v.number()),
   customCss: v.optional(v.string()),
 });

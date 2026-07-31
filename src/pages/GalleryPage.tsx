@@ -9,6 +9,15 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
+import {
+  Check,
+  Folder,
+  FolderPlus,
+  Info,
+  RefreshCw,
+  Settings,
+  Upload,
+} from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -32,8 +41,28 @@ import {
   isHeifImage,
   shouldUseNativeHeifPreview,
 } from "../lib/media";
+import {
+  metadataLocation,
+  metadataRows,
+  openStreetMapUrls,
+  parseMetadataJson,
+} from "../lib/metadata";
 import styles from "../styles/gallery.module.css";
 import layout from "../styles/layout.module.css";
+
+type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+
+type FolderPreviewData = {
+  folderId: Id<"folders">;
+  mode: FolderPreviewMode;
+  entries: Array<{
+    _id: Id<"entries">;
+    name: string;
+    storageKey: string;
+    thumbnailKey?: string;
+    filesystemModifiedAt?: number;
+  }>;
+};
 
 export function GalleryPage(props: {
   gallery: Doc<"galleries">;
@@ -42,16 +71,23 @@ export function GalleryPage(props: {
   const [searchParams] = useSearchParams();
   const requestedFolder = searchParams.get("folder");
   const folderId = (requestedFolder ?? props.rootFolder._id) as Id<"folders">;
+  const [previewSeed] = useState(() => {
+    const values = crypto.getRandomValues(new Uint32Array(1));
+    return values[0];
+  });
   const listing = useQuery(api.folders.list, {
     anonymousClaim: getOrCreateAnonymousClaim(),
     galleryId: props.gallery._id,
     folderId,
+    previewSeed,
   });
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
   const removeEntries = useMutation(api.entries.removeMany);
   const moveEntries = useMutation(api.entries.moveMany);
   const requestPreview = useMutation(api.entries.requestPreview);
+  const removeLocationData = useMutation(api.entries.removeLocationData);
+  const refreshMetadata = useMutation(api.entries.refreshMetadata);
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
   const { upload, uploading, error } = useUpload();
@@ -69,6 +105,8 @@ export function GalleryPage(props: {
   const [actionPending, setActionPending] = useState(false);
   const [draggingEntries, setDraggingEntries] = useState(false);
   const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
+  const [metadataEntryId, setMetadataEntryId] =
+    useState<Id<"entries"> | null>(null);
 
   const viewerItems = useMemo<MediaViewerItem[]>(
     () =>
@@ -118,6 +156,20 @@ export function GalleryPage(props: {
     viewerEntryId === null
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
+  const folderPreviews = useMemo(
+    () =>
+      new Map(
+        (listing?.folderPreviews ?? []).map((preview) => [
+          preview.folderId,
+          preview,
+        ]),
+      ),
+    [listing?.folderPreviews],
+  );
+  const metadataEntry =
+    metadataEntryId === null
+      ? undefined
+      : listing?.entries.find((entry) => entry._id === metadataEntryId);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -213,6 +265,22 @@ export function GalleryPage(props: {
       return next.size === current.size ? current : next;
     });
   }, [listing]);
+
+  useEffect(() => {
+    if (listing === undefined || !listing.access.canEditFolder) return;
+    for (const entry of listing.entries) {
+      if (
+        entry.metadataVersion === undefined &&
+        isHeifImage(entry.mimeType, entry.name)
+      ) {
+        void refreshMetadata({
+          anonymousClaim: getOrCreateAnonymousClaim(),
+          galleryId: props.gallery._id,
+          entryId: entry._id,
+        }).catch(() => undefined);
+      }
+    }
+  }, [listing, props.gallery._id, refreshMetadata]);
 
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
@@ -324,8 +392,12 @@ export function GalleryPage(props: {
                 event.target.value = "";
               }}
             />
-            <button className={layout.iconButton} type="button" onClick={() => fileInput.current?.click()} aria-label="Upload files" title="Upload files">↑</button>
-            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("create")} aria-label="New folder" title="New folder">＋</button>
+            <button className={layout.iconButton} type="button" onClick={() => fileInput.current?.click()} aria-label="Upload files" title="Upload files">
+              <Upload aria-hidden="true" size={18} />
+            </button>
+            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("create")} aria-label="New folder" title="New folder">
+              <FolderPlus aria-hidden="true" size={18} />
+            </button>
             </>
           ) : null}
           {listing.access.canManage ? (
@@ -370,7 +442,9 @@ export function GalleryPage(props: {
             </>
           ) : null}
           {listing.access.canEditFolder ? (
-            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("settings")} aria-label="Folder settings" title="Folder settings">⚙</button>
+            <button className={layout.iconButton} type="button" onClick={() => setFolderDialog("settings")} aria-label="Folder settings" title="Folder settings">
+              <Settings aria-hidden="true" size={18} />
+            </button>
           ) : null}
         </>
       }
@@ -412,8 +486,8 @@ export function GalleryPage(props: {
                 : undefined
             }
           >
-            <span className={styles.folderIcon}>▰</span>
-            <span>{folder.name}</span>
+            <FolderPreview preview={folderPreviews.get(folder._id)} />
+            <span className={styles.folderName}>{folder.name}</span>
             {folder.privacy !== "public" ? (
               <small>{folder.privacy}</small>
             ) : null}
@@ -426,6 +500,7 @@ export function GalleryPage(props: {
             selectMode={selectMode}
             selected={selectedEntryIds.has(entry._id)}
             onOpen={() => setViewerEntryId(entry._id)}
+            onMetadata={() => setMetadataEntryId(entry._id)}
             onToggle={() => {
               setSelectedEntryIds((current) => {
                 const next = new Set(current);
@@ -467,19 +542,38 @@ export function GalleryPage(props: {
           onClose={() => setViewerEntryId(null)}
         />
       ) : null}
+      {metadataEntry?.metadataJson ? (
+        <GalleryMetadataDialog
+          entryName={metadataEntry.name}
+          metadataJson={metadataEntry.metadataJson}
+          canRemoveLocation={
+            listing.access.canEditFolder && metadataEntry.mediaKind === "image"
+          }
+          onClose={() => setMetadataEntryId(null)}
+          onRemoveLocation={() =>
+            removeLocationData({
+                anonymousClaim: getOrCreateAnonymousClaim(),
+                galleryId: props.gallery._id,
+                entryId: metadataEntry._id,
+              }).then(() => undefined)
+          }
+        />
+      ) : null}
 
       {folderDialog === "create" ? (
         <FolderForm
           title="New folder"
           initialName=""
           initialPrivacy="public"
+          initialPreviewMode={undefined}
           onClose={() => setFolderDialog(null)}
-          onSubmit={async (name, privacy) => {
+          onSubmit={async (name, privacy, previewMode) => {
             const result = await createFolder({
               galleryId: props.gallery._id,
               parentId: folderId,
               name,
               privacy,
+              ...(previewMode === undefined ? {} : { previewMode }),
             });
             await completeFilesystemFolderOperation(result);
             setFolderDialog(null);
@@ -492,9 +586,15 @@ export function GalleryPage(props: {
           title="Folder settings"
           initialName={listing.folder.name}
           initialPrivacy={listing.folder.privacy}
+          initialPreviewMode={listing.folder.previewMode}
           onClose={() => setFolderDialog(null)}
-          onSubmit={async (name, privacy) => {
-            const result = await updateFolder({ folderId, name, privacy });
+          onSubmit={async (name, privacy, previewMode) => {
+            const result = await updateFolder({
+              folderId,
+              name,
+              privacy,
+              ...(previewMode === undefined ? {} : { previewMode }),
+            });
             await completeFilesystemFolderOperation(result);
             setFolderDialog(null);
             setNotice("Folder updated");
@@ -580,11 +680,75 @@ export function GalleryPage(props: {
   );
 }
 
+function FolderPreview(props: { preview?: FolderPreviewData }) {
+  const [topIndex, setTopIndex] = useState<number | null>(null);
+  const entries = props.preview?.entries ?? [];
+  const isFan =
+    (props.preview?.mode === "first3" ||
+      props.preview?.mode === "random3") &&
+    entries.length > 1;
+  const defaultTopIndex = Math.max(0, entries.length - 1);
+  const activeTopIndex = topIndex ?? defaultTopIndex;
+  const cardPositions = [
+    styles.folderPreviewCardLeft,
+    styles.folderPreviewCardMiddle,
+    styles.folderPreviewCardRight,
+  ];
+
+  return (
+    <span
+      className={styles.folderPreviewFrame}
+      onMouseMove={
+        isFan
+          ? (event) => {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              const position = (event.clientX - bounds.left) / bounds.width;
+              const nextIndex =
+                position < 0.4 ? 0 : position < 0.8 ? 1 : 2;
+              setTopIndex(Math.min(nextIndex, defaultTopIndex));
+            }
+          : undefined
+      }
+      onMouseLeave={isFan ? () => setTopIndex(null) : undefined}
+    >
+      <Folder
+        className={styles.folderBackdrop}
+        aria-hidden="true"
+        strokeWidth={1.1}
+      />
+      {entries.map((entry, index) => (
+        <img
+          className={
+            isFan
+              ? `${styles.folderPreviewCard} ${cardPositions[index]}`
+              : styles.folderPreviewSingle
+          }
+          style={
+            isFan
+              ? { zIndex: index === activeTopIndex ? 4 : index + 1 }
+              : undefined
+          }
+          key={entry._id}
+          src={publicMediaUrl(
+            entry.thumbnailKey ?? entry.storageKey,
+            entry.thumbnailKey === undefined
+              ? entry.filesystemModifiedAt
+              : undefined,
+          )}
+          alt=""
+          loading="lazy"
+        />
+      ))}
+    </span>
+  );
+}
+
 function GalleryEntryCard(props: {
   entry: Doc<"entries">;
   selectMode: boolean;
   selected: boolean;
   onOpen: () => void;
+  onMetadata: () => void;
   onToggle: () => void;
   onDragStart: (event: ReactDragEvent<HTMLElement>) => void;
   onDragEnd: () => void;
@@ -620,7 +784,9 @@ function GalleryEntryCard(props: {
             className={`${styles.selectCircle} ${props.selected ? styles.selectCircleChecked : ""}`}
             aria-hidden="true"
           >
-            {props.selected ? "✓" : ""}
+            {props.selected ? (
+              <Check aria-hidden="true" size={14} strokeWidth={3} />
+            ) : null}
           </span>
         ) : null}
       </span>
@@ -663,7 +829,156 @@ function GalleryEntryCard(props: {
           {content}
         </a>
       )}
+      {!props.selectMode && props.entry.metadataJson ? (
+        <button
+          className={styles.cardMetadataButton}
+          type="button"
+          onClick={props.onMetadata}
+          title="View metadata"
+          aria-label={`View metadata for ${props.entry.name}`}
+        >
+          <Info aria-hidden="true" size={15} />
+        </button>
+      ) : null}
     </article>
+  );
+}
+
+function GalleryMetadataDialog(props: {
+  entryName: string;
+  metadataJson: string;
+  canRemoveLocation: boolean;
+  onClose: () => void;
+  onRemoveLocation: () => Promise<void>;
+}) {
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeRequested, setRemoveRequested] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const metadata = parseMetadataJson(props.metadataJson);
+  const rows = metadata === null ? [] : metadataRows(metadata);
+  const location = metadata === null ? null : metadataLocation(metadata);
+  const mapUrls =
+    location === null ? null : openStreetMapUrls(location);
+
+  if (confirmRemoval) {
+    return (
+      <Dialog
+        title="Remove location data?"
+        onClose={() => {
+          if (!removing) setConfirmRemoval(false);
+        }}
+      >
+        <div className={layout.form}>
+          <p className={styles.deletePrompt}>
+            Permanently remove location data from{" "}
+            <strong>{props.entryName}</strong>? The image file will be rewritten
+            and this cannot be undone.
+          </p>
+          {removeError ? (
+            <p className={layout.formError}>{removeError}</p>
+          ) : null}
+          <div className={layout.buttonRow}>
+            <button
+              type="button"
+              onClick={() => setConfirmRemoval(false)}
+              disabled={removing}
+            >
+              Cancel
+            </button>
+            <button
+              className={styles.confirmDeleteButton}
+              type="button"
+              disabled={removing}
+              onClick={() => {
+                setRemoving(true);
+                setRemoveError(null);
+                void props
+                  .onRemoveLocation()
+                  .then(() => {
+                    setRemoveRequested(true);
+                    setConfirmRemoval(false);
+                  })
+                  .catch((reason: unknown) => {
+                    setRemoveError(
+                      friendlyError(reason, "Could not remove location data"),
+                    );
+                  })
+                  .finally(() => setRemoving(false));
+              }}
+            >
+              {removing ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog title="Metadata" onClose={props.onClose}>
+      {rows.length > 0 ? (
+        <div className={styles.metadataContent}>
+          {removeRequested ? (
+            <p className={layout.notice}>
+              {location === null
+                ? "Location data removed."
+                : "Removing location data…"}
+            </p>
+          ) : null}
+          <div className={styles.metadataTableFrame}>
+            <table className={styles.metadataTable}>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.key}>
+                    <th scope="row">{row.label}</th>
+                    <td>
+                      <span className={styles.metadataValue}>
+                        <span>{row.value}</span>
+                        {row.key === "GPSLatitude" &&
+                        location !== null &&
+                        props.canRemoveLocation ? (
+                          <button
+                            className={styles.locationDeleteButton}
+                            type="button"
+                            onClick={() => setConfirmRemoval(true)}
+                            title="Remove location data"
+                            aria-label={`Remove location data from ${props.entryName}`}
+                          >
+                            <TrashIcon />
+                          </button>
+                        ) : null}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {mapUrls ? (
+            <figure className={styles.metadataMap}>
+              <iframe
+                src={mapUrls.embed}
+                title="Media location on OpenStreetMap"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+              <figcaption>
+                <a
+                  href={mapUrls.full}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View larger map
+                </a>
+              </figcaption>
+            </figure>
+          ) : null}
+        </div>
+      ) : (
+        <p className={styles.metadataUnavailable}>Metadata is unavailable.</p>
+      )}
+    </Dialog>
   );
 }
 
@@ -860,7 +1175,7 @@ function FilesystemSyncIndicator(props: {
         aria-label="background update in progress"
         title="background update in progress"
       >
-        ↻
+        <RefreshCw aria-hidden="true" size={18} />
       </span>
     );
   }
@@ -872,7 +1187,7 @@ function FilesystemSyncIndicator(props: {
         aria-label="background update complete"
         title="background update complete"
       >
-        ✓
+        <Check aria-hidden="true" size={18} strokeWidth={2.5} />
       </span>
     );
   }
@@ -916,14 +1231,19 @@ function FolderForm(props: {
   title: string;
   initialName: string;
   initialPrivacy: "public" | "unlisted" | "private";
+  initialPreviewMode?: FolderPreviewMode;
   onClose: () => void;
   onSubmit: (
     name: string,
     privacy: "public" | "unlisted" | "private",
+    previewMode?: FolderPreviewMode,
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(props.initialName);
   const [privacy, setPrivacy] = useState(props.initialPrivacy);
+  const [previewMode, setPreviewMode] = useState<
+    FolderPreviewMode | "inherit"
+  >(props.initialPreviewMode ?? "inherit");
   const [error, setError] = useState<string | null>(null);
   return (
     <Dialog title={props.title} onClose={props.onClose}>
@@ -931,9 +1251,15 @@ function FolderForm(props: {
         className={layout.form}
         onSubmit={(event) => {
           event.preventDefault();
-          void props.onSubmit(name, privacy).catch((reason: unknown) => {
-            setError(friendlyError(reason, "Could not save"));
-          });
+          void props
+            .onSubmit(
+              name,
+              privacy,
+              previewMode === "inherit" ? undefined : previewMode,
+            )
+            .catch((reason: unknown) => {
+              setError(friendlyError(reason, "Could not save"));
+            });
         }}
       >
         <label>Folder name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
@@ -942,6 +1268,22 @@ function FolderForm(props: {
             <option value="public">Public</option>
             <option value="unlisted">Unlisted</option>
             <option value="private">Private</option>
+          </select>
+        </label>
+        <label>Folder preview
+          <select
+            value={previewMode}
+            onChange={(event) =>
+              setPreviewMode(
+                event.target.value as FolderPreviewMode | "inherit",
+              )
+            }
+          >
+            <option value="inherit">Use gallery default</option>
+            <option value="first">First image</option>
+            <option value="random">Random</option>
+            <option value="first3">First 3</option>
+            <option value="random3">Random 3</option>
           </select>
         </label>
         {error ? <p className={layout.formError}>{error}</p> : null}

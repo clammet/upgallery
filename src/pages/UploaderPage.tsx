@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { Info, LockKeyhole } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -22,6 +23,7 @@ import { formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
 import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
 import {
+  fileHasLocationMetadata,
   metadataLocation,
   metadataRows,
   openStreetMapUrls,
@@ -49,8 +51,13 @@ export function UploaderPage(props: {
   const [file, setFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
+  const [removeLocationData, setRemoveLocationData] = useState(false);
+  const [locationCheck, setLocationCheck] = useState<
+    "idle" | "checking" | "found" | "not-found"
+  >("idle");
   const [textPreview, setTextPreview] = useState<string | null>(null);
-  const [metadataJson, setMetadataJson] = useState<string | null>(null);
+  const [metadataEntryId, setMetadataEntryId] =
+    useState<Id<"entries"> | null>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
   const thumbnailRequest = useRef("");
@@ -59,11 +66,35 @@ export function UploaderPage(props: {
   );
   const createDownloadTicket = useMutation(api.entries.createDownloadTicket);
   const requestPreview = useMutation(api.entries.requestPreview);
+  const removeStoredLocationData = useMutation(
+    api.entries.removeLocationData,
+  );
+  const refreshStoredMetadata = useMutation(api.entries.refreshMetadata);
   const { upload, uploading, error } = useUpload();
   const previewUrl = useMemo(
     () => (file?.type.startsWith("image/") ? URL.createObjectURL(file) : null),
     [file],
   );
+  const imageSelected =
+    file !== null &&
+    (file.type.startsWith("image/") ||
+      /\.(?:avif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(file.name));
+
+  useEffect(() => {
+    setRemoveLocationData(false);
+    if (file === null || !imageSelected) {
+      setLocationCheck("idle");
+      return;
+    }
+    let active = true;
+    setLocationCheck("checking");
+    void fileHasLocationMetadata(file).then((hasLocation) => {
+      if (active) setLocationCheck(hasLocation ? "found" : "not-found");
+    });
+    return () => {
+      active = false;
+    };
+  }, [file, imageSelected]);
 
   useEffect(
     () => () => {
@@ -121,6 +152,10 @@ export function UploaderPage(props: {
           entry.thumbnailKey !== undefined && !entry.passwordProtected,
       )
       .map((entry) => entry._id) ?? [];
+  const metadataEntry =
+    metadataEntryId === null
+      ? undefined
+      : listing?.entries.find((entry) => entry._id === metadataEntryId);
   const thumbnailRequestKey = `${props.gallery._id}:${props.rootFolder._id}:${thumbnailEntryIds.join(",")}`;
   const viewerItems = useMemo<MediaViewerItem[]>(
     () =>
@@ -212,6 +247,23 @@ export function UploaderPage(props: {
       });
   }, [createThumbnailTickets, thumbnailRequestKey]);
 
+  useEffect(() => {
+    if (listing === undefined) return;
+    for (const entry of listing.entries) {
+      if (
+        entry.canDelete &&
+        entry.metadataVersion === undefined &&
+        isHeifImage(entry.mimeType, entry.name)
+      ) {
+        void refreshStoredMetadata({
+          anonymousClaim: getOrCreateAnonymousClaim(),
+          galleryId: props.gallery._id,
+          entryId: entry._id,
+        }).catch(() => undefined);
+      }
+    }
+  }, [listing, props.gallery._id, refreshStoredMetadata]);
+
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
   }
@@ -230,10 +282,12 @@ export function UploaderPage(props: {
               folderId: props.rootFolder._id,
               description,
               password,
+              removeLocationData,
             }).then(() => {
               setFile(null);
               setDescription("");
               setPassword("");
+              setRemoveLocationData(false);
               setTextPreview(null);
             });
           }}
@@ -252,6 +306,23 @@ export function UploaderPage(props: {
           {textPreview ? <pre className={styles.textPreview}>{textPreview}</pre> : null}
           <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></label>
           <label>Password <small>(optional)</small><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          {locationCheck === "checking" ? (
+            <small className={styles.locationCheck}>
+              Checking image for location data…
+            </small>
+          ) : null}
+          {locationCheck === "found" ? (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={removeLocationData}
+                onChange={(event) =>
+                  setRemoveLocationData(event.target.checked)
+                }
+              />
+              <span>remove location data</span>
+            </label>
+          ) : null}
           {error ? <p className={layout.formError}>{error}</p> : null}
           <button type="submit" disabled={!file || uploading}>
             {uploading ? "Uploading…" : "Submit"}
@@ -269,16 +340,25 @@ export function UploaderPage(props: {
             routeRoot={props.routeRoot}
             thumbnailUrl={thumbnailUrls[entry._id]}
             onOpen={() => setViewerEntryId(entry._id)}
-            onMetadata={() =>
-              entry.metadataJson && setMetadataJson(entry.metadataJson)
-            }
+            onMetadata={() => setMetadataEntryId(entry._id)}
           />
         ))}
       </div>
-      {metadataJson ? (
+      {metadataEntry?.metadataJson ? (
         <MetadataDialog
-          metadataJson={metadataJson}
-          onClose={() => setMetadataJson(null)}
+          entryName={metadataEntry.name}
+          metadataJson={metadataEntry.metadataJson}
+          canRemoveLocation={
+            metadataEntry.canDelete && metadataEntry.mediaKind === "image"
+          }
+          onClose={() => setMetadataEntryId(null)}
+          onRemoveLocation={() =>
+            removeStoredLocationData({
+              anonymousClaim: getOrCreateAnonymousClaim(),
+              galleryId: props.gallery._id,
+              entryId: metadataEntry._id,
+            }).then(() => undefined)
+          }
         />
       ) : null}
       {viewerIndex >= 0 ? (
@@ -360,7 +440,7 @@ function UploaderEntry(props: {
             </span>
             {props.entry.passwordProtected ? (
               <span title="Password protected" aria-label="Password protected">
-                🔒
+                <LockKeyhole aria-hidden="true" size={13} />
               </span>
             ) : null}
             {props.entry.metadataJson ? (
@@ -371,7 +451,7 @@ function UploaderEntry(props: {
                 title="View metadata"
                 aria-label={`View metadata for ${props.entry.name}`}
               >
-                ⓘ
+                <Info aria-hidden="true" size={14} />
               </button>
             ) : null}
             {props.entry.canDelete ? (
@@ -461,26 +541,111 @@ function UploaderEntry(props: {
 }
 
 function MetadataDialog(props: {
+  entryName: string;
   metadataJson: string;
+  canRemoveLocation: boolean;
   onClose: () => void;
+  onRemoveLocation: () => Promise<void>;
 }) {
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeRequested, setRemoveRequested] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const metadata = parseMetadataJson(props.metadataJson);
   const rows = metadata === null ? [] : metadataRows(metadata);
   const location = metadata === null ? null : metadataLocation(metadata);
   const mapUrls =
     location === null ? null : openStreetMapUrls(location);
 
+  if (confirmRemoval) {
+    return (
+      <Dialog
+        title="Remove location data?"
+        onClose={() => {
+          if (!removing) setConfirmRemoval(false);
+        }}
+      >
+        <div className={layout.form}>
+          <p className={styles.deletePrompt}>
+            Permanently remove location data from{" "}
+            <strong>{props.entryName}</strong>? The image file will be rewritten
+            and this cannot be undone.
+          </p>
+          {removeError ? (
+            <p className={layout.formError}>{removeError}</p>
+          ) : null}
+          <div className={layout.buttonRow}>
+            <button
+              type="button"
+              onClick={() => setConfirmRemoval(false)}
+              disabled={removing}
+            >
+              Cancel
+            </button>
+            <button
+              className={styles.confirmDeleteButton}
+              type="button"
+              disabled={removing}
+              onClick={() => {
+                setRemoving(true);
+                setRemoveError(null);
+                void props
+                  .onRemoveLocation()
+                  .then(() => {
+                    setRemoveRequested(true);
+                    setConfirmRemoval(false);
+                  })
+                  .catch((reason: unknown) => {
+                    setRemoveError(
+                      friendlyError(reason, "Could not remove location data"),
+                    );
+                  })
+                  .finally(() => setRemoving(false));
+              }}
+            >
+              {removing ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog title="Metadata" onClose={props.onClose}>
       {rows.length > 0 ? (
         <div className={styles.metadataContent}>
+          {removeRequested ? (
+            <p className={layout.notice}>
+              {location === null
+                ? "Location data removed."
+                : "Removing location data…"}
+            </p>
+          ) : null}
           <div className={styles.metadataTableFrame}>
             <table className={styles.metadataTable}>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.key}>
                     <th scope="row">{row.label}</th>
-                    <td>{row.value}</td>
+                    <td>
+                      <span className={styles.metadataValue}>
+                        <span>{row.value}</span>
+                        {row.key === "GPSLatitude" &&
+                        location !== null &&
+                        props.canRemoveLocation ? (
+                          <button
+                            className={styles.locationDeleteButton}
+                            type="button"
+                            onClick={() => setConfirmRemoval(true)}
+                            title="Remove location data"
+                            aria-label={`Remove location data from ${props.entryName}`}
+                          >
+                            <TrashIcon />
+                          </button>
+                        ) : null}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

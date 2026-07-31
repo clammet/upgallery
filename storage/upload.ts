@@ -30,6 +30,10 @@ import {
   resolveExtension,
   resolveMimeType,
 } from "./media.js";
+import {
+  sha256File,
+  writeImageWithoutLocationData,
+} from "./locationMetadata.js";
 
 type ParsedFile = {
   temporaryPath: string;
@@ -74,7 +78,7 @@ export async function handleUpload(
         const temporaryRoot = join(config.storageRoot, ".tmp");
         await mkdir(temporaryRoot, { recursive: true });
         temporaryDirectory = await mkdtemp(join(temporaryRoot, "upload-"));
-        const parsed = await parseMultipart(
+        let parsed = await parseMultipart(
           request,
           temporaryDirectory,
           Math.min(claim!.maxFileSize, config.absoluteUploadLimit),
@@ -83,6 +87,29 @@ export async function handleUpload(
         const mimeType = resolveMimeType(claim!.name, parsed.mimeType);
         const extension = resolveExtension(claim!.name, mimeType);
         const mediaKind = classifyMedia(mimeType);
+        if (claim!.removeLocationData && mediaKind === "image") {
+          const strippedPath = `${parsed.temporaryPath}.location-stripped`;
+          await writeImageWithoutLocationData(
+            parsed.temporaryPath,
+            strippedPath,
+            signal,
+          );
+          await rename(strippedPath, parsed.temporaryPath);
+          const stripped = await stat(parsed.temporaryPath);
+          if (
+            stripped.size >
+            Math.min(claim!.maxFileSize, config.absoluteUploadLimit)
+          ) {
+            throw new Error(
+              `File exceeds the ${claim!.maxFileSize}-byte limit after removing location data`,
+            );
+          }
+          parsed = {
+            ...parsed,
+            size: stripped.size,
+            sha256: await sha256File(parsed.temporaryPath, signal),
+          };
+        }
         const storageKey = buildStorageKey({
           galleryKind: claim!.galleryKind,
           storageKind: claim!.storageKind,

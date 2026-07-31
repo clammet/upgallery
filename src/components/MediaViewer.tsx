@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from "react";
+import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { friendlyError } from "../lib/errors";
 import styles from "../styles/viewer.module.css";
 
@@ -65,6 +66,7 @@ function viewerGeometry(
   naturalSize: NaturalSize | null,
   mediaKind: MediaViewerItem["mediaKind"],
   viewport: ReturnType<typeof viewportSize>,
+  scale: number,
 ) {
   const maxWidth = Math.max(240, viewport.width - 32);
   const maxHeight = Math.max(160, viewport.height - 96);
@@ -75,21 +77,19 @@ function viewerGeometry(
       maxWidth / naturalSize.width,
       maxHeight / naturalSize.height,
     );
-    const fittedWidth = naturalSize.width * fitScale;
-    const fittedHeight = naturalSize.height * fitScale;
-    const width = Math.min(maxWidth, Math.max(Math.min(300, maxWidth), fittedWidth));
+    const visibleScale = Math.min(1, Math.max(fitScale, scale));
+    const width = Math.min(
+      maxWidth,
+      Math.max(Math.min(300, maxWidth), naturalSize.width * visibleScale),
+    );
     const height = Math.min(
       maxHeight,
-      Math.max(Math.min(160, maxHeight), fittedHeight),
+      Math.max(Math.min(160, maxHeight), naturalSize.height * visibleScale),
     );
     return {
       width,
       height,
-      fitScale: Math.min(
-        1,
-        width / naturalSize.width,
-        height / naturalSize.height,
-      ),
+      fitScale,
     };
   }
 
@@ -165,8 +165,14 @@ export function MediaViewer(props: {
   const gesture = useRef<PointerGesture | null>(null);
 
   const geometry = useMemo(
-    () => viewerGeometry(naturalSize, activeItem?.mediaKind ?? "other", viewport),
-    [activeItem?.mediaKind, naturalSize, viewport],
+    () =>
+      viewerGeometry(
+        naturalSize,
+        activeItem?.mediaKind ?? "other",
+        viewport,
+        scale,
+      ),
+    [activeItem?.mediaKind, naturalSize, scale, viewport],
   );
   const fitScale = geometry.fitScale;
   const zoomed = naturalSize !== null && scale > fitScale + ZOOM_EPSILON;
@@ -321,17 +327,26 @@ export function MediaViewer(props: {
   }, [activeItem?.id, fitScale, naturalSize]);
 
   const clampPan = useCallback(
-    (point: Point, atScale = scale): Point => {
-      if (naturalSize === null || stageRef.current === null) {
+    (
+      point: Point,
+      atScale = scale,
+      stageSize?: { width: number; height: number },
+    ): Point => {
+      if (
+        naturalSize === null ||
+        (stageSize === undefined && stageRef.current === null)
+      ) {
         return { x: 0, y: 0 };
       }
+      const stageWidth = stageSize?.width ?? stageRef.current!.clientWidth;
+      const stageHeight = stageSize?.height ?? stageRef.current!.clientHeight;
       const maxX = Math.max(
         0,
-        (naturalSize.width * atScale - stageRef.current.clientWidth) / 2,
+        (naturalSize.width * atScale - stageWidth) / 2,
       );
       const maxY = Math.max(
         0,
-        (naturalSize.height * atScale - stageRef.current.clientHeight) / 2,
+        (naturalSize.height * atScale - stageHeight) / 2,
       );
       return {
         x: Math.min(maxX, Math.max(-maxX, point.x)),
@@ -395,12 +410,19 @@ export function MediaViewer(props: {
       y: event.clientY - (bounds.top + bounds.height / 2),
     };
     const ratio = nextScale / scale;
+    const nextGeometry = viewerGeometry(
+      naturalSize,
+      activeItem.mediaKind,
+      viewport,
+      nextScale,
+    );
     const nextPan = clampPan(
       {
         x: pointer.x - (pointer.x - pan.x) * ratio,
         y: pointer.y - (pointer.y - pan.y) * ratio,
       },
       nextScale,
+      nextGeometry,
     );
     setScale(nextScale);
     setPan(nextScale <= fitScale + ZOOM_EPSILON ? { x: 0, y: 0 } : nextPan);
@@ -506,7 +528,7 @@ export function MediaViewer(props: {
             aria-label={`Open ${activeItem.title} in a new tab`}
             title="Open in new tab"
           >
-            ↗
+            <ExternalLink aria-hidden="true" size={17} />
           </a>
           <button
             ref={closeButtonRef}
@@ -516,7 +538,7 @@ export function MediaViewer(props: {
             aria-label="Close viewer"
             title="Close"
           >
-            ×
+            <X aria-hidden="true" size={19} />
           </button>
         </header>
 
@@ -626,7 +648,7 @@ export function MediaViewer(props: {
               aria-label="Previous item"
               title="Previous"
             >
-              ‹
+              <ChevronLeft aria-hidden="true" size={28} />
             </button>
             <button
               className={`${styles.navigation} ${styles.next}`}
@@ -636,7 +658,7 @@ export function MediaViewer(props: {
               aria-label="Next item"
               title="Next"
             >
-              ›
+              <ChevronRight aria-hidden="true" size={28} />
             </button>
           </>
         ) : null}

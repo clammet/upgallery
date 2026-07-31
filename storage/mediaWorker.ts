@@ -5,6 +5,7 @@ import {
   createThumbnail,
   extractMediaMetadataJson,
 } from "./media.js";
+import { rewriteStoredImageWithoutLocationData } from "./locationMetadata.js";
 import { absoluteStoragePath } from "./paths.js";
 
 export async function processMediaClaim(
@@ -12,15 +13,23 @@ export async function processMediaClaim(
   signal: AbortSignal,
 ): Promise<void> {
   try {
-    const sourcePath = absoluteStoragePath(claim.storageKey);
+    let sourcePath = absoluteStoragePath(claim.storageKey);
     const before = await stat(sourcePath);
-    assertExpectedUserFile(claim, before);
+    if (!claim.removeLocationData) {
+      assertExpectedUserFile(claim, before);
+    }
+    const replacement = claim.removeLocationData
+      ? await rewriteStoredImageWithoutLocationData(claim, signal)
+      : undefined;
+    if (replacement !== undefined) {
+      sourcePath = absoluteStoragePath(replacement.storageKey);
+    }
     const mediaInput = {
       sourcePath,
       galleryKind: claim.galleryKind,
       storageKind: claim.storageKind,
       storageRoot: claim.storageRoot,
-      sha256: claim.sha256,
+      sha256: replacement?.sha256 ?? claim.sha256,
       extension: claim.extension,
       mediaKind: claim.mediaKind,
       signal,
@@ -35,12 +44,16 @@ export async function processMediaClaim(
       ? await createPreview(mediaInput)
       : undefined;
     const after = await stat(sourcePath);
-    assertExpectedUserFile(claim, after);
+    if (replacement === undefined) {
+      assertExpectedUserFile(claim, after);
+    }
     await callConvex("/internal/storage/complete-media-processing", {
       jobId: claim.jobId,
       thumbnailKey,
       metadataJson,
+      metadataProcessed: claim.processMetadata,
       previewKey,
+      ...replacement,
     });
   } catch (error) {
     await callConvex("/internal/storage/complete-media-processing", {

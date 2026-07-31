@@ -892,6 +892,7 @@ export const completeFilesystemOperation = internalMutation({
         folderId = existing._id;
         await ctx.db.patch("folders", existing._id, {
           privacy: operation.privacy,
+          previewMode: operation.previewMode,
           filesystemIdentity: args.identity,
           filesystemMissingAt: undefined,
         });
@@ -903,6 +904,7 @@ export const completeFilesystemOperation = internalMutation({
           name: operation.name,
           slug: filesystemSlug(operation.name),
           privacy: operation.privacy,
+          previewMode: operation.previewMode,
           filesystemIdentity: args.identity,
         });
       }
@@ -914,6 +916,7 @@ export const completeFilesystemOperation = internalMutation({
         name: operation.name,
         slug: filesystemSlug(operation.name),
         privacy: operation.privacy,
+        previewMode: operation.previewMode,
         filesystemIdentity: args.identity,
         filesystemMissingAt: undefined,
       });

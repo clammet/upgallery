@@ -1316,6 +1316,16 @@ http.route({
         typeof body.previewKey !== "string") ||
       (body.metadataJson !== undefined &&
         typeof body.metadataJson !== "string") ||
+      (body.metadataProcessed !== undefined &&
+        typeof body.metadataProcessed !== "boolean") ||
+      (body.storageKey !== undefined &&
+        typeof body.storageKey !== "string") ||
+      (body.sha256 !== undefined && typeof body.sha256 !== "string") ||
+      (body.size !== undefined && typeof body.size !== "number") ||
+      (body.filesystemModifiedAt !== undefined &&
+        typeof body.filesystemModifiedAt !== "number") ||
+      (body.filesystemIdentity !== undefined &&
+        typeof body.filesystemIdentity !== "string") ||
       (body.error !== undefined && typeof body.error !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
@@ -1325,6 +1335,12 @@ http.route({
       thumbnailKey: body.thumbnailKey,
       previewKey: body.previewKey,
       metadataJson: body.metadataJson,
+      metadataProcessed: body.metadataProcessed,
+      storageKey: body.storageKey,
+      sha256: body.sha256,
+      size: body.size,
+      filesystemModifiedAt: body.filesystemModifiedAt,
+      filesystemIdentity: body.filesystemIdentity,
       error: body.error,
     });
     return json({ ok: true });

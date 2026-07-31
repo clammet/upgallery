@@ -21,6 +21,10 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
     "--gallery-muted": theme?.muted,
     "--gallery-radius": theme?.radius === undefined ? undefined : `${theme.radius}px`,
     "--gallery-gap": theme?.density === "comfortable" ? "1rem" : "0.5rem",
+    "--thumbnail-frame-size":
+      theme?.thumbnailFrameSize === undefined
+        ? undefined
+        : `${theme.thumbnailFrameSize}px`,
   } as CSSProperties;
   return (
     <div

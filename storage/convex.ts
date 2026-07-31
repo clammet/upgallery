@@ -38,6 +38,7 @@ export type UploadClaim = {
   storageRoot: string;
   folderSegments: string[];
   maxFileSize: number;
+  removeLocationData: boolean;
 };
 
 export type DownloadClaim = {
@@ -118,6 +119,7 @@ export type MediaProcessingClaim =
       processThumbnail: boolean;
       processMetadata: boolean;
       generatePreview: boolean;
+      removeLocationData: boolean;
     };
 
 export type FilesystemOperationClaim = {

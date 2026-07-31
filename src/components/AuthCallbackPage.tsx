@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   OAUTH_NONCE_KEY,
   SESSION_KEY,
@@ -9,7 +9,12 @@ import {
 import { PageFrame } from "./PageFrame";
 
 export function AuthCallbackPage() {
+  const handled = useRef(false);
+
   useEffect(() => {
+    if (handled.current) return;
+    handled.current = true;
+
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const token = fragment.get("token");
     const sessionToken = fragment.get("session");

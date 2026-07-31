@@ -1,10 +1,13 @@
 .uploadForm { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .65rem; margin: 0 auto 1rem; max-width: 700px; padding: .75rem; }
 .uploadForm label { display: grid; font-size: .78rem; gap: .25rem; }
+.uploadForm .checkboxLabel { align-items: center; display: flex; gap: .45rem; }
+.checkboxLabel input { margin: 0; }
+.locationCheck { color: var(--gallery-muted); }
 .filePicker { align-items: center; border: 1px dashed var(--border); cursor: pointer; min-height: 68px; padding: .8rem; text-align: center; }
 .filePicker input { margin-top: .5rem; }
 .preview { max-height: 260px; max-width: 100%; object-fit: contain; }
 .textPreview { background: var(--gallery-bg); border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0; max-height: 320px; overflow: auto; padding: .6rem; white-space: pre-wrap; }
-.entryList { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin: 0 auto; max-width: 1200px; }
+.entryList { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(min(var(--thumbnail-frame-size), 100%), 1fr)); margin: 0 auto; max-width: 1200px; }
 .entry { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 250px; overflow: hidden; transition: border-color 120ms ease, transform 120ms ease; }
 .entry:hover { border-color: var(--gallery-accent); transform: translateY(-1px); }
 .previewLink { align-items: center; background: color-mix(in srgb, var(--gallery-accent) 5%, var(--gallery-bg)); display: flex; justify-content: center; min-height: 180px; overflow: hidden; padding: .75rem; position: relative; text-decoration: none; }
@@ -19,6 +22,7 @@
 .entryTitle p { color: var(--gallery-muted); display: -webkit-box; font-size: .72rem; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin: .2rem 0 0; overflow: hidden; }
 .entryMetadata { align-items: flex-end; color: var(--gallery-muted); display: flex; flex-direction: column; font-size: .68rem; gap: .12rem; text-align: right; white-space: nowrap; }
 .metadataLine { align-items: center; display: inline-flex; gap: .25rem; }
+.metadataLine > span { align-items: center; display: inline-flex; }
 .metadataButton { align-items: center; background: transparent; border: 0; color: var(--gallery-muted); display: inline-flex; font-size: .8rem; height: 16px; justify-content: center; padding: 0; width: 16px; }
 .metadataButton:hover { color: var(--gallery-accent); }
 .deleteButton:hover { color: #bd2c31; }
@@ -31,6 +35,9 @@
 .metadataTable th { background: color-mix(in srgb, var(--gallery-fg) 5%, transparent); color: var(--gallery-muted); font-weight: 600; width: 36%; }
 .metadataTable td { overflow-wrap: anywhere; }
 .metadataTable tr:last-child th, .metadataTable tr:last-child td { border-bottom: 0; }
+.metadataValue { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
+.locationDeleteButton { align-items: center; background: transparent; border: 0; color: var(--gallery-muted); display: inline-flex; flex: 0 0 auto; height: 22px; justify-content: center; padding: 0; width: 22px; }
+.locationDeleteButton:hover { color: #bd2c31; }
 .metadataMap { margin: 0; }
 .metadataMap iframe { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: block; height: 210px; width: 100%; }
 .metadataMap figcaption { font-size: .72rem; margin-top: .3rem; text-align: right; }

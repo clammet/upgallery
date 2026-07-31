@@ -5,11 +5,12 @@
 .sidebar nav button { display: flex; justify-content: space-between; text-align: left; width: 100%; }
 .sidebar nav button small { margin-left: .5rem; }
 .selected { border-color: var(--gallery-accent) !important; color: var(--gallery-accent); }
-.newButton { margin-top: .5rem; width: 100%; }
+.newButton { align-items: center; display: inline-flex; gap: .3rem; justify-content: center; margin-top: .5rem; width: 100%; }
 .createForm { background: var(--gallery-surface); border: 1px solid var(--border); margin-top: .5rem; padding: .6rem; }
 .createForm h2 { font-size: 1rem; margin: 0; }
 .content { min-width: 0; }
 .galleryHeading { align-items: end; display: flex; justify-content: space-between; }
+.galleryHeading > a { align-items: center; display: inline-flex; gap: .25rem; }
 .galleryHeading h2 { font-size: 1.8rem; margin: .15rem 0; }
 .eyebrow { color: var(--gallery-accent); font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .stats { display: grid; gap: .5rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: .75rem 0; }

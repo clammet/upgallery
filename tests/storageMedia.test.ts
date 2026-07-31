@@ -85,12 +85,46 @@ test("BMP images generate JPEG thumbnails", async () => {
   const thumbnail = await readFile(join(storageRoot, thumbnailKey!));
   const metadata = await sharp(thumbnail).metadata();
   expect(metadata.format).toBe("jpeg");
-  expect(metadata.width).toBeLessThanOrEqual(480);
-  expect(metadata.height).toBeLessThanOrEqual(360);
+  expect(metadata.width).toBeLessThanOrEqual(512);
+  expect(metadata.height).toBeLessThanOrEqual(512);
   const mediaMetadata = JSON.parse(
     (await extractMediaMetadataJson(sourcePath, "image"))!,
   );
   expect(mediaMetadata).toMatchObject({ Resolution: "2 × 2" });
+});
+
+test("image thumbnails fit inside a 512px square without changing aspect ratio", async () => {
+  const sourcePath = join(storageRoot, "wide-source.jpg");
+  await sharp({
+    create: {
+      width: 1200,
+      height: 600,
+      channels: 3,
+      background: "#335577",
+    },
+  })
+    .jpeg()
+    .toFile(sourcePath);
+  const { createThumbnail } = await import("../storage/media.js");
+  const sha256 = "w".repeat(64);
+
+  const thumbnailKey = await createThumbnail({
+    sourcePath,
+    galleryKind: "image",
+    storageKind: "shared",
+    storageRoot: "wide-test",
+    sha256,
+    extension: "jpg",
+    mediaKind: "image",
+  });
+
+  await expect(
+    sharp(join(storageRoot, thumbnailKey!)).metadata(),
+  ).resolves.toMatchObject({
+    format: "jpeg",
+    width: 512,
+    height: 256,
+  });
 });
 
 test("HEIC images fall back to the libheif thumbnailer", async () => {
@@ -138,6 +172,78 @@ test("image metadata includes auto-oriented resolution", async () => {
   const json = await extractMediaMetadataJson(sourcePath, "image");
 
   expect(JSON.parse(json!)).toMatchObject({ Resolution: "12 × 8" });
+});
+
+test("location removal strips GPS while preserving camera metadata", async () => {
+  const sourcePath = join(storageRoot, "with-location.jpg");
+  const outputPath = join(storageRoot, "without-location.jpg");
+  await sharp({
+    create: {
+      width: 12,
+      height: 8,
+      channels: 3,
+      background: "#123456",
+    },
+  })
+    .withExif({
+      IFD0: {
+        Make: "Acme",
+        Model: "Pocket Camera",
+        Orientation: "1",
+      },
+      IFD2: {
+        DateTimeOriginal: "2026:07:29 10:00:00",
+        LensModel: "Tiny Lens",
+      },
+      IFD3: {
+        GPSLatitudeRef: "S",
+        GPSLatitude: "37/1 48/1 0/1",
+        GPSLongitudeRef: "E",
+        GPSLongitude: "144/1 59/1 0/1",
+      },
+    })
+    .jpeg()
+    .toFile(sourcePath);
+  const { writeImageWithoutLocationData } = await import(
+    "../storage/locationMetadata.js"
+  );
+  const { extractMediaMetadataJson } = await import("../storage/media.js");
+  const { fileHasLocationMetadata } = await import("../src/lib/metadata.js");
+
+  const before = JSON.parse(
+    (await extractMediaMetadataJson(sourcePath, "image"))!,
+  );
+  const beforePixels = await sharp(sourcePath).raw().toBuffer();
+  expect(before).toMatchObject({
+    Make: "Acme",
+    Model: "Pocket Camera",
+    LensModel: "Tiny Lens",
+    GPSLatitude: -37.8,
+  });
+  await expect(
+    fileHasLocationMetadata(await readFile(sourcePath)),
+  ).resolves.toBe(true);
+
+  await writeImageWithoutLocationData(sourcePath, outputPath);
+
+  const after = JSON.parse(
+    (await extractMediaMetadataJson(outputPath, "image"))!,
+  );
+  expect(after).toMatchObject({
+    Resolution: "12 × 8",
+    Make: "Acme",
+    Model: "Pocket Camera",
+    LensModel: "Tiny Lens",
+  });
+  expect(after).not.toHaveProperty("GPSLatitude");
+  expect(after).not.toHaveProperty("GPSLongitude");
+  expect(after).not.toHaveProperty("GPSAltitude");
+  await expect(
+    fileHasLocationMetadata(await readFile(outputPath)),
+  ).resolves.toBe(false);
+  await expect(sharp(outputPath).raw().toBuffer()).resolves.toEqual(
+    beforePixels,
+  );
 });
 
 test("full-resolution previews preserve the source pixel dimensions", async () => {

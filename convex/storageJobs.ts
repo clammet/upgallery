@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import {
+  MEDIA_METADATA_VERSION,
   MEDIA_PROCESSOR_VERSION,
   STORAGE_JOB_LEASE_MS,
   STORAGE_JOB_MAX_ATTEMPTS,
@@ -229,11 +230,14 @@ export const claimMediaProcessing = internalMutation({
       size: entry.size,
       filesystemModifiedAt: entry.filesystemModifiedAt,
       processThumbnail: entry.thumbnailKey === undefined,
-      processMetadata: entry.metadataJson === undefined,
+      processMetadata:
+        entry.metadataVersion !== MEDIA_METADATA_VERSION ||
+        job.removeLocationData === true,
       generatePreview:
         job.previewRequested === true &&
         entry.previewKey === undefined &&
         entry.thumbnailKey !== undefined,
+      removeLocationData: job.removeLocationData === true,
     };
   },
 });
@@ -258,6 +262,12 @@ export const completeMediaProcessing = internalMutation({
     thumbnailKey: v.optional(v.string()),
     previewKey: v.optional(v.string()),
     metadataJson: v.optional(v.string()),
+    metadataProcessed: v.optional(v.boolean()),
+    storageKey: v.optional(v.string()),
+    sha256: v.optional(v.string()),
+    size: v.optional(v.number()),
+    filesystemModifiedAt: v.optional(v.number()),
+    filesystemIdentity: v.optional(v.string()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -298,6 +308,18 @@ export const completeMediaProcessing = internalMutation({
       }
       return null;
     }
+    if (
+      job.removeLocationData === true &&
+      (args.storageKey === undefined ||
+        args.storageKey.length > 1000 ||
+        args.sha256 === undefined ||
+        !/^[a-f0-9]{64}$/.test(args.sha256) ||
+        args.size === undefined ||
+        !Number.isSafeInteger(args.size) ||
+        args.size < 0)
+    ) {
+      throw new Error("Location removal did not return a valid image");
+    }
     const entry = await ctx.db.get("entries", job.entryId);
     if (
       entry !== null &&
@@ -305,13 +327,34 @@ export const completeMediaProcessing = internalMutation({
       entry.storageKey === job.expectedStorageKey &&
       entry.sha256 === job.expectedSha256
     ) {
+      const replacement =
+        job.removeLocationData === true &&
+        args.storageKey !== undefined &&
+        args.sha256 !== undefined &&
+        args.size !== undefined
+          ? {
+              storageKey: args.storageKey,
+              sha256: args.sha256,
+              size: args.size,
+              filesystemModifiedAt: args.filesystemModifiedAt,
+              filesystemIdentity: args.filesystemIdentity,
+            }
+          : null;
+      const metadataProcessed =
+        args.metadataProcessed === true ||
+        args.metadataJson !== undefined ||
+        job.removeLocationData === true;
       await ctx.db.patch("entries", entry._id, {
+        ...(replacement ?? {}),
         ...(args.thumbnailKey === undefined
           ? {}
           : { thumbnailKey: args.thumbnailKey }),
-        ...(args.metadataJson === undefined
+        ...(!metadataProcessed
           ? {}
-          : { metadataJson: args.metadataJson }),
+          : {
+              metadataJson: args.metadataJson,
+              metadataVersion: MEDIA_METADATA_VERSION,
+            }),
         ...(args.previewKey === undefined
           ? {}
           : {
@@ -320,6 +363,28 @@ export const completeMediaProcessing = internalMutation({
             }),
         updatedAt: Date.now(),
       });
+      if (replacement !== null) {
+        const gallery = await ctx.db.get("galleries", entry.galleryId);
+        if (gallery !== null) {
+          await ctx.db.patch("galleries", gallery._id, {
+            totalBytes: Math.max(
+              0,
+              gallery.totalBytes + replacement.size - entry.size,
+            ),
+          });
+        }
+        if (replacement.storageKey !== entry.storageKey) {
+          await ctx.db.insert("storageDeleteJobs", {
+            entryId: entry._id,
+            storageKey: entry.storageKey,
+            deleteOriginal: true,
+            deleteEntry: false,
+            status: "queued",
+            attempts: 0,
+            availableAt: 0,
+          });
+        }
+      }
       if (
         job.previewRequested === true &&
         args.previewKey === undefined &&

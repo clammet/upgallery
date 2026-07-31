@@ -518,6 +518,111 @@ describe("upgallery backend", () => {
     ).rejects.toThrow("Unauthorized");
   });
 
+  test("folder previews inherit gallery settings and support render-seeded overrides", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Preview gallery",
+      slug: "preview-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "previews",
+      folderPreviewMode: "first3",
+      hosts: [{ host: "previews.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const created = await authed.mutation(api.folders.create, {
+      galleryId,
+      parentId: gallery!.rootFolderId!,
+      name: "Album",
+      privacy: "public",
+    });
+    if (created.kind !== "complete") {
+      throw new Error("Shared storage folder unexpectedly required I/O");
+    }
+    await t.run(async (ctx) => {
+      for (const [index, name] of [
+        "charlie.jpg",
+        "alpha.jpg",
+        "delta.jpg",
+        "bravo.jpg",
+      ].entries()) {
+        const hash = (index + 1).toString(16).repeat(64);
+        await ctx.db.insert("entries", {
+          galleryId,
+          folderId: created.folderId,
+          ownerProfileId: admin.profileId,
+          name,
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image",
+          size: 100 + index,
+          sha256: hash,
+          storageKind: "shared",
+          storageKey: `public/galleries/previews/${name}`,
+          thumbnailKey: `public/galleries/previews/${hash}.thumb.jpg`,
+          state: "ready",
+          createdAt: Date.now() + index,
+          updatedAt: Date.now() + index,
+        });
+      }
+    });
+
+    const inherited = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      previewSeed: 11,
+    });
+    expect(inherited.folderPreviews).toMatchObject([
+      {
+        folderId: created.folderId,
+        mode: "first3",
+        entries: [
+          { name: "alpha.jpg" },
+          { name: "bravo.jpg" },
+          { name: "charlie.jpg" },
+        ],
+      },
+    ]);
+
+    await authed.mutation(api.folders.update, {
+      folderId: created.folderId,
+      name: "Album",
+      privacy: "public",
+      previewMode: "random",
+    });
+    const randomNames = new Set<string>();
+    for (const previewSeed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const listing = await authed.query(api.folders.list, {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        previewSeed,
+      });
+      expect(listing.folderPreviews[0]?.mode).toBe("random");
+      expect(listing.folderPreviews[0]?.entries).toHaveLength(1);
+      randomNames.add(listing.folderPreviews[0]!.entries[0]!.name);
+    }
+    expect(randomNames.size).toBeGreaterThan(1);
+
+    await authed.mutation(api.folders.update, {
+      folderId: created.folderId,
+      name: "Album",
+      privacy: "public",
+    });
+    const reset = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      previewSeed: 11,
+    });
+    expect(reset.folderPreviews[0]?.mode).toBe("first3");
+  });
+
   test("a user-backed directory is reconciled incrementally and skips an unchanged mtime", async () => {
     const t = convexTest(schema, modules);
     const admin = await seedProfile(t, {
@@ -692,6 +797,7 @@ describe("upgallery backend", () => {
       parentId: gallery!.rootFolderId!,
       name: "Retouched",
       privacy: "unlisted",
+      previewMode: "random3",
     });
     expect(result.kind).toBe("filesystem");
     if (result.kind !== "filesystem") {
@@ -739,6 +845,7 @@ describe("upgallery backend", () => {
     expect(folder).toMatchObject({
       name: "Retouched",
       privacy: "unlisted",
+      previewMode: "random3",
       filesystemIdentity: "2:20",
     });
   });
@@ -814,6 +921,233 @@ describe("upgallery backend", () => {
     expect(completed.entry?.thumbnailKey).toContain(".thumb.jpg");
     expect(completed.entry?.metadataJson).toBe("{\"Make\":\"Test\"}");
     expect(completed.jobs).toHaveLength(0);
+  });
+
+  test("owners can queue location removal and commit the rewritten image", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedProfile(t, {
+      email: "owner@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, owner.googleSubject, "owner@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Private metadata",
+      slug: "private-metadata",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "private-metadata",
+      hosts: [{ host: "metadata.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const intent = await authed.mutation(api.entries.createUploadIntent, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      name: "located.jpg",
+      mimeType: "image/jpeg",
+      size: 500,
+      removeLocationData: true,
+    });
+    await expect(
+      t.mutation(internal.storageGateway.claimUpload, intent),
+    ).resolves.toMatchObject({ removeLocationData: true });
+    const oldSha = "a".repeat(64);
+    const oldStorageKey =
+      `public/shared/private-metadata/aa/aa/${oldSha}.jpg`;
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 500,
+        sha256: oldSha,
+        storageKey: oldStorageKey,
+      },
+    );
+    const initial = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    if (initial.kind !== "ready") throw new Error("Expected media work");
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: initial.jobId,
+      thumbnailKey:
+        `public/shared/private-metadata/aa/aa/${oldSha}.thumb.jpg`,
+      metadataJson:
+        "{\"Make\":\"Acme\",\"GPSLatitude\":-37.8,\"GPSLongitude\":144.98}",
+    });
+
+    const [editor, viewer] = await Promise.all([
+      seedProfile(t, { email: "editor@example.com" }),
+      seedProfile(t, { email: "viewer@example.com" }),
+    ]);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("galleryRoles", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        profileId: editor.profileId,
+        role: "editor",
+      });
+      await ctx.db.insert("galleryRoles", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        profileId: viewer.profileId,
+        role: "viewer",
+      });
+    });
+    await expect(
+      asUser(
+        t,
+        viewer.googleSubject,
+        "viewer@example.com",
+      ).mutation(api.entries.removeLocationData, {
+        galleryId,
+        entryId,
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      asUser(
+        t,
+        editor.googleSubject,
+        "editor@example.com",
+      ).mutation(api.entries.removeLocationData, {
+        galleryId,
+        entryId,
+      }),
+    ).resolves.toEqual({ queued: true });
+    const removal = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    expect(removal).toMatchObject({
+      kind: "ready",
+      entryId,
+      processMetadata: true,
+      removeLocationData: true,
+    });
+    if (removal.kind !== "ready") {
+      throw new Error("Expected location removal work");
+    }
+    const newSha = "b".repeat(64);
+    const newStorageKey =
+      `public/shared/private-metadata/bb/bb/${newSha}.jpg`;
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: removal.jobId,
+      storageKey: newStorageKey,
+      sha256: newSha,
+      size: 480,
+      metadataJson: "{\"Make\":\"Acme\"}",
+    });
+
+    const completed = await t.run(async (ctx) => ({
+      entry: await ctx.db.get("entries", entryId),
+      gallery: await ctx.db.get("galleries", galleryId),
+      deleteJobs: await ctx.db
+        .query("storageDeleteJobs")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+        .take(10),
+    }));
+    expect(completed.entry).toMatchObject({
+      storageKey: newStorageKey,
+      sha256: newSha,
+      size: 480,
+      metadataJson: "{\"Make\":\"Acme\"}",
+    });
+    expect(completed.gallery?.totalBytes).toBe(480);
+    expect(completed.deleteJobs).toMatchObject([
+      {
+        storageKey: oldStorageKey,
+        deleteOriginal: true,
+        deleteEntry: false,
+        status: "queued",
+      },
+    ]);
+  });
+
+  test("uploader location removal is limited to the file creator", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const creator = await seedProfile(t, { email: "creator@example.com" });
+    const stranger = await seedProfile(t, { email: "stranger@example.com" });
+    const galleryId = await asUser(
+      t,
+      admin.googleSubject,
+      "admin@example.com",
+    ).mutation(api.galleries.create, {
+      name: "Creator uploads",
+      slug: "creator-uploads",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "creator-uploads",
+      uploaderAccess: "sso",
+      hosts: [{ host: "creator.example.com", rootPath: "/up" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const creatorClient = asUser(
+      t,
+      creator.googleSubject,
+      "creator@example.com",
+    );
+    const intent = await creatorClient.mutation(
+      api.entries.createUploadIntent,
+      {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        name: "creator-photo.jpg",
+        mimeType: "image/jpeg",
+        size: 400,
+      },
+    );
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const sha = "d".repeat(64);
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 400,
+        sha256: sha,
+        storageKey:
+          `protected/uploaders/creator-uploads/dd/dd/${sha}.jpg`,
+      },
+    );
+    const initial = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    if (initial.kind !== "ready") throw new Error("Expected media work");
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: initial.jobId,
+      metadataJson:
+        "{\"GPSLatitude\":-37.8,\"GPSLongitude\":144.98}",
+    });
+
+    await expect(
+      asUser(
+        t,
+        stranger.googleSubject,
+        "stranger@example.com",
+      ).mutation(api.entries.removeLocationData, {
+        galleryId,
+        entryId,
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      creatorClient.mutation(api.entries.removeLocationData, {
+        galleryId,
+        entryId,
+      }),
+    ).resolves.toEqual({ queued: true });
   });
 
   test("durable storage jobs reclaim expired leases", async () => {

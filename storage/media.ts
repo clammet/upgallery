@@ -182,7 +182,7 @@ async function writeSharpThumbnail(
 ): Promise<void> {
   await sharp(sourcePath)
     .rotate()
-    .resize(480, 360, { fit: "inside", withoutEnlargement: true })
+    .resize(512, 512, { fit: "inside", withoutEnlargement: true })
     .jpeg({ quality: 82, mozjpeg: true })
     .toFile(outputPath);
 }
@@ -194,7 +194,7 @@ async function runHeifThumbnailer(
 ): Promise<void> {
   await runMediaCommand(
     config.heifThumbnailerCommand,
-    ["-s", "480", "-p", sourcePath, outputPath],
+    ["-s", "512", "-p", sourcePath, outputPath],
     "HEIF thumbnailer",
     signal,
   );
@@ -218,7 +218,7 @@ async function runFfmpeg(
       "-frames:v",
       "1",
       "-vf",
-      "scale=480:360:force_original_aspect_ratio=decrease",
+      "scale=512:512:force_original_aspect_ratio=decrease",
       "-y",
       outputPath,
     ],
@@ -328,24 +328,28 @@ async function extractImageMetadata(
           width: (image.autoOrient ?? image).width,
           height: (image.autoOrient ?? image).height,
         });
-  const parsed: unknown = await exifr
-    .parse(filePath, {
-      pick: [
-        "Make",
-        "Model",
-        "LensModel",
-        "DateTimeOriginal",
-        "ExposureTime",
-        "FNumber",
-        "ISO",
-        "FocalLength",
-        "latitude",
-        "longitude",
-        "GPSAltitude",
-        "GPSAltitudeRef",
-      ],
-    })
-    .catch(() => undefined);
+  const exifInput = imageExifInput(filePath, image?.exif);
+  const [parsed, parsedGps] = await Promise.all([
+    exifr
+      .parse(exifInput, {
+        pick: [
+          "Make",
+          "Model",
+          "Software",
+          "LensModel",
+          "DateTimeOriginal",
+          "ExposureTime",
+          "FNumber",
+          "ISO",
+          "FocalLength",
+          "GPSAltitude",
+          "GPSAltitudeRef",
+          "GPSHPositioningError",
+        ],
+      })
+      .catch(() => undefined),
+    exifr.gps(exifInput).catch(() => undefined),
+  ]);
   signal?.throwIfAborted();
 
   const exif = isRecord(parsed) ? parsed : {};
@@ -353,20 +357,53 @@ async function extractImageMetadata(
   if (resolution !== undefined) metadata.Resolution = resolution;
   copyString(metadata, "Make", exif.Make);
   copyString(metadata, "Model", exif.Model);
+  copyString(metadata, "Software", exif.Software);
   copyString(metadata, "LensModel", exif.LensModel);
   copyDate(metadata, "DateTimeOriginal", exif.DateTimeOriginal);
   copyNumber(metadata, "ExposureTime", exif.ExposureTime);
   copyNumber(metadata, "FNumber", exif.FNumber);
   copyNumber(metadata, "ISO", exif.ISO);
   copyNumber(metadata, "FocalLength", exif.FocalLength);
-  copyNumber(metadata, "GPSLatitude", exif.latitude);
-  copyNumber(metadata, "GPSLongitude", exif.longitude);
+  const gps: Record<string, unknown> = isRecord(parsedGps) ? parsedGps : {};
+  copyNumber(metadata, "GPSLatitude", gps.latitude);
+  copyNumber(metadata, "GPSLongitude", gps.longitude);
   const altitude = finiteNumber(exif.GPSAltitude);
   if (altitude !== undefined) {
     metadata.GPSAltitude =
       finiteNumber(exif.GPSAltitudeRef) === 1 ? -altitude : altitude;
   }
+  copyNumber(
+    metadata,
+    "GPSHorizontalAccuracy",
+    exif.GPSHPositioningError,
+  );
   return metadata;
+}
+
+function imageExifInput(
+  filePath: string,
+  exif: Uint8Array | undefined,
+): string | Uint8Array {
+  if (exif === undefined) return filePath;
+  if (
+    exif.length >= 8 &&
+    exif[0] === 0x45 &&
+    exif[1] === 0x78 &&
+    exif[2] === 0x69 &&
+    exif[3] === 0x66 &&
+    exif[4] === 0 &&
+    exif[5] === 0
+  ) {
+    return exif.subarray(6);
+  }
+  if (
+    exif.length >= 8 &&
+    ((exif[0] === 0x49 && exif[1] === 0x49) ||
+      (exif[0] === 0x4d && exif[1] === 0x4d))
+  ) {
+    return exif;
+  }
+  return filePath;
 }
 
 async function extractVideoMetadata(

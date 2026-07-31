@@ -1,14 +1,24 @@
-.grid { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
+.grid { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(min(var(--thumbnail-frame-size), 100%), 1fr)); }
 .folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); min-height: 112px; overflow: hidden; text-decoration: none; }
-.folderCard { display: grid; gap: .3rem; padding: .45rem; }
-.folderCard { align-content: center; justify-items: center; }
+.folderCard { align-content: start; display: grid; gap: .3rem; justify-items: stretch; padding: .45rem; }
 .folderCard:hover, .fileCard:hover { border-color: var(--gallery-accent); }
+.folderPreviewFrame { aspect-ratio: 4 / 3; display: block; isolation: isolate; position: relative; width: 100%; }
+.folderBackdrop { color: #d3a04b; fill: currentColor; filter: drop-shadow(0 4px 4px rgb(64 44 14 / 24%)); height: 112%; left: -8%; position: absolute; stroke: #9d6d29; top: -2%; width: 116%; z-index: 0; }
+.folderPreviewSingle, .folderPreviewCard { background: color-mix(in srgb, var(--gallery-surface) 92%, #fff); border: 2px solid color-mix(in srgb, var(--gallery-surface) 92%, #fff); box-shadow: 0 4px 9px rgb(45 31 13 / 25%); object-fit: cover; position: absolute; transition: box-shadow 130ms ease, transform 130ms ease; }
+.folderPreviewSingle { height: 66%; left: 17%; top: 13%; transform: rotate(-1.5deg); width: 66%; z-index: 2; }
+.folderPreviewCard { height: 64%; top: 12%; width: 58%; }
+.folderPreviewCardLeft { left: 5%; transform: rotate(-7deg); }
+.folderPreviewCardMiddle { left: 21%; top: 8%; transform: rotate(0); }
+.folderPreviewCardRight { left: 37%; transform: rotate(7deg); }
+.folderPreviewFrame:hover .folderPreviewCard { box-shadow: 0 6px 13px rgb(45 31 13 / 32%); }
+.folderName { font-size: .86rem; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .fileCard { position: relative; }
+.cardMetadataButton { align-items: center; background: color-mix(in srgb, var(--gallery-bg) 88%, transparent); border: 0; border-radius: 50%; bottom: .38rem; color: var(--gallery-muted); display: inline-flex; height: 22px; justify-content: center; padding: 0; position: absolute; right: .38rem; width: 22px; z-index: 2; }
+.cardMetadataButton:hover { color: var(--gallery-accent); }
 .fileCardContent { background: transparent; border: 0; border-radius: 0; color: inherit; display: grid; font: inherit; gap: .3rem; height: 100%; padding: .45rem; text-align: left; text-decoration: none; width: 100%; }
 .fileCardContent:hover { background: color-mix(in srgb, var(--gallery-accent) 4%, transparent); }
 .fileCardContent small { color: var(--gallery-muted); }
 .thumbnailFrame { display: block; position: relative; width: 100%; }
-.folderIcon { color: var(--gallery-accent); font-size: 2.1rem; transform: rotate(2deg); }
 .fileThumb { aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-fg) 6%, transparent); border-radius: calc(var(--gallery-radius) - 1px); display: block; object-fit: cover; width: 100%; }
 .fileGlyph { align-items: center; aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: calc(var(--gallery-radius) - 1px); color: var(--gallery-accent); display: flex; font-size: 1.3rem; font-weight: 800; justify-content: center; letter-spacing: -.04em; width: 100%; }
 .miniGlyph { width: 64px; }
@@ -27,6 +37,20 @@
 .breadcrumbDropTarget:hover { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); outline: 1px dashed var(--gallery-accent); }
 .deletePrompt { margin: 0; }
 .confirmDeleteButton { background: #bd2c31; border-color: #bd2c31; color: white; }
+.metadataContent { display: grid; gap: .75rem; }
+.metadataTableFrame { border: 1px solid var(--border); border-radius: var(--gallery-radius); overflow: hidden; }
+.metadataTable { border-collapse: collapse; font-size: .78rem; width: 100%; }
+.metadataTable th, .metadataTable td { border-bottom: 1px solid var(--border); padding: .45rem .55rem; text-align: left; vertical-align: top; }
+.metadataTable th { background: color-mix(in srgb, var(--gallery-fg) 5%, transparent); color: var(--gallery-muted); font-weight: 600; width: 36%; }
+.metadataTable td { overflow-wrap: anywhere; }
+.metadataTable tr:last-child th, .metadataTable tr:last-child td { border-bottom: 0; }
+.metadataValue { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
+.locationDeleteButton { align-items: center; background: transparent; border: 0; color: var(--gallery-muted); display: inline-flex; flex: 0 0 auto; height: 22px; justify-content: center; padding: 0; width: 22px; }
+.locationDeleteButton:hover { color: #bd2c31; }
+.metadataMap { margin: 0; }
+.metadataMap iframe { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: block; height: 210px; width: 100%; }
+.metadataMap figcaption { font-size: .72rem; margin-top: .3rem; text-align: right; }
+.metadataUnavailable { color: var(--gallery-muted); margin: 0; }
 .movePicker { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); min-height: 260px; overflow: hidden; }
 .moveColumn { min-width: 0; }
 .moveColumn + .moveColumn { border-left: 1px solid var(--border); }

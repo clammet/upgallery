@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { privacy } from "./lib/validators";
+import { folderPreviewMode, privacy } from "./lib/validators";
+import type { Id } from "./_generated/dataModel";
 import {
   cleanFilesystemSegment,
   MAX_FOLDER_DEPTH,
@@ -17,11 +18,26 @@ import {
   shouldListFolder,
 } from "./lib/permissions";
 
+type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+
+function randomPreviewThreshold(
+  seed: number,
+  folderId: Id<"folders">,
+) {
+  let hash = seed | 0;
+  const value = folderId.toString();
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0").padEnd(64, "0");
+}
+
 export const list = query({
   args: {
     anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
+    previewSeed: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const [gallery, folder] = await Promise.all([
@@ -74,6 +90,79 @@ export const list = query({
       }
     }
 
+    const previewSeed = Math.trunc(args.previewSeed ?? 0);
+    if (!Number.isSafeInteger(previewSeed)) {
+      throw new Error("Invalid folder preview seed");
+    }
+    const folderPreviews = await Promise.all(
+      folders.map(async (child) => {
+        const mode =
+          child.previewMode ?? gallery.folderPreviewMode ?? "first";
+        const count = mode === "first3" || mode === "random3" ? 3 : 1;
+        let candidates;
+        if (mode === "first" || mode === "first3") {
+          candidates = await ctx.db
+            .query("entries")
+            .withIndex(
+              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_name",
+              (q) =>
+                q
+                  .eq("folderId", child._id)
+                  .eq("state", "ready")
+                  .eq("mediaKind", "image")
+                  .eq("moveJobId", undefined),
+            )
+            .take(count);
+        } else {
+          const threshold = randomPreviewThreshold(
+            previewSeed,
+            child._id,
+          );
+          const afterThreshold = await ctx.db
+            .query("entries")
+            .withIndex(
+              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
+              (q) =>
+                q
+                  .eq("folderId", child._id)
+                  .eq("state", "ready")
+                  .eq("mediaKind", "image")
+                  .eq("moveJobId", undefined)
+                  .gte("sha256", threshold),
+            )
+            .take(count);
+          const beforeThreshold =
+            afterThreshold.length >= count
+              ? []
+              : await ctx.db
+                  .query("entries")
+                  .withIndex(
+                    "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
+                    (q) =>
+                      q
+                        .eq("folderId", child._id)
+                        .eq("state", "ready")
+                        .eq("mediaKind", "image")
+                        .eq("moveJobId", undefined)
+                        .lt("sha256", threshold),
+                  )
+                  .take(count - afterThreshold.length);
+          candidates = [...afterThreshold, ...beforeThreshold];
+        }
+        return {
+          folderId: child._id,
+          mode,
+          entries: candidates.map((entry) => ({
+            _id: entry._id,
+            name: entry.name,
+            storageKey: entry.storageKey,
+            thumbnailKey: entry.thumbnailKey,
+            filesystemModifiedAt: entry.filesystemModifiedAt,
+          })),
+        };
+      }),
+    );
+
     const entries = await ctx.db
       .query("entries")
       .withIndex("by_folderId_and_state", (q) =>
@@ -95,10 +184,13 @@ export const list = query({
         gallery.kind === "uploader" &&
         profile !== null &&
         (await isOwningProfile(ctx, entry.ownerProfileId, profile._id));
+      const concealProtectedMetadata = locked && !canDelete;
       items.push({
         ...entry,
         description: locked ? undefined : entry.description,
-        metadataJson: locked ? undefined : entry.metadataJson,
+        metadataJson: concealProtectedMetadata
+          ? undefined
+          : entry.metadataJson,
         passwordSalt: undefined,
         passwordHash: undefined,
         passwordIterations: undefined,
@@ -121,6 +213,7 @@ export const list = query({
       gallery,
       folder,
       folders,
+      folderPreviews,
       entries: items,
       breadcrumbs,
       filesystemSync:
@@ -147,6 +240,7 @@ export const create = mutation({
     parentId: v.id("folders"),
     name: v.string(),
     privacy,
+    previewMode: v.optional(folderPreviewMode),
   },
   handler: async (ctx, args) => {
     const [gallery, parent] = await Promise.all([
@@ -192,6 +286,7 @@ export const create = mutation({
         kind: "mkdir",
         name,
         privacy: args.privacy,
+        previewMode: args.previewMode,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
         state: "pending",
@@ -210,6 +305,7 @@ export const create = mutation({
       name,
       slug,
       privacy: args.privacy,
+      previewMode: args.previewMode,
     });
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
@@ -254,6 +350,7 @@ export const update = mutation({
     folderId: v.id("folders"),
     name: v.string(),
     privacy,
+    previewMode: v.optional(folderPreviewMode),
   },
   handler: async (ctx, args) => {
     const folder = await ctx.db.get("folders", args.folderId);
@@ -309,6 +406,7 @@ export const update = mutation({
         kind: "rename",
         name,
         privacy: args.privacy,
+        previewMode: args.previewMode,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
         state: "pending",
@@ -324,6 +422,7 @@ export const update = mutation({
       name,
       slug,
       privacy: args.privacy,
+      previewMode: args.previewMode,
     });
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
