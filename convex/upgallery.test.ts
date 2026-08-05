@@ -201,6 +201,72 @@ describe("upgallery backend", () => {
     expect(intent?.ownerProfileId).toBe(anonymous.profileId);
   });
 
+  test("unlisted uploader entries are listed only for their uploader", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Unlisted uploads",
+      slug: "unlisted-uploads",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "unlisted-uploads",
+      hosts: [{ host: "unlisted.example.com", rootPath: "/up" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const uploader = await seedProfile(t, { anonymous: true });
+    const visitor = await seedProfile(t, { anonymous: true });
+    const intent = await t.mutation(api.entries.createUploadIntent, {
+      anonymousClaim: uploader.anonymousClaim,
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      name: "share-by-link.txt",
+      mimeType: "text/plain",
+      size: 12,
+      unlisted: true,
+    });
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const entryId = await t.mutation(
+      internal.storageGateway.completeUpload,
+      {
+        intentId: intent.intentId,
+        actualMimeType: "text/plain",
+        extension: "txt",
+        mediaKind: "text",
+        size: 12,
+        sha256: "f".repeat(64),
+        storageKey: `protected/uploaders/unlisted-uploads/ff/ff/${"f".repeat(64)}.txt`,
+      },
+    );
+
+    const uploaderListing = await t.query(api.folders.list, {
+      anonymousClaim: uploader.anonymousClaim,
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(uploaderListing.entries).toMatchObject([
+      { _id: entryId, unlisted: true, canDelete: true },
+    ]);
+
+    const visitorListing = await t.query(api.folders.list, {
+      anonymousClaim: visitor.anonymousClaim,
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(visitorListing.entries).toEqual([]);
+
+    const adminListing = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(adminListing.entries).toEqual([]);
+  });
+
   test("uploader file and attachment serves share one counted view metric", async () => {
     const t = convexTest(schema, modules);
     const admin = await seedProfile(t, {
@@ -1347,8 +1413,32 @@ describe("upgallery backend", () => {
       canDelete: false,
     });
     await expect(
+      authed.mutation(api.entries.setMarkdownMode, {
+        entryId,
+        markdown: true,
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
       authed.mutation(api.entries.remove, { entryId }),
     ).rejects.toThrow("Unauthorized");
+
+    await expect(
+      t.mutation(api.entries.setMarkdownMode, {
+        anonymousClaim: uploader.anonymousClaim,
+        entryId,
+        markdown: true,
+      }),
+    ).resolves.toEqual({ name: "mine.md" });
+    await expect(
+      t.run(async (ctx) => ctx.db.get("entries", entryId)),
+    ).resolves.toMatchObject({ name: "mine.md", extension: "md" });
+    await expect(
+      t.mutation(api.entries.setMarkdownMode, {
+        anonymousClaim: uploader.anonymousClaim,
+        entryId,
+        markdown: false,
+      }),
+    ).resolves.toEqual({ name: "mine.txt" });
 
     await t.mutation(api.entries.remove, {
       anonymousClaim: uploader.anonymousClaim,

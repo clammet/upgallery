@@ -1,0 +1,83 @@
+.preview {
+  background: var(--markdown-background, var(--gallery-surface));
+  color: var(--markdown-color, var(--gallery-fg));
+  font-size: 0.94rem;
+  height: 100%;
+  line-height: 1.65;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: clamp(1rem, 4vw, 2.5rem);
+  user-select: text;
+  width: 100%;
+}
+
+.preview > :first-child {
+  margin-top: 0;
+}
+
+.preview > :last-child {
+  margin-bottom: 0;
+}
+
+.preview h1,
+.preview h2,
+.preview h3,
+.preview h4,
+.preview h5,
+.preview h6 {
+  line-height: 1.25;
+  margin: 1.5em 0 0.65em;
+}
+
+.preview h1,
+.preview h2 {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  padding-bottom: 0.3em;
+}
+
+.preview blockquote {
+  border-left: 3px solid color-mix(in srgb, currentColor 32%, transparent);
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  margin-left: 0;
+  padding-left: 1rem;
+}
+
+.preview pre {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: var(--gallery-radius);
+  overflow: auto;
+  padding: 0.8rem;
+  white-space: pre;
+}
+
+.preview pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.preview a {
+  color: color-mix(in srgb, var(--gallery-accent) 70%, var(--gallery-fg));
+}
+
+.preview hr {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  margin: 1.5rem 0;
+}
+
+.preview li + li {
+  margin-top: 0.25rem;
+}
+
+.omittedImage {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-style: italic;
+}
+
+.status {
+  color: color-mix(in srgb, currentColor 68%, transparent);
+  margin: 20vh auto 0;
+  max-width: 34rem;
+  text-align: center;
+}

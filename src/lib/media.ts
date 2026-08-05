@@ -29,3 +29,32 @@ export function shouldUseNativeHeifPreview(
 ): boolean {
   return isHeifImage(mimeType, fileName) && isSafariBrowser(userAgent);
 }
+
+export function shouldRenderTextAsMarkdown(
+  mediaKind: string,
+  fileName: string,
+): boolean {
+  return mediaKind === "text" && /\.(?:md|markdown)$/i.test(fileName);
+}
+
+export function shouldRenderAsPlainText(
+  mediaKind: string,
+  fileName: string,
+): boolean {
+  return mediaKind === "text" && /\.txt$/i.test(fileName);
+}
+
+export function canToggleTextMarkdown(
+  mediaKind: string,
+  fileName: string,
+): boolean {
+  return mediaKind === "text" && /\.(?:md|markdown|txt)$/i.test(fileName);
+}
+
+export function fileNameWithMarkdownMode(
+  fileName: string,
+  markdown: boolean,
+): string {
+  if (!/\.(?:md|markdown|txt)$/i.test(fileName)) return fileName;
+  return fileName.replace(/\.(?:md|markdown|txt)$/i, markdown ? ".md" : ".txt");
+}

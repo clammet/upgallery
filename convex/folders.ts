@@ -175,15 +175,23 @@ export const list = query({
       if (entry.moveJobId !== undefined) {
         continue;
       }
+      const ownsEntry =
+        gallery.kind === "uploader" &&
+        profile !== null &&
+        (await isOwningProfile(ctx, entry.ownerProfileId, profile._id));
+      if (
+        gallery.kind === "uploader" &&
+        entry.unlisted === true &&
+        !ownsEntry
+      ) {
+        continue;
+      }
       const counter = await ctx.db
         .query("entryCounters")
         .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
         .unique();
       const locked = entry.passwordHash !== undefined;
-      const canDelete =
-        gallery.kind === "uploader" &&
-        profile !== null &&
-        (await isOwningProfile(ctx, entry.ownerProfileId, profile._id));
+      const canDelete = ownsEntry;
       const concealProtectedMetadata = locked && !canDelete;
       items.push({
         ...entry,

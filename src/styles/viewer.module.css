@@ -32,6 +32,10 @@
   padding: 0.4rem;
 }
 
+.titlebarWithMarkdownToggle {
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+}
+
 .titlebar h2 {
   font-size: 0.88rem;
   margin: 0;
@@ -95,6 +99,11 @@
 
 .stageDragging {
   cursor: grabbing;
+}
+
+.stageTextPreview {
+  touch-action: pan-x pan-y;
+  user-select: text;
 }
 
 .zoomMedia {
@@ -246,6 +255,10 @@
 
   .titlebar {
     grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .titlebarWithMarkdownToggle {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
   .navigation {

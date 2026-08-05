@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
+  canToggleTextMarkdown,
+  fileNameWithMarkdownMode,
   isHeifImage,
   isSafariBrowser,
+  shouldRenderAsPlainText,
+  shouldRenderTextAsMarkdown,
   shouldUseNativeHeifPreview,
 } from "../src/lib/media";
 
@@ -36,5 +40,33 @@ describe("HEIF image detection", () => {
     expect(shouldUseNativeHeifPreview("image/heic", "photo.heic", chrome)).toBe(
       false,
     );
+  });
+});
+
+describe("Markdown text preview detection", () => {
+  test("renders Markdown files without treating plain text as Markdown", () => {
+    expect(shouldRenderTextAsMarkdown("text", "notes.txt")).toBe(false);
+    expect(shouldRenderTextAsMarkdown("text", "README.MD")).toBe(true);
+    expect(shouldRenderTextAsMarkdown("text", "guide.markdown")).toBe(true);
+    expect(shouldRenderTextAsMarkdown("text", "styles.css")).toBe(false);
+    expect(shouldRenderTextAsMarkdown("other", "notes.txt")).toBe(false);
+    expect(shouldRenderAsPlainText("text", "notes.txt")).toBe(true);
+    expect(shouldRenderAsPlainText("text", "NOTES.TXT")).toBe(true);
+    expect(shouldRenderAsPlainText("text", "notes.md")).toBe(false);
+    expect(shouldRenderAsPlainText("other", "notes.txt")).toBe(false);
+  });
+
+  test("toggles eligible text filenames between .txt and .md", () => {
+    expect(canToggleTextMarkdown("text", "notes.txt")).toBe(true);
+    expect(canToggleTextMarkdown("text", "notes.md")).toBe(true);
+    expect(canToggleTextMarkdown("text", "notes.markdown")).toBe(true);
+    expect(canToggleTextMarkdown("text", "notes.csv")).toBe(false);
+    expect(canToggleTextMarkdown("image", "notes.txt")).toBe(false);
+    expect(fileNameWithMarkdownMode("notes.txt", true)).toBe("notes.md");
+    expect(fileNameWithMarkdownMode("README.MD", false)).toBe("README.txt");
+    expect(fileNameWithMarkdownMode("guide.markdown", false)).toBe(
+      "guide.txt",
+    );
+    expect(fileNameWithMarkdownMode("notes.csv", true)).toBe("notes.csv");
   });
 });

@@ -1,0 +1,24 @@
+.preview {
+  background: var(--gallery-surface);
+  color: var(--gallery-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  height: 100%;
+  line-height: 1.55;
+  margin: 0;
+  overflow: auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  tab-size: 4;
+  user-select: text;
+  white-space: pre;
+  width: 100%;
+}
+
+.status {
+  color: var(--gallery-muted);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 20vh auto 0;
+  max-width: 34rem;
+  text-align: center;
+  white-space: normal;
+}

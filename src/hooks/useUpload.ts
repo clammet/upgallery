@@ -19,6 +19,7 @@ export function useUpload() {
       description?: string;
       password?: string;
       removeLocationData?: boolean;
+      unlisted?: boolean;
     }) => {
       setUploading(true);
       setError(null);
@@ -33,6 +34,7 @@ export function useUpload() {
           size: input.file.size,
           password: input.password || undefined,
           removeLocationData: input.removeLocationData || undefined,
+          unlisted: input.unlisted || undefined,
         });
         const form = new FormData();
         form.append("file", input.file, input.file.name);

@@ -122,6 +122,7 @@ export default defineSchema({
     passwordSalt: v.optional(v.string()),
     passwordHash: v.optional(v.string()),
     passwordIterations: v.optional(v.number()),
+    unlisted: v.optional(v.boolean()),
     state: entryState,
     moveJobId: v.optional(v.id("entryMoveJobs")),
     migrationState: v.optional(
@@ -210,6 +211,7 @@ export default defineSchema({
     declaredMimeType: v.string(),
     declaredSize: v.number(),
     removeLocationData: v.optional(v.boolean()),
+    unlisted: v.optional(v.boolean()),
     tokenHash: v.string(),
     passwordSalt: v.optional(v.string()),
     passwordHash: v.optional(v.string()),

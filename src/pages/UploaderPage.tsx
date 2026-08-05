@@ -7,7 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Info, LockKeyhole } from "lucide-react";
+import { Eye, EyeOff, Info, LockKeyhole } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -19,6 +19,7 @@ import {
   type MediaViewerItem,
 } from "../components/MediaViewer";
 import { TrashIcon } from "../components/ActionIcons";
+import { MarkdownToggle } from "../components/MarkdownToggle";
 import { formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
 import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
@@ -32,7 +33,10 @@ import {
 import { uploaderFileUrl } from "../lib/uploaderRoutes";
 import { friendlyError } from "../lib/errors";
 import {
+  canToggleTextMarkdown,
+  fileNameWithMarkdownMode,
   isHeifImage,
+  shouldRenderTextAsMarkdown,
   shouldUseNativeHeifPreview,
 } from "../lib/media";
 import styles from "../styles/uploader.module.css";
@@ -52,6 +56,7 @@ export function UploaderPage(props: {
   const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
   const [removeLocationData, setRemoveLocationData] = useState(false);
+  const [unlisted, setUnlisted] = useState(false);
   const [locationCheck, setLocationCheck] = useState<
     "idle" | "checking" | "found" | "not-found"
   >("idle");
@@ -66,6 +71,7 @@ export function UploaderPage(props: {
   );
   const createDownloadTicket = useMutation(api.entries.createDownloadTicket);
   const requestPreview = useMutation(api.entries.requestPreview);
+  const setEntryMarkdownMode = useMutation(api.entries.setMarkdownMode);
   const removeStoredLocationData = useMutation(
     api.entries.removeLocationData,
   );
@@ -165,6 +171,9 @@ export function UploaderPage(props: {
         href: uploaderFileUrl(props.routeRoot, entry._id, entry.name),
         mediaKind: entry.mediaKind,
         mimeType: entry.mimeType,
+        canToggleMarkdown:
+          entry.canDelete &&
+          canToggleTextMarkdown(entry.mediaKind, entry.name),
         passwordProtected: entry.passwordProtected,
         previewReady:
           !isHeifImage(entry.mimeType, entry.name) ||
@@ -210,6 +219,16 @@ export function UploaderPage(props: {
       );
     },
     [createDownloadTicket, props.gallery._id, requestPreview],
+  );
+  const changeViewerMarkdownMode = useCallback(
+    async (item: MediaViewerItem, markdown: boolean) => {
+      await setEntryMarkdownMode({
+        anonymousClaim: getOrCreateAnonymousClaim(),
+        entryId: item.id as Id<"entries">,
+        markdown,
+      });
+    },
+    [setEntryMarkdownMode],
   );
 
   useEffect(() => {
@@ -283,11 +302,13 @@ export function UploaderPage(props: {
               description,
               password,
               removeLocationData,
+              unlisted,
             }).then(() => {
               setFile(null);
               setDescription("");
               setPassword("");
               setRemoveLocationData(false);
+              setUnlisted(false);
               setTextPreview(null);
             });
           }}
@@ -303,9 +324,47 @@ export function UploaderPage(props: {
             />
           </label>
           {previewUrl ? <img className={styles.preview} src={previewUrl} alt="Upload preview" /> : null}
-          {textPreview ? <pre className={styles.textPreview}>{textPreview}</pre> : null}
+          {textPreview !== null ? (
+            <>
+              <div className={styles.clipboardOptions}>
+                <small>Clipboard text preview</small>
+                <MarkdownToggle
+                  checked={
+                    file !== null &&
+                    shouldRenderTextAsMarkdown("text", file.name)
+                  }
+                  disabled={uploading}
+                  onChange={(markdown) => {
+                    setFile((current) =>
+                      current === null
+                        ? null
+                        : new File(
+                            [current],
+                            fileNameWithMarkdownMode(current.name, markdown),
+                            {
+                              type: current.type,
+                              lastModified: current.lastModified,
+                            },
+                          ),
+                    );
+                  }}
+                />
+              </div>
+              <pre className={styles.textPreview}>{textPreview}</pre>
+            </>
+          ) : null}
           <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></label>
           <label>Password <small>(optional)</small><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={unlisted}
+              onChange={(event) => setUnlisted(event.target.checked)}
+            />
+            <span>
+              Unlisted <small>— only you can see it in the listing</small>
+            </span>
+          </label>
           {locationCheck === "checking" ? (
             <small className={styles.locationCheck}>
               Checking image for location data…
@@ -365,6 +424,7 @@ export function UploaderPage(props: {
         <MediaViewer
           items={viewerItems}
           initialIndex={viewerIndex}
+          onMarkdownModeChange={changeViewerMarkdownMode}
           resolveSource={resolveViewerSource}
           onClose={() => setViewerEntryId(null)}
         />
@@ -435,8 +495,12 @@ function UploaderEntry(props: {
         <div className={styles.entryMetadata}>
           <span>{formatBytes(props.entry.size)}</span>
           <span className={styles.metadataLine}>
-            <span>
-              {props.entry.views} {props.entry.views === 1 ? "view" : "views"}
+            <span
+              title={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
+              aria-label={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
+            >
+              {props.entry.views}
+              <Eye aria-hidden="true" size={13} />
             </span>
             {props.entry.passwordProtected ? (
               <span title="Password protected" aria-label="Password protected">
@@ -453,6 +517,14 @@ function UploaderEntry(props: {
               >
                 <Info aria-hidden="true" size={14} />
               </button>
+            ) : null}
+            {props.entry.unlisted ? (
+              <span
+                title="Unlisted — visible only to you in the listing"
+                aria-label="Unlisted — visible only to you in the listing"
+              >
+                <EyeOff aria-hidden="true" size={14} />
+              </span>
             ) : null}
             {props.entry.canDelete ? (
               <button

@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -12,7 +14,15 @@ import {
 } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { friendlyError } from "../lib/errors";
+import {
+  shouldRenderAsPlainText,
+  shouldRenderTextAsMarkdown,
+} from "../lib/media";
+import { MarkdownToggle } from "./MarkdownToggle";
 import styles from "../styles/viewer.module.css";
+
+const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
+const PlainTextPreview = lazy(() => import("./PlainTextPreview"));
 
 export type MediaViewerItem = {
   id: string;
@@ -29,6 +39,7 @@ export type MediaViewerItem = {
   mimeType: string;
   sourceUrl?: string;
   passwordProtected?: boolean;
+  canToggleMarkdown?: boolean;
   previewReady?: boolean;
   previewError?: string;
 };
@@ -143,6 +154,10 @@ export function MediaViewer(props: {
     item: MediaViewerItem,
     password?: string,
   ) => Promise<string | null>;
+  onMarkdownModeChange?: (
+    item: MediaViewerItem,
+    markdown: boolean,
+  ) => Promise<void>;
 }) {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
@@ -157,10 +172,21 @@ export function MediaViewer(props: {
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [sourceRevision, setSourceRevision] = useState(0);
+  const [markdownTogglePending, setMarkdownTogglePending] = useState(false);
+  const [markdownToggleError, setMarkdownToggleError] = useState<string | null>(
+    null,
+  );
+  const [markdownReloadRequest, setMarkdownReloadRequest] = useState<{
+    itemId: string;
+    markdown: boolean;
+  } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const resolvedSources = useRef(new Map<string, string>());
   const pendingResolutions = useRef(new Map<string, string | null>());
+  const unlockedPasswords = useRef(new Map<string, string>());
+  const previousActiveItemId = useRef<string | null>(null);
   const previousFitScale = useRef<number | null>(null);
   const gesture = useRef<PointerGesture | null>(null);
 
@@ -178,6 +204,17 @@ export function MediaViewer(props: {
   const zoomed = naturalSize !== null && scale > fitScale + ZOOM_EPSILON;
   const canZoom =
     naturalSize !== null && fitScale < 1 - ZOOM_EPSILON;
+  const rendersMarkdown =
+    activeItem !== undefined &&
+    shouldRenderTextAsMarkdown(activeItem.mediaKind, activeItem.title);
+  const rendersPlainText =
+    activeItem !== undefined &&
+    shouldRenderAsPlainText(activeItem.mediaKind, activeItem.title);
+  const showsTextPreview =
+    sourceUrl !== null && (rendersMarkdown || rendersPlainText);
+  const canChangeMarkdown =
+    activeItem?.canToggleMarkdown === true &&
+    props.onMarkdownModeChange !== undefined;
 
   const moveBy = useCallback(
     (direction: -1 | 1) => {
@@ -239,6 +276,8 @@ export function MediaViewer(props: {
   useEffect(() => {
     if (activeItem === undefined) return;
     let cancelled = false;
+    const itemChanged = previousActiveItemId.current !== activeItem.id;
+    previousActiveItemId.current = activeItem.id;
     const cachedSource =
       activeItem.sourceUrl ?? resolvedSources.current.get(activeItem.id);
     const resolutionPending = pendingResolutions.current.has(activeItem.id);
@@ -247,7 +286,10 @@ export function MediaViewer(props: {
 
     setSourceUrl(cachedSource ?? null);
     setLoadError(null);
-    setPassword("");
+    if (itemChanged) {
+      setPassword("");
+      setMarkdownToggleError(null);
+    }
     setNaturalSize(null);
     setScale(1);
     setPan({ x: 0, y: 0 });
@@ -287,6 +329,9 @@ export function MediaViewer(props: {
       .then((url) => {
         if (cancelled) return;
         if (url === null) {
+          if (pendingPassword !== undefined) {
+            unlockedPasswords.current.set(activeItem.id, pendingPassword);
+          }
           remainsPending = true;
           pendingResolutions.current.set(
             activeItem.id,
@@ -296,6 +341,9 @@ export function MediaViewer(props: {
           return;
         }
         pendingResolutions.current.delete(activeItem.id);
+        if (pendingPassword !== undefined) {
+          unlockedPasswords.current.set(activeItem.id, pendingPassword);
+        }
         resolvedSources.current.set(activeItem.id, url);
         setSourceUrl(url);
       })
@@ -312,7 +360,32 @@ export function MediaViewer(props: {
     return () => {
       cancelled = true;
     };
-  }, [activeItem, props.resolveSource]);
+  }, [activeItem, props.resolveSource, sourceRevision]);
+
+  useEffect(() => {
+    if (
+      activeItem === undefined ||
+      markdownReloadRequest === null ||
+      activeItem.id !== markdownReloadRequest.itemId ||
+      rendersMarkdown !== markdownReloadRequest.markdown
+    ) {
+      return;
+    }
+
+    setMarkdownReloadRequest(null);
+    setMarkdownTogglePending(false);
+    const unlockedPassword = unlockedPasswords.current.get(activeItem.id);
+    if (activeItem.passwordProtected && unlockedPassword === undefined) {
+      return;
+    }
+    resolvedSources.current.delete(activeItem.id);
+    pendingResolutions.current.set(
+      activeItem.id,
+      unlockedPassword ?? null,
+    );
+    setSourceUrl(null);
+    setSourceRevision((current) => current + 1);
+  }, [activeItem, markdownReloadRequest, rendersMarkdown]);
 
   useLayoutEffect(() => {
     if (naturalSize === null) return;
@@ -379,11 +452,13 @@ export function MediaViewer(props: {
     try {
       const url = await props.resolveSource(activeItem, password);
       if (url === null) {
+        unlockedPasswords.current.set(activeItem.id, password);
         remainsPending = true;
         pendingResolutions.current.set(activeItem.id, password || null);
         return;
       }
       pendingResolutions.current.delete(activeItem.id);
+      unlockedPasswords.current.set(activeItem.id, password);
       resolvedSources.current.set(activeItem.id, url);
       setSourceUrl(url);
       setPassword("");
@@ -392,6 +467,21 @@ export function MediaViewer(props: {
       setLoadError(friendlyError(reason, "Could not open the file"));
     } finally {
       if (!remainsPending) setLoading(false);
+    }
+  };
+
+  const changeMarkdownMode = async (markdown: boolean) => {
+    if (props.onMarkdownModeChange === undefined) return;
+    setMarkdownTogglePending(true);
+    setMarkdownToggleError(null);
+    try {
+      await props.onMarkdownModeChange(activeItem, markdown);
+      setMarkdownReloadRequest({ itemId: activeItem.id, markdown });
+    } catch (reason) {
+      setMarkdownToggleError(
+        friendlyError(reason, "Could not change Markdown rendering"),
+      );
+      setMarkdownTogglePending(false);
     }
   };
 
@@ -432,7 +522,9 @@ export function MediaViewer(props: {
     if (
       event.button !== 0 ||
       (event.target instanceof Element &&
-        event.target.closest("button, a, input, textarea, select"))
+        event.target.closest(
+          "button, a, input, textarea, select, [data-markdown-preview], [data-text-preview]",
+        ))
     ) {
       return;
     }
@@ -513,13 +605,23 @@ export function MediaViewer(props: {
         aria-modal="true"
         aria-labelledby="media-viewer-title"
       >
-        <header className={styles.titlebar}>
+        <header
+          className={`${styles.titlebar} ${canChangeMarkdown ? styles.titlebarWithMarkdownToggle : ""}`}
+        >
           <h2 id="media-viewer-title" title={activeItem.title}>
             {activeItem.title}
           </h2>
           <span className={styles.position}>
             {index + 1} / {props.items.length}
           </span>
+          {canChangeMarkdown ? (
+            <MarkdownToggle
+              checked={rendersMarkdown}
+              disabled={markdownTogglePending || loading}
+              error={markdownToggleError}
+              onChange={(markdown) => void changeMarkdownMode(markdown)}
+            />
+          ) : null}
           <a
             className={styles.titleButton}
             href={activeItem.href}
@@ -544,7 +646,7 @@ export function MediaViewer(props: {
 
         <div
           ref={stageRef}
-          className={`${styles.stage} ${zoomed ? styles.stageZoomed : ""} ${dragging ? styles.stageDragging : ""}`}
+          className={`${styles.stage} ${showsTextPreview ? styles.stageTextPreview : ""} ${zoomed ? styles.stageZoomed : ""} ${dragging ? styles.stageDragging : ""}`}
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -619,6 +721,26 @@ export function MediaViewer(props: {
             />
           ) : sourceUrl !== null && activeItem.mediaKind === "audio" ? (
             <audio className={styles.audio} src={sourceUrl} controls />
+          ) : sourceUrl !== null && rendersMarkdown ? (
+            <Suspense
+              fallback={
+                <div className={styles.status} role="status">
+                  <p>Preparing Markdown renderer…</p>
+                </div>
+              }
+            >
+              <MarkdownPreview sourceUrl={sourceUrl} />
+            </Suspense>
+          ) : sourceUrl !== null && rendersPlainText ? (
+            <Suspense
+              fallback={
+                <div className={styles.status} role="status">
+                  <p>Preparing text renderer…</p>
+                </div>
+              }
+            >
+              <PlainTextPreview sourceUrl={sourceUrl} />
+            </Suspense>
           ) : sourceUrl !== null &&
             (activeItem.mediaKind === "text" ||
               activeItem.mimeType === "application/pdf") ? (

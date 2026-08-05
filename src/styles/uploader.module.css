@@ -1,12 +1,13 @@
 .uploadForm { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .65rem; margin: 0 auto 1rem; max-width: 700px; padding: .75rem; }
 .uploadForm label { display: grid; font-size: .78rem; gap: .25rem; }
 .uploadForm .checkboxLabel { align-items: center; display: flex; gap: .45rem; }
-.checkboxLabel input { margin: 0; }
+.checkboxLabel input { flex: 0 0 auto; margin: 0; width: auto; }
 .locationCheck { color: var(--gallery-muted); }
 .filePicker { align-items: center; border: 1px dashed var(--border); cursor: pointer; min-height: 68px; padding: .8rem; text-align: center; }
 .filePicker input { margin-top: .5rem; }
 .preview { max-height: 260px; max-width: 100%; object-fit: contain; }
 .textPreview { background: var(--gallery-bg); border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0; max-height: 320px; overflow: auto; padding: .6rem; white-space: pre-wrap; }
+.clipboardOptions { align-items: center; display: flex; justify-content: space-between; }
 .entryList { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(min(var(--thumbnail-frame-size), 100%), 1fr)); margin: 0 auto; max-width: 1200px; }
 .entry { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 250px; overflow: hidden; transition: border-color 120ms ease, transform 120ms ease; }
 .entry:hover { border-color: var(--gallery-accent); transform: translateY(-1px); }

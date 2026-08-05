@@ -118,6 +118,7 @@ export const createUploadIntent = mutation({
     size: v.number(),
     password: v.optional(v.string()),
     removeLocationData: v.optional(v.boolean()),
+    unlisted: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { gallery, profile } = await assertCanUpload(
@@ -141,6 +142,9 @@ export const createUploadIntent = mutation({
     if (args.password !== undefined && gallery.kind !== "uploader") {
       throw new Error("Passwords are only supported by uploader galleries");
     }
+    if (args.unlisted === true && gallery.kind !== "uploader") {
+      throw new Error("Unlisted uploads are only supported by uploader galleries");
+    }
     if (
       args.password !== undefined &&
       (args.password.length < 1 || args.password.length > MAX_PASSWORD_LENGTH)
@@ -163,6 +167,7 @@ export const createUploadIntent = mutation({
       declaredMimeType: args.mimeType || "application/octet-stream",
       declaredSize: args.size,
       removeLocationData: args.removeLocationData || undefined,
+      unlisted: args.unlisted || undefined,
       tokenHash: await sha256(token),
       passwordSalt: password?.salt,
       passwordHash: password?.hash,
@@ -639,6 +644,59 @@ export const updateMetadata = mutation({
       updatedAt: Date.now(),
     });
     return null;
+  },
+});
+
+export const setMarkdownMode = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    entryId: v.id("entries"),
+    markdown: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const [profile, entry] = await Promise.all([
+      requireCurrentProfile(ctx, args.anonymousClaim),
+      ctx.db.get("entries", args.entryId),
+    ]);
+    if (entry === null || entry.state !== "ready") {
+      throw new Error("File not found");
+    }
+    const gallery = await ctx.db.get("galleries", entry.galleryId);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "uploader"
+    ) {
+      throw new Error("File not found");
+    }
+    if (!(await isOwningProfile(ctx, entry.ownerProfileId, profile._id))) {
+      throw new Error("Unauthorized");
+    }
+    if (
+      entry.mediaKind !== "text" ||
+      !/\.(?:md|markdown|txt)$/i.test(entry.name)
+    ) {
+      throw new Error("Only text and Markdown files can change rendering mode");
+    }
+
+    const name = cleanFileName(
+      entry.name.replace(
+        /\.(?:md|markdown|txt)$/i,
+        args.markdown ? ".md" : ".txt",
+      ),
+    );
+    if (
+      name === entry.name &&
+      entry.extension === (args.markdown ? "md" : "txt")
+    ) {
+      return { name };
+    }
+    await ctx.db.patch("entries", entry._id, {
+      name,
+      extension: args.markdown ? "md" : "txt",
+      updatedAt: Date.now(),
+    });
+    return { name };
   },
 });
 
