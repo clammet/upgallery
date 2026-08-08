@@ -23,6 +23,7 @@ import {
   requireSystemAdmin,
   roleAtLeast,
 } from "./lib/permissions";
+import { publicProfile } from "./lib/profiles";
 import type { Doc, Id } from "./_generated/dataModel";
 
 const hostInput = v.object({
@@ -350,7 +351,10 @@ export const adminDetails = query({
     const enrichedGrants = [];
     for (const grant of grants) {
       const profile = await ctx.db.get("profiles", grant.profileId);
-      enrichedGrants.push({ ...grant, profile });
+      enrichedGrants.push({
+        ...grant,
+        profile: profile === null ? null : publicProfile(profile),
+      });
     }
     const migrations = await ctx.db
       .query("storageMigrations")

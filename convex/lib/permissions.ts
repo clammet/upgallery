@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { sha256 } from "./crypto";
+import { googlyAuth } from "./auth";
+import { profileByIdentityId } from "./profiles";
 
 type ReadCtx = QueryCtx | MutationCtx;
 export type Role = "owner" | "editor" | "viewer";
@@ -15,29 +16,11 @@ export async function getCurrentProfile(
   ctx: ReadCtx,
   anonymousClaim?: string,
 ): Promise<Doc<"profiles"> | null> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity !== null) {
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_googleSubject", (q) =>
-        q.eq("googleSubject", identity.tokenIdentifier),
-      )
-      .unique();
-    return profile;
-  }
-  if (
-    anonymousClaim === undefined ||
-    !/^[a-f0-9]{64}$/.test(anonymousClaim)
-  ) {
+  const identityId = await googlyAuth.resolveIdentity(ctx, { anonymousClaim });
+  if (identityId === null) {
     return null;
   }
-  const anonymousClaimHash = await sha256(anonymousClaim);
-  return await ctx.db
-    .query("profiles")
-    .withIndex("by_anonymousClaimHash", (q) =>
-      q.eq("anonymousClaimHash", anonymousClaimHash),
-    )
-    .unique();
+  return await profileByIdentityId(ctx, identityId);
 }
 
 export async function requireCurrentProfile(
@@ -47,12 +30,6 @@ export async function requireCurrentProfile(
   const profile = await getCurrentProfile(ctx, anonymousClaim);
   if (profile === null) {
     throw new Error("Not authenticated");
-  }
-  if (profile.mergedIntoProfileId !== undefined) {
-    const target = await ctx.db.get("profiles", profile.mergedIntoProfileId);
-    if (target !== null) {
-      return target;
-    }
   }
   return profile;
 }
@@ -131,21 +108,11 @@ export async function shouldListFolder(
   return roleAtLeast(role, "viewer");
 }
 
-export async function isOwningProfile(
-  ctx: ReadCtx,
+export function isOwningProfile(
   ownerProfileId: Id<"profiles">,
   currentProfileId: Id<"profiles">,
-): Promise<boolean> {
-  if (ownerProfileId === currentProfileId) {
-    return true;
-  }
-  const alias = await ctx.db
-    .query("profileAliases")
-    .withIndex("by_sourceProfileId", (q) =>
-      q.eq("sourceProfileId", ownerProfileId),
-    )
-    .unique();
-  return alias?.targetProfileId === currentProfileId;
+): boolean {
+  return ownerProfileId === currentProfileId;
 }
 
 export async function requireGalleryRole(

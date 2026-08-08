@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "busboy": "^1.6.0",
-    "convex": "^1.42.3",
+    "convex": "^1.43.0",
+    "convex-googly-auth": "workspace:*",
     "exifr": "^7.1.3",
     "express": "^5.2.1",
     "helmet": "^8.3.0",

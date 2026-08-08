@@ -5,7 +5,7 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { friendlyError } from "../lib/errors";
 import { storageApi } from "../lib/files";
-import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import { anonymousClaim } from "../lib/authClient";
 import {
   isHeifImage,
   shouldUseNativeHeifPreview,
@@ -18,7 +18,7 @@ export function UploaderFilePage(props: {
   entryId: Id<"entries">;
 }) {
   const entry = useQuery(api.entries.getForUploaderView, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
     entryId: props.entryId,
   });
@@ -44,7 +44,7 @@ export function UploaderFilePage(props: {
           !shouldUseNativeHeifPreview(entry.mimeType, entry.name);
         const token = needsConvertedPreview
           ? await requestPreview({
-              anonymousClaim: getOrCreateAnonymousClaim(),
+              anonymousClaim: anonymousClaim(),
               galleryId: props.gallery._id,
               entryId: props.entryId,
               password: suppliedPassword || undefined,
@@ -60,7 +60,7 @@ export function UploaderFilePage(props: {
               return result.token;
             })
           : await createTicket({
-              anonymousClaim: getOrCreateAnonymousClaim(),
+              anonymousClaim: anonymousClaim(),
               galleryId: props.gallery._id,
               entryId: props.entryId,
               password: suppliedPassword || undefined,

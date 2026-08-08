@@ -1,17 +1,13 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import {
-  clearAnonymousClaim,
-  getOrCreateAnonymousClaim,
-} from "../lib/anonymousClaim";
-import { useGoogleAuth } from "../lib/googleAuth";
+import { anonymousClaim, authClient } from "../lib/authClient";
 import styles from "../styles/layout.module.css";
 
 export function AuthControls() {
   const profile = useQuery(api.profiles.current, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
   });
-  const { signIn, signOut } = useGoogleAuth();
+  const { signIn, signOut } = authClient.useGoogleAuth();
 
   if (profile === undefined) {
     return <span className={styles.authStatus}>…</span>;
@@ -36,7 +32,7 @@ export function AuthControls() {
         className={styles.quietButton}
         type="button"
         onClick={() => {
-          clearAnonymousClaim();
+          authClient.clearAnonymousClaim();
           signOut();
         }}
       >

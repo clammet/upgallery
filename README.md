@@ -14,10 +14,9 @@ The implementation is split deliberately:
 - Nginx serves the React application and image-gallery originals directly from
   the public mounts. Protected uploader storage is never mounted into an Nginx
   location.
-- Google OIDC supplies authenticated sessions without a separate auth library.
-  Refresh tokens stay server-side in Convex, while a browser claim cookie
-  safely carries anonymous upload ownership into the Google account after
-  login.
+- The `convex-googly-auth` component supplies Google OIDC sessions and
+  anonymous identities. Credentials and refresh tokens stay inside the
+  component, while the app stores only opaque identity IDs on profiles.
 
 No Tailwind is used. The CSS is organized into modules and controlled by
 gallery-level CSS variables plus an owner-supplied scoped CSS override.

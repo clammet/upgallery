@@ -1,15 +1,15 @@
 import { httpRouter } from "convex/server";
-import { httpAction, env, type ActionCtx } from "./_generated/server";
+import { httpAction, env } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import {
-  createGoogleOAuthState,
-  isValidGoogleOAuthState,
-  verifyGoogleOAuthState,
-} from "./lib/googleOAuthState";
-import { googleOAuthCallbackUrl } from "./lib/googleOAuthUrls";
+import { googlyAuth } from "./lib/auth";
 
 const http = httpRouter();
+
+googlyAuth.registerRoutes(http, {
+  isAllowedOrigin: async (ctx, origin) =>
+    await ctx.runQuery(internal.authOrigins.isGalleryOrigin, { origin }),
+});
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -21,399 +21,6 @@ function json(value: unknown, status = 200) {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-const encoder = new TextEncoder();
-
-async function getSessionSigningKey(): Promise<CryptoKey> {
-  const baseKey = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(env.AUTH_GOOGLE_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const derived = await crypto.subtle.sign(
-    "HMAC",
-    baseKey,
-    encoder.encode("upgallery-google-session-signing-v1"),
-  );
-  return await crypto.subtle.importKey(
-    "raw",
-    derived,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
-
-function base64UrlEncode(value: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(value)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function base64UrlDecode(value: string): Uint8Array | null {
-  try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  } catch {
-    return null;
-  }
-}
-
-async function signSessionToken(
-  sessionToken: string,
-  googleSubject: string,
-): Promise<string> {
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    await getSessionSigningKey(),
-    encoder.encode(`${sessionToken}|${googleSubject}`),
-  );
-  return `${sessionToken}.${base64UrlEncode(signature)}`;
-}
-
-async function verifySessionToken(
-  signedToken: string,
-  googleSubject: string,
-): Promise<string | null> {
-  const separator = signedToken.indexOf(".");
-  if (separator < 1) return null;
-  const sessionToken = signedToken.slice(0, separator);
-  const signature = base64UrlDecode(signedToken.slice(separator + 1));
-  if (signature === null) return null;
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    await getSessionSigningKey(),
-    signature.buffer as ArrayBuffer,
-    encoder.encode(`${sessionToken}|${googleSubject}`),
-  );
-  return valid ? sessionToken : null;
-}
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const decoded = base64UrlDecode(parts[1]);
-    if (decoded === null) return null;
-    const value: unknown = JSON.parse(new TextDecoder().decode(decoded));
-    return isRecord(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function googleSubjectFromToken(
-  token: string,
-  expectedNonce?: string,
-): string | null {
-  const payload = decodeJwtPayload(token);
-  if (
-    payload === null ||
-    payload.aud !== env.AUTH_GOOGLE_ID ||
-    (payload.iss !== "https://accounts.google.com" &&
-      payload.iss !== "accounts.google.com") ||
-    typeof payload.exp !== "number" ||
-    payload.exp * 1000 <= Date.now() ||
-    typeof payload.sub !== "string" ||
-    payload.sub.length === 0 ||
-    (expectedNonce !== undefined && payload.nonce !== expectedNonce)
-  ) {
-    return null;
-  }
-  return payload.sub;
-}
-
-async function isAllowedWebOrigin(
-  ctx: ActionCtx,
-  origin: string,
-): Promise<boolean> {
-  return await ctx.runQuery(internal.googleAuthSessions.isAllowedWebOrigin, {
-    origin,
-  });
-}
-
-async function corsHeaders(
-  ctx: ActionCtx,
-  request: Request,
-): Promise<Record<string, string> | null> {
-  const origin = request.headers.get("origin");
-  if (origin === null || !(await isAllowedWebOrigin(ctx, origin))) {
-    return null;
-  }
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST",
-    "Access-Control-Allow-Headers": "Content-Type",
-    Vary: "Origin",
-  };
-}
-
-function authJson(
-  value: unknown,
-  status: number,
-  headers: Record<string, string>,
-) {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...headers,
-    },
-  });
-}
-
-http.route({
-  path: "/auth/google/start",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const stateInput = {
-      nonce: url.searchParams.get("nonce") ?? "",
-      origin: url.searchParams.get("origin") ?? "",
-      redirect: url.searchParams.get("redirect") ?? "",
-    };
-    if (!isValidGoogleOAuthState(stateInput)) {
-      return new Response("Invalid OAuth request", { status: 400 });
-    }
-    if (!(await isAllowedWebOrigin(ctx, stateInput.origin))) {
-      return new Response("OAuth return origin is not configured", {
-        status: 403,
-      });
-    }
-
-    const authorizationUrl = new URL(
-      "https://accounts.google.com/o/oauth2/v2/auth",
-    );
-    authorizationUrl.searchParams.set("client_id", env.AUTH_GOOGLE_ID);
-    authorizationUrl.searchParams.set(
-      "redirect_uri",
-      googleOAuthCallbackUrl(request.url),
-    );
-    authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("scope", "openid profile email");
-    authorizationUrl.searchParams.set(
-      "state",
-      await createGoogleOAuthState(env.AUTH_GOOGLE_SECRET, stateInput),
-    );
-    authorizationUrl.searchParams.set("nonce", stateInput.nonce);
-    authorizationUrl.searchParams.set("access_type", "offline");
-    authorizationUrl.searchParams.set("prompt", "consent");
-
-    return new Response(null, {
-      status: 302,
-      headers: { Location: authorizationUrl.toString() },
-    });
-  }),
-});
-
-http.route({
-  path: "/auth/google/callback",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const state = url.searchParams.get("state") ?? "";
-    const verifiedState = await verifyGoogleOAuthState(
-      env.AUTH_GOOGLE_SECRET,
-      state,
-    );
-    if (
-      verifiedState === null ||
-      !(await isAllowedWebOrigin(ctx, verifiedState.origin))
-    ) {
-      return new Response("Invalid or expired OAuth state", { status: 400 });
-    }
-    const destination = new URL("/auth/callback", verifiedState.origin);
-    const oauthError = url.searchParams.get("error");
-    if (oauthError !== null) {
-      destination.hash = new URLSearchParams({
-        error: oauthError,
-        state,
-      }).toString();
-      return new Response(null, {
-        status: 302,
-        headers: { Location: destination.toString() },
-      });
-    }
-    const code = url.searchParams.get("code");
-    if (code === null) {
-      return new Response("Missing authorization code", { status: 400 });
-    }
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: env.AUTH_GOOGLE_ID,
-        client_secret: env.AUTH_GOOGLE_SECRET,
-        redirect_uri: googleOAuthCallbackUrl(request.url),
-        grant_type: "authorization_code",
-      }),
-    });
-    if (!tokenResponse.ok) {
-      console.error("Google token exchange failed", tokenResponse.status);
-      return new Response("Authentication failed", { status: 502 });
-    }
-    const tokenValue: unknown = await tokenResponse.json();
-    if (!isRecord(tokenValue) || typeof tokenValue.id_token !== "string") {
-      return new Response("Google did not return an ID token", { status: 502 });
-    }
-    const googleSubject = googleSubjectFromToken(
-      tokenValue.id_token,
-      verifiedState.nonce,
-    );
-    if (googleSubject === null) {
-      return new Response("Google returned an invalid ID token", {
-        status: 502,
-      });
-    }
-    let refreshToken =
-      typeof tokenValue.refresh_token === "string"
-        ? tokenValue.refresh_token
-        : null;
-    if (refreshToken === null) {
-      const existing = await ctx.runQuery(
-        internal.googleAuthSessions.getRefreshTokenByGoogleSubject,
-        { googleSubject },
-      );
-      refreshToken = existing?.refreshToken ?? null;
-    }
-    const fragment = new URLSearchParams({
-      token: tokenValue.id_token,
-      state,
-    });
-    if (refreshToken !== null) {
-      const sessionToken = crypto.randomUUID();
-      await ctx.runMutation(internal.googleAuthSessions.create, {
-        sessionToken,
-        refreshToken,
-        googleSubject,
-      });
-      fragment.set(
-        "session",
-        await signSessionToken(sessionToken, googleSubject),
-      );
-    }
-    destination.hash = fragment.toString();
-    return new Response(null, {
-      status: 302,
-      headers: { Location: destination.toString() },
-    });
-  }),
-});
-
-http.route({
-  path: "/auth/refresh",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const headers = await corsHeaders(ctx, request);
-    if (headers === null) {
-      return authJson({ error: "Origin not allowed" }, 403, {});
-    }
-    const body: unknown = await request.json();
-    if (!isRecord(body) || typeof body.sessionToken !== "string") {
-      return authJson({ error: "Missing session token" }, 400, headers);
-    }
-    const separator = body.sessionToken.indexOf(".");
-    if (separator < 1) {
-      return authJson({ error: "Invalid session" }, 401, headers);
-    }
-    const unsignedToken = body.sessionToken.slice(0, separator);
-    const session = await ctx.runQuery(
-      internal.googleAuthSessions.getBySessionToken,
-      { sessionToken: unsignedToken },
-    );
-    if (
-      session === null ||
-      (await verifySessionToken(
-        body.sessionToken,
-        session.googleSubject,
-      )) === null
-    ) {
-      return authJson({ error: "Invalid session" }, 401, headers);
-    }
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: env.AUTH_GOOGLE_ID,
-        client_secret: env.AUTH_GOOGLE_SECRET,
-        refresh_token: session.refreshToken,
-        grant_type: "refresh_token",
-      }),
-    });
-    if (!tokenResponse.ok) {
-      await ctx.runMutation(
-        internal.googleAuthSessions.removeBySessionToken,
-        { sessionToken: unsignedToken },
-      );
-      return authJson({ error: "Refresh failed" }, 401, headers);
-    }
-    const tokenValue: unknown = await tokenResponse.json();
-    if (
-      !isRecord(tokenValue) ||
-      typeof tokenValue.id_token !== "string" ||
-      googleSubjectFromToken(tokenValue.id_token) !== session.googleSubject
-    ) {
-      return authJson({ error: "Google returned an invalid ID token" }, 502, headers);
-    }
-    return authJson({ idToken: tokenValue.id_token }, 200, headers);
-  }),
-});
-
-http.route({
-  path: "/auth/sign-out",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const headers = await corsHeaders(ctx, request);
-    if (headers === null) {
-      return new Response(null, { status: 403 });
-    }
-    const body: unknown = await request.json();
-    if (!isRecord(body) || typeof body.sessionToken !== "string") {
-      return new Response(null, { status: 204, headers });
-    }
-    const separator = body.sessionToken.indexOf(".");
-    if (separator > 0) {
-      const unsignedToken = body.sessionToken.slice(0, separator);
-      const session = await ctx.runQuery(
-        internal.googleAuthSessions.getBySessionToken,
-        { sessionToken: unsignedToken },
-      );
-      if (
-        session !== null &&
-        (await verifySessionToken(
-          body.sessionToken,
-          session.googleSubject,
-        )) !== null
-      ) {
-        await ctx.runMutation(
-          internal.googleAuthSessions.removeBySessionToken,
-          { sessionToken: unsignedToken },
-        );
-      }
-    }
-    return new Response(null, { status: 204, headers });
-  }),
-});
-
-for (const path of ["/auth/refresh", "/auth/sign-out"]) {
-  http.route({
-    path,
-    method: "OPTIONS",
-    handler: httpAction(async (ctx, request) => {
-      const headers = await corsHeaders(ctx, request);
-      return new Response(null, {
-        status: headers === null ? 403 : 204,
-        headers: headers ?? {},
-      });
-    }),
-  });
-}
-
 function storageAuthorized(request: Request): boolean {
   const secret = env.STORAGE_INTERNAL_SECRET;
   return (
@@ -643,9 +250,7 @@ http.route({
   path: "/internal/storage/renew-migration",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    if (
-      !storageAuthorized(request)
-    ) {
+    if (!storageAuthorized(request)) {
       return json({ error: "Unauthorized" }, 401);
     }
     const body: unknown = await request.json();
@@ -719,8 +324,7 @@ http.route({
       (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.previewKey !== undefined &&
-        typeof body.previewKey !== "string") ||
+      (body.previewKey !== undefined && typeof body.previewKey !== "string") ||
       (body.filesystemModifiedAt !== undefined &&
         typeof body.filesystemModifiedAt !== "number") ||
       (body.filesystemIdentity !== undefined &&
@@ -757,8 +361,7 @@ http.route({
       (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.previewKey !== undefined &&
-        typeof body.previewKey !== "string") ||
+      (body.previewKey !== undefined && typeof body.previewKey !== "string") ||
       (body.error !== undefined && typeof body.error !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
@@ -956,8 +559,7 @@ http.route({
       typeof body.sha256 !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.metadataJson !== undefined &&
-        typeof body.metadataJson !== "string")
+      (body.metadataJson !== undefined && typeof body.metadataJson !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
@@ -1085,8 +687,7 @@ http.route({
     } catch (error) {
       return json(
         {
-          error:
-            error instanceof Error ? error.message : "Operation rejected",
+          error: error instanceof Error ? error.message : "Operation rejected",
         },
         400,
       );
@@ -1171,14 +772,11 @@ http.route({
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
-    await ctx.runMutation(
-      internal.filesystemSync.failFilesystemOperation,
-      {
-        operationId: body.operationId as Id<"filesystemOperations">,
-        error: body.error,
-        retry: body.retry,
-      },
-    );
+    await ctx.runMutation(internal.filesystemSync.failFilesystemOperation, {
+      operationId: body.operationId as Id<"filesystemOperations">,
+      error: body.error,
+      retry: body.retry,
+    });
     return json({ ok: true });
   }),
 });
@@ -1312,14 +910,12 @@ http.route({
       typeof body.jobId !== "string" ||
       (body.thumbnailKey !== undefined &&
         typeof body.thumbnailKey !== "string") ||
-      (body.previewKey !== undefined &&
-        typeof body.previewKey !== "string") ||
+      (body.previewKey !== undefined && typeof body.previewKey !== "string") ||
       (body.metadataJson !== undefined &&
         typeof body.metadataJson !== "string") ||
       (body.metadataProcessed !== undefined &&
         typeof body.metadataProcessed !== "boolean") ||
-      (body.storageKey !== undefined &&
-        typeof body.storageKey !== "string") ||
+      (body.storageKey !== undefined && typeof body.storageKey !== "string") ||
       (body.sha256 !== undefined && typeof body.sha256 !== "string") ||
       (body.size !== undefined && typeof body.size !== "number") ||
       (body.filesystemModifiedAt !== undefined &&

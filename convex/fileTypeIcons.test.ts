@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
+import authComponent from "convex-googly-auth/test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -8,23 +9,27 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 let profileSequence = 0;
 
+function setupTest() {
+  const t = convexTest(schema, modules);
+  authComponent.register(t);
+  return t;
+}
+
 async function seedProfile(
   t: TestConvex<typeof schema>,
   input: { email: string; admin?: boolean },
 ) {
   profileSequence += 1;
-  const googleSubject =
-    `https://accounts.google.com|file-icon-user-${profileSequence}`;
-  const profileId = await t.run(async (ctx) => {
-    return await ctx.db.insert("profiles", {
-      googleSubject,
-      displayName: "File Icon User",
-      email: input.email,
-      isAnonymous: false,
-      isSystemAdmin: input.admin ?? false,
-      lastSeenAt: Date.now(),
+  const googleSubject = `https://accounts.google.com|file-icon-user-${profileSequence}`;
+  const profileId = await asUser(t, googleSubject, input.email).mutation(
+    api.profiles.ensureCurrent,
+    {},
+  );
+  if (input.admin === true) {
+    await t.run(async (ctx) => {
+      await ctx.db.patch("profiles", profileId, { isSystemAdmin: true });
     });
-  });
+  }
   return { googleSubject, profileId };
 }
 
@@ -44,7 +49,7 @@ function asUser(
 
 describe("gallery file-type icon overrides", () => {
   test("owners can override and restore defaults without affecting other galleries", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,

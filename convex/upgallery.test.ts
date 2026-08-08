@@ -1,12 +1,18 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
+import authComponent from "convex-googly-auth/test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
-import { sha256 } from "./lib/crypto";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 let profileSequence = 0;
+
+function setupTest() {
+  const t = convexTest(schema, modules);
+  authComponent.register(t);
+  return t;
+}
 
 async function seedProfile(
   t: TestConvex<typeof schema>,
@@ -19,20 +25,19 @@ async function seedProfile(
   const googleSubject = input.anonymous
     ? undefined
     : `https://accounts.google.com|test-user-${profileSequence}`;
-  const anonymousClaimHash =
-    anonymousClaim === undefined ? undefined : await sha256(anonymousClaim);
-  return await t.run(async (ctx) => {
-    const profileId = await ctx.db.insert("profiles", {
-      googleSubject,
-      displayName: input.anonymous ? "Anonymous" : "Test User",
-      email: input.email,
-      isAnonymous: input.anonymous ?? false,
-      isSystemAdmin: input.admin ?? false,
-      anonymousClaimHash,
-      lastSeenAt: Date.now(),
+  const profileId =
+    googleSubject === undefined
+      ? await t.mutation(api.profiles.ensureCurrent, { anonymousClaim })
+      : await asUser(t, googleSubject, input.email).mutation(
+          api.profiles.ensureCurrent,
+          {},
+        );
+  if (input.admin === true) {
+    await t.run(async (ctx) => {
+      await ctx.db.patch("profiles", profileId, { isSystemAdmin: true });
     });
-    return { googleSubject, profileId, anonymousClaim };
-  });
+  }
+  return { googleSubject, profileId, anonymousClaim };
 }
 
 function asUser(
@@ -54,11 +59,8 @@ function asUser(
 
 describe("upgallery backend", () => {
   test("OAuth routing accepts configured tenant origins only", async () => {
-    const previousSiteUrl = process.env.SITE_URL;
-    process.env.SITE_URL = "https://primary.example.com";
-    try {
-      const t = convexTest(schema, modules);
-      await t.run(async (ctx) => {
+    const t = setupTest();
+    await t.run(async (ctx) => {
         const galleryId = await ctx.db.insert("galleries", {
           name: "Tenant gallery",
           slug: "tenant-gallery",
@@ -79,47 +81,29 @@ describe("upgallery backend", () => {
       });
 
       await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
-          origin: "https://primary.example.com",
-        }),
-      ).resolves.toBe(true);
-      await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
+      t.query(internal.authOrigins.isGalleryOrigin, {
           origin: "https://photos.example.com",
         }),
       ).resolves.toBe(true);
       await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
+      t.query(internal.authOrigins.isGalleryOrigin, {
           origin: "https://attacker.example",
         }),
       ).resolves.toBe(false);
       await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
+      t.query(internal.authOrigins.isGalleryOrigin, {
           origin: "http://photos.example.com",
         }),
       ).resolves.toBe(false);
       await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
+      t.query(internal.authOrigins.isGalleryOrigin, {
           origin: "https://photos.example.com/not-an-origin",
         }),
       ).resolves.toBe(false);
-      process.env.SITE_URL = "http://localhost:5173";
-      await expect(
-        t.query(internal.googleAuthSessions.isAllowedWebOrigin, {
-          origin: "http://localhost:5173",
-        }),
-      ).resolves.toBe(true);
-    } finally {
-      if (previousSiteUrl === undefined) {
-        delete process.env.SITE_URL;
-      } else {
-        process.env.SITE_URL = previousSiteUrl;
-      }
-    }
   });
 
   test("a system admin creates a routed gallery with a root owner grant", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -157,7 +141,7 @@ describe("upgallery backend", () => {
   });
 
   test("anonymous uploader access creates a capability without storing its plaintext", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -166,17 +150,14 @@ describe("upgallery backend", () => {
       t,
       admin.googleSubject,
       "admin@example.com",
-    ).mutation(
-      api.galleries.create,
-      {
+    ).mutation(api.galleries.create, {
         name: "Drop box",
         slug: "drop-box",
         kind: "uploader",
         storageKind: "shared",
         storageRoot: "drop-box",
         hosts: [{ host: "up.example.com", rootPath: "/up" }],
-      },
-    );
+    });
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
@@ -202,7 +183,7 @@ describe("upgallery backend", () => {
   });
 
   test("unlisted uploader entries are listed only for their uploader", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -231,9 +212,7 @@ describe("upgallery backend", () => {
       unlisted: true,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "text/plain",
         extension: "txt",
@@ -241,8 +220,7 @@ describe("upgallery backend", () => {
         size: 12,
         sha256: "f".repeat(64),
         storageKey: `protected/uploaders/unlisted-uploads/ff/ff/${"f".repeat(64)}.txt`,
-      },
-    );
+    });
 
     const uploaderListing = await t.query(api.folders.list, {
       anonymousClaim: uploader.anonymousClaim,
@@ -268,7 +246,7 @@ describe("upgallery backend", () => {
   });
 
   test("uploader file and attachment serves share one counted view metric", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -293,9 +271,7 @@ describe("upgallery backend", () => {
       size: 123,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -304,8 +280,7 @@ describe("upgallery backend", () => {
         sha256: "d".repeat(64),
         storageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.jpg`,
         thumbnailKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.thumb.jpg`,
-      },
-    );
+    });
     await t.run(async (ctx) => {
       await ctx.db.patch("entries", entryId, {
         previewKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.preview.jpg`,
@@ -354,15 +329,12 @@ describe("upgallery backend", () => {
       token: thumbnailTicket!.token,
     });
 
-    const previewTicket = await t.mutation(
-      api.entries.createDownloadTicket,
-      {
+    const previewTicket = await t.mutation(api.entries.createDownloadTicket, {
         anonymousClaim: visitor.anonymousClaim,
         galleryId,
         entryId,
         disposition: "preview",
-      },
-    );
+    });
     await expect(
       t.mutation(internal.storageGateway.claimDownload, {
         token: previewTicket.token,
@@ -409,7 +381,7 @@ describe("upgallery backend", () => {
   });
 
   test("HEIC preview requests reuse the durable media-processing queue", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -435,9 +407,7 @@ describe("upgallery backend", () => {
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
     const sha = "e".repeat(64);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/heic",
         extension: "heic",
@@ -445,8 +415,7 @@ describe("upgallery backend", () => {
         size: 456,
         sha256: sha,
         storageKey: `protected/uploaders/heic-previews/ee/ee/${sha}.heic`,
-      },
-    );
+    });
     const visitor = await seedProfile(t, { anonymous: true });
     const initialClaim = await t.mutation(
       internal.storageJobs.claimMediaProcessing,
@@ -471,9 +440,8 @@ describe("upgallery backend", () => {
     ).resolves.toEqual({ status: "pending" });
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: initialClaim.jobId,
-      thumbnailKey:
-        `protected/uploaders/heic-previews/ee/ee/${sha}.thumb.jpg`,
-      metadataJson: "{\"Resolution\":\"4032 × 3024\"}",
+      thumbnailKey: `protected/uploaders/heic-previews/ee/ee/${sha}.thumb.jpg`,
+      metadataJson: '{"Resolution":"4032 × 3024"}',
     });
 
     const claim = await t.mutation(
@@ -488,8 +456,7 @@ describe("upgallery backend", () => {
       generatePreview: true,
     });
     if (claim.kind !== "ready") throw new Error("Expected preview work");
-    const previewKey =
-      `protected/uploaders/heic-previews/ee/ee/${sha}.preview.jpg`;
+    const previewKey = `protected/uploaders/heic-previews/ee/ee/${sha}.preview.jpg`;
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
       previewKey,
@@ -519,7 +486,7 @@ describe("upgallery backend", () => {
   });
 
   test("Google sign-in upgrades an anonymous profile without losing ownership", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const anonymousClaim = "a".repeat(64);
     const anonymousProfileId = await t.mutation(api.profiles.ensureCurrent, {
       anonymousClaim,
@@ -539,15 +506,63 @@ describe("upgallery backend", () => {
 
     expect(mergedProfileId).toBe(anonymousProfileId);
     expect(mergedProfile).toMatchObject({
-      googleSubject,
       email: "merged@example.com",
       isAnonymous: false,
     });
-    expect(mergedProfile?.anonymousClaimHash).toBeUndefined();
+    expect(mergedProfile?.identityId).toEqual(expect.any(String));
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
+  });
+
+  test("sign-in absorbs anonymous app data into an existing Google profile", async () => {
+    const t = setupTest();
+    const google = await seedProfile(t, { email: "member@example.com" });
+    const anonymous = await seedProfile(t, { anonymous: true });
+    const grantId = await t.run(async (ctx) => {
+      const galleryId = await ctx.db.insert("galleries", {
+        name: "Merged gallery",
+        slug: "merged-gallery",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "merged-gallery",
+        maxFileSize: 1024,
+        uploaderAccess: "anonymous",
+        theme: {},
+        itemCount: 0,
+        totalBytes: 0,
+      });
+      return await ctx.db.insert("galleryRoles", {
+        galleryId,
+        profileId: anonymous.profileId,
+        role: "owner",
+      });
+    });
+
+    const profileId = await asUser(
+      t,
+      google.googleSubject,
+      "member@example.com",
+    ).mutation(api.profiles.ensureCurrent, {
+      anonymousClaim: anonymous.anonymousClaim,
+    });
+    const merged = await t.run(async (ctx) => ({
+      source: await ctx.db.get("profiles", anonymous.profileId),
+      grant: await ctx.db.get("galleryRoles", grantId),
+    }));
+
+    expect(profileId).toBe(google.profileId);
+    expect(merged.source).toBeNull();
+    expect(merged.grant?.profileId).toBe(google.profileId);
+    await expect(
+      t.query(api.profiles.current, {
+        anonymousClaim: anonymous.anonymousClaim,
+      }),
+    ).resolves.toBeNull();
   });
 
   test("a private folder is hidden from an unrelated anonymous profile", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -585,7 +600,7 @@ describe("upgallery backend", () => {
   });
 
   test("folder previews inherit gallery settings and support render-seeded overrides", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -690,7 +705,7 @@ describe("upgallery backend", () => {
   });
 
   test("a user-backed directory is reconciled incrementally and skips an unchanged mtime", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -714,7 +729,8 @@ describe("upgallery backend", () => {
       { galleryId, folderId },
     );
     expect(firstClaim.kind).toBe("ready");
-    if (firstClaim.kind !== "ready") throw new Error("Sync was unexpectedly busy");
+    if (firstClaim.kind !== "ready")
+      throw new Error("Sync was unexpectedly busy");
     expect(firstClaim.folderSegments).toEqual([]);
     expect(
       (
@@ -728,15 +744,12 @@ describe("upgallery backend", () => {
       hasError: false,
     });
     expect(
-      await t.mutation(
-        internal.filesystemSync.compareFilesystemDirectory,
-        {
+      await t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
           galleryId,
           folderId,
           syncId: firstClaim.syncId,
           modifiedAt: 1000,
-        },
-      ),
+      }),
     ).toEqual({ shouldScan: true });
 
     const newFolderId = await t.mutation(
@@ -763,9 +776,7 @@ describe("upgallery backend", () => {
       },
     );
     expect(check.kind).toBe("metadata");
-    await t.mutation(
-      internal.filesystemSync.reconcileFilesystemFile,
-      {
+    await t.mutation(internal.filesystemSync.reconcileFilesystemFile, {
         galleryId,
         folderId,
         syncId: firstClaim.syncId,
@@ -780,17 +791,13 @@ describe("upgallery backend", () => {
         sha256: "a".repeat(64),
         thumbnailKey:
           "public/users/alice/photos/.upgallery/thumbnails/aa/aa/thumb.jpg",
-      },
-    );
-    await t.mutation(
-      internal.filesystemSync.completeFilesystemSync,
-      {
+    });
+    await t.mutation(internal.filesystemSync.completeFilesystemSync, {
         galleryId,
         folderId,
         syncId: firstClaim.syncId,
         modifiedAt: 1000,
-      },
-    );
+    });
 
     const listing = await authed.query(api.folders.list, {
       galleryId,
@@ -814,18 +821,16 @@ describe("upgallery backend", () => {
       internal.filesystemSync.claimFilesystemSync,
       { galleryId, folderId },
     );
-    if (secondClaim.kind !== "ready") throw new Error("Sync was unexpectedly busy");
+    if (secondClaim.kind !== "ready")
+      throw new Error("Sync was unexpectedly busy");
     expect(secondClaim.knownChildFolderIds).toContain(newFolderId);
     expect(
-      await t.mutation(
-        internal.filesystemSync.compareFilesystemDirectory,
-        {
+      await t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
           galleryId,
           folderId,
           syncId: secondClaim.syncId,
           modifiedAt: 1000,
-        },
-      ),
+      }),
     ).toEqual({ shouldScan: false });
     expect(
       (
@@ -841,7 +846,7 @@ describe("upgallery backend", () => {
   });
 
   test("user-backed folder creation is completed only after the filesystem operation", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -917,7 +922,7 @@ describe("upgallery backend", () => {
   });
 
   test("image upload completion queues durable media processing", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -942,9 +947,7 @@ describe("upgallery backend", () => {
       size: 123,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -952,8 +955,7 @@ describe("upgallery backend", () => {
         size: 123,
         sha256: "c".repeat(64),
         storageKey: `public/shared/media-queue/cc/cc/${"c".repeat(64)}.jpg`,
-      },
-    );
+    });
     const job = await t.run(async (ctx) =>
       ctx.db
         .query("mediaProcessingJobs")
@@ -975,7 +977,7 @@ describe("upgallery backend", () => {
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
       thumbnailKey: `public/shared/media-queue/cc/cc/${"c".repeat(64)}.thumb.jpg`,
-      metadataJson: "{\"Make\":\"Test\"}",
+      metadataJson: '{"Make":"Test"}',
     });
     const completed = await t.run(async (ctx) => ({
       entry: await ctx.db.get("entries", entryId),
@@ -985,12 +987,12 @@ describe("upgallery backend", () => {
         .take(10),
     }));
     expect(completed.entry?.thumbnailKey).toContain(".thumb.jpg");
-    expect(completed.entry?.metadataJson).toBe("{\"Make\":\"Test\"}");
+    expect(completed.entry?.metadataJson).toBe('{"Make":"Test"}');
     expect(completed.jobs).toHaveLength(0);
   });
 
   test("owners can queue location removal and commit the rewritten image", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const owner = await seedProfile(t, {
       email: "owner@example.com",
       admin: true,
@@ -1019,11 +1021,8 @@ describe("upgallery backend", () => {
       t.mutation(internal.storageGateway.claimUpload, intent),
     ).resolves.toMatchObject({ removeLocationData: true });
     const oldSha = "a".repeat(64);
-    const oldStorageKey =
-      `public/shared/private-metadata/aa/aa/${oldSha}.jpg`;
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const oldStorageKey = `public/shared/private-metadata/aa/aa/${oldSha}.jpg`;
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -1031,8 +1030,7 @@ describe("upgallery backend", () => {
         size: 500,
         sha256: oldSha,
         storageKey: oldStorageKey,
-      },
-    );
+    });
     const initial = await t.mutation(
       internal.storageJobs.claimMediaProcessing,
       {},
@@ -1040,10 +1038,8 @@ describe("upgallery backend", () => {
     if (initial.kind !== "ready") throw new Error("Expected media work");
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: initial.jobId,
-      thumbnailKey:
-        `public/shared/private-metadata/aa/aa/${oldSha}.thumb.jpg`,
-      metadataJson:
-        "{\"Make\":\"Acme\",\"GPSLatitude\":-37.8,\"GPSLongitude\":144.98}",
+      thumbnailKey: `public/shared/private-metadata/aa/aa/${oldSha}.thumb.jpg`,
+      metadataJson: '{"Make":"Acme","GPSLatitude":-37.8,"GPSLongitude":144.98}',
     });
 
     const [editor, viewer] = await Promise.all([
@@ -1065,24 +1061,22 @@ describe("upgallery backend", () => {
       });
     });
     await expect(
-      asUser(
-        t,
-        viewer.googleSubject,
-        "viewer@example.com",
-      ).mutation(api.entries.removeLocationData, {
+      asUser(t, viewer.googleSubject, "viewer@example.com").mutation(
+        api.entries.removeLocationData,
+        {
         galleryId,
         entryId,
-      }),
+        },
+      ),
     ).rejects.toThrow("Unauthorized");
     await expect(
-      asUser(
-        t,
-        editor.googleSubject,
-        "editor@example.com",
-      ).mutation(api.entries.removeLocationData, {
+      asUser(t, editor.googleSubject, "editor@example.com").mutation(
+        api.entries.removeLocationData,
+        {
         galleryId,
         entryId,
-      }),
+        },
+      ),
     ).resolves.toEqual({ queued: true });
     const removal = await t.mutation(
       internal.storageJobs.claimMediaProcessing,
@@ -1098,14 +1092,13 @@ describe("upgallery backend", () => {
       throw new Error("Expected location removal work");
     }
     const newSha = "b".repeat(64);
-    const newStorageKey =
-      `public/shared/private-metadata/bb/bb/${newSha}.jpg`;
+    const newStorageKey = `public/shared/private-metadata/bb/bb/${newSha}.jpg`;
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: removal.jobId,
       storageKey: newStorageKey,
       sha256: newSha,
       size: 480,
-      metadataJson: "{\"Make\":\"Acme\"}",
+      metadataJson: '{"Make":"Acme"}',
     });
 
     const completed = await t.run(async (ctx) => ({
@@ -1120,7 +1113,7 @@ describe("upgallery backend", () => {
       storageKey: newStorageKey,
       sha256: newSha,
       size: 480,
-      metadataJson: "{\"Make\":\"Acme\"}",
+      metadataJson: '{"Make":"Acme"}',
     });
     expect(completed.gallery?.totalBytes).toBe(480);
     expect(completed.deleteJobs).toMatchObject([
@@ -1134,7 +1127,7 @@ describe("upgallery backend", () => {
   });
 
   test("uploader location removal is limited to the file creator", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -1174,19 +1167,15 @@ describe("upgallery backend", () => {
     );
     await t.mutation(internal.storageGateway.claimUpload, intent);
     const sha = "d".repeat(64);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
         mediaKind: "image",
         size: 400,
         sha256: sha,
-        storageKey:
-          `protected/uploaders/creator-uploads/dd/dd/${sha}.jpg`,
-      },
-    );
+      storageKey: `protected/uploaders/creator-uploads/dd/dd/${sha}.jpg`,
+    });
     const initial = await t.mutation(
       internal.storageJobs.claimMediaProcessing,
       {},
@@ -1194,19 +1183,17 @@ describe("upgallery backend", () => {
     if (initial.kind !== "ready") throw new Error("Expected media work");
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: initial.jobId,
-      metadataJson:
-        "{\"GPSLatitude\":-37.8,\"GPSLongitude\":144.98}",
+      metadataJson: '{"GPSLatitude":-37.8,"GPSLongitude":144.98}',
     });
 
     await expect(
-      asUser(
-        t,
-        stranger.googleSubject,
-        "stranger@example.com",
-      ).mutation(api.entries.removeLocationData, {
+      asUser(t, stranger.googleSubject, "stranger@example.com").mutation(
+        api.entries.removeLocationData,
+        {
         galleryId,
         entryId,
-      }),
+        },
+      ),
     ).rejects.toThrow("Unauthorized");
     await expect(
       creatorClient.mutation(api.entries.removeLocationData, {
@@ -1217,9 +1204,10 @@ describe("upgallery backend", () => {
   });
 
   test("durable storage jobs reclaim expired leases", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const seeded = await t.run(async (ctx) => {
       const profileId = await ctx.db.insert("profiles", {
+        identityId: "storage-owner",
         displayName: "Storage owner",
         isAnonymous: false,
         isSystemAdmin: true,
@@ -1274,10 +1262,10 @@ describe("upgallery backend", () => {
       return { deleteJobId, entryId, folderId, galleryId };
     });
 
-    const queued = await t.mutation(
-      internal.storageJobs.queueFilesystemSync,
-      { galleryId: seeded.galleryId, folderId: seeded.folderId },
-    );
+    const queued = await t.mutation(internal.storageJobs.queueFilesystemSync, {
+      galleryId: seeded.galleryId,
+      folderId: seeded.folderId,
+    });
     expect(queued.queued).toBe(true);
     const syncClaim = await t.mutation(
       internal.storageJobs.claimFilesystemSync,
@@ -1353,7 +1341,7 @@ describe("upgallery backend", () => {
   });
 
   test("uploader deletion is visible and authorized only for the uploader", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -1456,7 +1444,7 @@ describe("upgallery backend", () => {
   });
 
   test("gallery owners can queue bulk moves and complete them across galleries", async () => {
-    const t = convexTest(schema, modules);
+    const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -1501,9 +1489,7 @@ describe("upgallery backend", () => {
       size: 45,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(
-      internal.storageGateway.completeUpload,
-      {
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -1511,11 +1497,11 @@ describe("upgallery backend", () => {
         size: 45,
         sha256: "f".repeat(64),
         storageKey: `public/shared/move-source/ff/ff/${"f".repeat(64)}.jpg`,
-      },
-    );
+    });
 
-    await expect(authed.query(api.galleries.listOwnedImageGalleries)).resolves
-      .toEqual(
+    await expect(
+      authed.query(api.galleries.listOwnedImageGalleries),
+    ).resolves.toEqual(
         expect.arrayContaining([
           expect.objectContaining({ _id: sourceGalleryId }),
           expect.objectContaining({ _id: destinationGalleryId }),

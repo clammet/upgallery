@@ -4,7 +4,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { storageApi } from "../lib/files";
 import { friendlyError } from "../lib/errors";
-import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import { anonymousClaim } from "../lib/authClient";
 
 export function useUpload() {
   const createIntent = useMutation(api.entries.createUploadIntent);
@@ -25,7 +25,7 @@ export function useUpload() {
       setError(null);
       try {
         const intent = await createIntent({
-          anonymousClaim: getOrCreateAnonymousClaim(),
+          anonymousClaim: anonymousClaim(),
           galleryId: input.galleryId,
           folderId: input.folderId,
           name: input.file.name,

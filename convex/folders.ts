@@ -178,7 +178,7 @@ export const list = query({
       const ownsEntry =
         gallery.kind === "uploader" &&
         profile !== null &&
-        (await isOwningProfile(ctx, entry.ownerProfileId, profile._id));
+        isOwningProfile(entry.ownerProfileId, profile._id);
       if (
         gallery.kind === "uploader" &&
         entry.unlisted === true &&

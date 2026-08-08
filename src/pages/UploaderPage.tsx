@@ -22,7 +22,7 @@ import { TrashIcon } from "../components/ActionIcons";
 import { MarkdownToggle } from "../components/MarkdownToggle";
 import { formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
-import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import { anonymousClaim } from "../lib/authClient";
 import {
   fileHasLocationMetadata,
   metadataLocation,
@@ -48,7 +48,7 @@ export function UploaderPage(props: {
   routeRoot: string;
 }) {
   const listing = useQuery(api.folders.list, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
     folderId: props.rootFolder._id,
   });
@@ -194,7 +194,7 @@ export function UploaderPage(props: {
         !shouldUseNativeHeifPreview(item.mimeType, item.title)
       ) {
         const result = await requestPreview({
-          anonymousClaim: getOrCreateAnonymousClaim(),
+          anonymousClaim: anonymousClaim(),
           galleryId: props.gallery._id,
           entryId: item.id as Id<"entries">,
           password: suppliedPassword || undefined,
@@ -208,7 +208,7 @@ export function UploaderPage(props: {
         );
       }
       const { token } = await createDownloadTicket({
-        anonymousClaim: getOrCreateAnonymousClaim(),
+        anonymousClaim: anonymousClaim(),
         galleryId: props.gallery._id,
         entryId: item.id as Id<"entries">,
         password: suppliedPassword || undefined,
@@ -223,7 +223,7 @@ export function UploaderPage(props: {
   const changeViewerMarkdownMode = useCallback(
     async (item: MediaViewerItem, markdown: boolean) => {
       await setEntryMarkdownMode({
-        anonymousClaim: getOrCreateAnonymousClaim(),
+        anonymousClaim: anonymousClaim(),
         entryId: item.id as Id<"entries">,
         markdown,
       });
@@ -241,7 +241,7 @@ export function UploaderPage(props: {
       return;
     }
     void createThumbnailTickets({
-      anonymousClaim: getOrCreateAnonymousClaim(),
+      anonymousClaim: anonymousClaim(),
       galleryId: props.gallery._id,
       folderId: props.rootFolder._id,
       entryIds: thumbnailEntryIds,
@@ -275,7 +275,7 @@ export function UploaderPage(props: {
         isHeifImage(entry.mimeType, entry.name)
       ) {
         void refreshStoredMetadata({
-          anonymousClaim: getOrCreateAnonymousClaim(),
+          anonymousClaim: anonymousClaim(),
           galleryId: props.gallery._id,
           entryId: entry._id,
         }).catch(() => undefined);
@@ -413,7 +413,7 @@ export function UploaderPage(props: {
           onClose={() => setMetadataEntryId(null)}
           onRemoveLocation={() =>
             removeStoredLocationData({
-              anonymousClaim: getOrCreateAnonymousClaim(),
+              anonymousClaim: anonymousClaim(),
               galleryId: props.gallery._id,
               entryId: metadataEntry._id,
             }).then(() => undefined)
@@ -558,7 +558,7 @@ function UploaderEntry(props: {
               setDeleting(true);
               setDeleteError(null);
               void removeEntry({
-                anonymousClaim: getOrCreateAnonymousClaim(),
+                anonymousClaim: anonymousClaim(),
                 entryId: props.entry._id,
                 password: deletePassword || undefined,
               })

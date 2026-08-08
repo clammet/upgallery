@@ -3,7 +3,7 @@ import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
-import { getOrCreateAnonymousClaim } from "./lib/anonymousClaim";
+import { anonymousClaim, authClient } from "./lib/authClient";
 import { uploaderFileEntryId } from "./lib/uploaderRoutes";
 import { GalleryPage } from "./pages/GalleryPage";
 import { UploaderFilePage } from "./pages/UploaderFilePage";
@@ -11,7 +11,6 @@ import { UploaderPage } from "./pages/UploaderPage";
 import { AdminPage } from "./pages/AdminPage";
 import { PageFrame } from "./components/PageFrame";
 import { AuthCallbackPage } from "./components/AuthCallbackPage";
-import { clearAnonymousClaim } from "./lib/anonymousClaim";
 
 export function App() {
   return (
@@ -39,13 +38,13 @@ function AuthBootstrap() {
 
   useEffect(() => {
     if (isLoading) return;
-    const anonymousClaim = getOrCreateAnonymousClaim();
-    const key = `${isAuthenticated ? "google" : "anonymous"}:${anonymousClaim}`;
+    const claim = anonymousClaim();
+    const key = `${isAuthenticated ? "google" : "anonymous"}:${claim}`;
     if (syncing.current === key) return;
     syncing.current = key;
-    void ensureProfile({ anonymousClaim })
+    void ensureProfile({ anonymousClaim: claim })
       .then(() => {
-        if (isAuthenticated) clearAnonymousClaim();
+        if (isAuthenticated) authClient.clearAnonymousClaim();
       })
       .catch((error: unknown) => {
         console.error("Failed to synchronize authentication profile", error);
@@ -59,7 +58,7 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
   const { slug = "" } = useParams();
   const resolved = useQuery(api.galleries.resolveBySlug, {
     slug,
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
   });
   if (resolved === undefined) return <Loading />;
   if (
@@ -84,7 +83,7 @@ function SlugUploaderFile() {
   const { slug = "", entryId = "" } = useParams();
   const resolved = useQuery(api.galleries.resolveBySlug, {
     slug,
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
   });
   if (resolved === undefined) return <Loading />;
   if (
@@ -105,7 +104,7 @@ function SlugUploaderFile() {
 function HostGallery() {
   const location = useLocation();
   const resolved = useQuery(api.galleries.resolveByHost, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
     host: window.location.host,
     path: location.pathname,
   });
@@ -146,7 +145,7 @@ function NotFound() {
 
 function Landing() {
   const profile = useQuery(api.profiles.current, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
   });
   return (
     <PageFrame>

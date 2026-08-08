@@ -7,7 +7,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { formatBytes } from "../lib/files";
 import { friendlyError } from "../lib/errors";
-import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import { anonymousClaim } from "../lib/authClient";
 import styles from "../styles/admin.module.css";
 import layout from "../styles/layout.module.css";
 
@@ -17,7 +17,7 @@ type FolderPreviewMode = "first" | "random" | "first3" | "random3";
 
 export function AdminPage() {
   const profile = useQuery(api.profiles.current, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
   });
   const galleries = useQuery(api.galleries.listManaged);
   const [selected, setSelected] = useState<Id<"galleries"> | null>(null);
@@ -324,7 +324,7 @@ function SystemUsers() {
   return (
     <Section title="System users">
       <div className={styles.rows}>
-        {users.filter((user) => !user.isAnonymous && !user.mergedIntoProfileId).map((user) => (
+        {users.filter((user) => !user.isAnonymous).map((user) => (
           <div className={styles.row} key={user._id}>
             <span>{user.email ?? user.displayName}</span>
             <span>{user.isSystemAdmin ? "Administrator" : "User"}</span>

@@ -353,11 +353,7 @@ export const removeLocationData = mutation({
             await getEffectiveRole(ctx, gallery._id, folder, actor),
             "editor",
           )
-        : await isOwningProfile(
-            ctx,
-            entry.ownerProfileId,
-            actor._id,
-          );
+        : isOwningProfile(entry.ownerProfileId, actor._id);
     if (!allowed) {
       throw new Error("Unauthorized");
     }
@@ -454,11 +450,7 @@ export const refreshMetadata = mutation({
             await getEffectiveRole(ctx, gallery._id, folder, actor),
             "editor",
           )
-        : await isOwningProfile(
-            ctx,
-            entry.ownerProfileId,
-            actor._id,
-          );
+        : isOwningProfile(entry.ownerProfileId, actor._id);
     if (!allowed) throw new Error("Unauthorized");
 
     const jobs = await ctx.db
@@ -616,11 +608,7 @@ export const updateMetadata = mutation({
       throw new Error("Gallery not found");
     }
     const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
-    const owns = await isOwningProfile(
-      ctx,
-      entry.ownerProfileId,
-      profile._id,
-    );
+    const owns = isOwningProfile(entry.ownerProfileId, profile._id);
     if (!owns && !roleAtLeast(role, "editor")) {
       throw new Error("Unauthorized");
     }
@@ -669,7 +657,7 @@ export const setMarkdownMode = mutation({
     ) {
       throw new Error("File not found");
     }
-    if (!(await isOwningProfile(ctx, entry.ownerProfileId, profile._id))) {
+    if (!isOwningProfile(entry.ownerProfileId, profile._id)) {
       throw new Error("Unauthorized");
     }
     if (
@@ -720,11 +708,7 @@ export const remove = mutation({
       throw new Error("Gallery not found");
     }
     const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
-    const owns = await isOwningProfile(
-      ctx,
-      entry.ownerProfileId,
-      profile._id,
-    );
+    const owns = isOwningProfile(entry.ownerProfileId, profile._id);
     if (
       (gallery.kind === "uploader" && !owns) ||
       (gallery.kind === "image" && !owns && !roleAtLeast(role, "editor"))

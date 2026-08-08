@@ -1,10 +1,11 @@
 # Google OAuth client setup
 
-Upgallery uses Google's OAuth 2.0 authorization-code flow through a shared
-redirect router. A browser on any configured gallery domain first visits the
-Convex HTTP Action at `/auth/google/start`. That action validates the gallery
+Upgallery uses the `convex-googly-auth` component for Google’s OAuth 2.0
+authorization-code flow, refresh-token sessions, and anonymous identity
+upgrades. A browser on any configured gallery domain first visits the Convex
+HTTP Action at `/auth/google/start`. The component validates the gallery
 origin, signs it into the OAuth state, and redirects to Google. Google always
-returns to the single Convex callback at `/auth/google/callback`; Convex
+returns to the single Convex callback at `/auth/google/callback`; the component
 exchanges the code and routes the browser back to `/auth/callback` on the
 origin where sign-in began.
 

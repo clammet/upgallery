@@ -36,7 +36,7 @@ import {
 import { publicMediaUrl, formatBytes, storageApi } from "../lib/files";
 import { useUpload } from "../hooks/useUpload";
 import { friendlyError } from "../lib/errors";
-import { getOrCreateAnonymousClaim } from "../lib/anonymousClaim";
+import { anonymousClaim } from "../lib/authClient";
 import {
   isHeifImage,
   shouldUseNativeHeifPreview,
@@ -76,7 +76,7 @@ export function GalleryPage(props: {
     return values[0];
   });
   const listing = useQuery(api.folders.list, {
-    anonymousClaim: getOrCreateAnonymousClaim(),
+    anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
     folderId,
     previewSeed,
@@ -142,7 +142,7 @@ export function GalleryPage(props: {
   const resolveViewerSource = useCallback(
     async (item: MediaViewerItem) => {
       const result = await requestPreview({
-        anonymousClaim: getOrCreateAnonymousClaim(),
+        anonymousClaim: anonymousClaim(),
         galleryId: props.gallery._id,
         entryId: item.id as Id<"entries">,
       });
@@ -274,7 +274,7 @@ export function GalleryPage(props: {
         isHeifImage(entry.mimeType, entry.name)
       ) {
         void refreshMetadata({
-          anonymousClaim: getOrCreateAnonymousClaim(),
+          anonymousClaim: anonymousClaim(),
           galleryId: props.gallery._id,
           entryId: entry._id,
         }).catch(() => undefined);
@@ -552,7 +552,7 @@ export function GalleryPage(props: {
           onClose={() => setMetadataEntryId(null)}
           onRemoveLocation={() =>
             removeLocationData({
-                anonymousClaim: getOrCreateAnonymousClaim(),
+                anonymousClaim: anonymousClaim(),
                 galleryId: props.gallery._id,
                 entryId: metadataEntry._id,
               }).then(() => undefined)

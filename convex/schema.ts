@@ -17,35 +17,16 @@ import {
 
 export default defineSchema({
   profiles: defineTable({
-    googleSubject: v.optional(v.string()),
+    identityId: v.string(),
     displayName: v.optional(v.string()),
     email: v.optional(v.string()),
     image: v.optional(v.string()),
     isAnonymous: v.boolean(),
     isSystemAdmin: v.boolean(),
-    anonymousClaimHash: v.optional(v.string()),
-    mergedIntoProfileId: v.optional(v.id("profiles")),
     lastSeenAt: v.number(),
   })
-    .index("by_googleSubject", ["googleSubject"])
-    .index("by_email", ["email"])
-    .index("by_anonymousClaimHash", ["anonymousClaimHash"]),
-
-  profileAliases: defineTable({
-    sourceProfileId: v.id("profiles"),
-    targetProfileId: v.id("profiles"),
-  })
-    .index("by_sourceProfileId", ["sourceProfileId"])
-    .index("by_targetProfileId", ["targetProfileId"]),
-
-  googleAuthSessions: defineTable({
-    sessionToken: v.string(),
-    refreshToken: v.string(),
-    googleSubject: v.string(),
-    createdAt: v.number(),
-  })
-    .index("by_sessionToken", ["sessionToken"])
-    .index("by_googleSubject", ["googleSubject"]),
+    .index("by_identityId", ["identityId"])
+    .index("by_email", ["email"]),
 
   galleries: defineTable({
     name: v.string(),
@@ -191,7 +172,8 @@ export default defineSchema({
     .index("by_state", ["state"])
     .index("by_state_and_expiresAt", ["state", "expiresAt"])
     .index("by_state_and_leaseExpiresAt", ["state", "leaseExpiresAt"])
-    .index("by_galleryId", ["galleryId"]),
+    .index("by_galleryId", ["galleryId"])
+    .index("by_actorProfileId", ["actorProfileId"]),
 
   entryCounters: defineTable({
     entryId: v.id("entries"),
@@ -224,6 +206,7 @@ export default defineSchema({
     leaseExpiresAt: v.optional(v.number()),
   })
     .index("by_galleryId", ["galleryId"])
+    .index("by_ownerProfileId", ["ownerProfileId"])
     .index("by_state", ["state"])
     .index("by_state_and_expiresAt", ["state", "expiresAt"])
     .index("by_state_and_leaseExpiresAt", ["state", "leaseExpiresAt"]),
@@ -271,7 +254,8 @@ export default defineSchema({
   })
     .index("by_status_and_availableAt", ["status", "availableAt"])
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
-    .index("by_entryId", ["entryId"]),
+    .index("by_entryId", ["entryId"])
+    .index("by_actorProfileId", ["actorProfileId"]),
 
   storageMigrations: defineTable({
     galleryId: v.id("galleries"),

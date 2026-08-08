@@ -1,2 +1,7 @@
+packages:
+  - .
+  - ../convex-googly-auth
+
 allowBuilds:
+  convex-googly-auth: true
   esbuild: true
