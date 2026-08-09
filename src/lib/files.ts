@@ -2,11 +2,15 @@ export function publicMediaUrl(
   storageKey: string,
   filesystemModifiedAt?: number,
 ): string {
-  if (!storageKey.startsWith("public/")) {
+  const publicPath = storageKey.startsWith("public/")
+    ? storageKey.slice("public/".length)
+    : storageKey.startsWith("derivatives/gallery/")
+      ? storageKey
+      : undefined;
+  if (publicPath === undefined) {
     throw new Error("Protected storage keys cannot be served directly");
   }
-  const encodedPath = storageKey
-    .slice("public/".length)
+  const encodedPath = publicPath
     .split("/")
     .map(encodeURIComponent)
     .join("/");

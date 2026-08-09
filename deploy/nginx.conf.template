@@ -31,8 +31,18 @@ server {
     try_files $uri =404;
   }
 
-  # Shared gallery paths are content-addressed and immutable. The protected
-  # uploader tree is not reachable here or mounted in this container.
+  # Public gallery thumbnails and compatibility previews live in a dedicated
+  # mount. The protected uploader derivative tree is not mounted here.
+  location ^~ /media/derivatives/gallery/ {
+    alias /data/media/derivatives/gallery/;
+    autoindex off;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    try_files $uri =404;
+  }
+
+  # Shared gallery originals are content-addressed and immutable. Protected
+  # uploader originals and derivatives are not reachable or mounted here.
   location /media/ {
     alias /data/media/public/;
     autoindex off;

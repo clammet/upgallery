@@ -6,4 +6,5 @@ node_modules
 dist
 storage-dist
 coverage
+/data
 *.log

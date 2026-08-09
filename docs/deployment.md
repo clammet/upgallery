@@ -7,42 +7,44 @@ from Convex and are the only processes with write access to the file mounts.
 
 ## Filesystem layout
 
-Inside the storage container, `STORAGE_ROOT=/data/media` has three storage
-zones:
+Inside the storage container, `STORAGE_ROOT=/data/media` has separate original
+and derivative storage zones:
 
 | Zone | Container path | Writer | Reader | URL behavior |
 | --- | --- | --- | --- | --- |
 | Shared image galleries | `/data/media/public/shared` | storage services | Nginx read-only mount | direct `/media/shared/...` |
 | User-based image galleries | `/data/media/public/users` | storage services | Nginx read-only mount | direct `/media/users/...` |
-| Uploader galleries | `/data/media/protected/uploaders` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
+| Uploader originals | `/data/media/protected/uploaders` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
+| Image-gallery derivatives | `/data/media/derivatives/gallery` | storage services | Nginx read-only mount | direct `/media/derivatives/gallery/...` |
+| Uploader derivatives | `/data/media/derivatives/up` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
 
 Every gallery setting contains a relative `storageRoot` such as
-`customers/alice`. Shared galleries and protected uploaders distribute content
-below that root using the first four hex characters of the SHA-256 digest.
-User-backed galleries preserve the visible directory names and original file
-names:
+`customers/alice`. Shared galleries and protected uploaders distribute
+originals below that root using the first four hex characters of the SHA-256
+digest. User-backed galleries preserve visible directory names and original
+file names. All thumbnails and previews live in the central derivative root,
+segmented first by `gallery` or `up`, and then by storage kind and gallery root:
 
 ```text
 public/shared/family/9f/a2/9fa2…c1.jpg
-public/shared/family/9f/a2/9fa2…c1.thumb.jpg
-public/shared/family/9f/a2/9fa2…c1.preview.jpg
 public/users/alice/photos/2026/July/beach sunset.png
-public/users/alice/photos/.upgallery/thumbnails/31/7b/317b…20.thumb.jpg
-public/users/alice/photos/.upgallery/previews/31/7b/317b…20.preview.jpg
 protected/uploaders/support/0c/44/0c44…aa.zip
+derivatives/gallery/shared/family/thumbnails/9f/a2/9fa2…c1.thumb.jpg
+derivatives/gallery/user/alice/photos/previews/31/7b/317b…20.preview.jpg
+derivatives/up/support/thumbnails/0c/44/0c44…aa.thumb.jpg
 ```
 
-The hidden `.upgallery` directory contains generated, content-addressed
-thumbnails and full-resolution compatibility previews and is never exposed as
-a gallery folder. Shared and protected content paths prevent very large single
-directories and can deduplicate identical bytes inside one storage namespace.
-User-backed originals remain ordinary files that can be managed through SFTP,
-SCP, rsync, or the application. Deletion checks for other live metadata
-references before unlinking shared bytes or derivatives.
+The central derivative root contains generated, content-addressed thumbnails
+and full-resolution compatibility previews. Its `gallery/shared`,
+`gallery/user`, and `up` namespaces make each backing mode independently easy
+to segment, snapshot, or inspect. User-backed originals remain ordinary files
+with no application-generated directory beside them, so they can be managed
+through SFTP, SCP, rsync, or the application. Deletion checks for other live
+metadata references before unlinking shared bytes or derivatives.
 
-Never mount `protected/uploaders` into the Nginx container. Uploader downloads
-must pass through the gateway so password checks and view/download counters
-cannot be bypassed.
+Never mount `protected/uploaders` or `derivatives/up` into the Nginx container.
+Uploader originals and derivatives must pass through the gateway so password
+checks and view/download counters cannot be bypassed.
 
 ## User-based storage and SCP
 
@@ -58,8 +60,8 @@ storage API. A storage worker claims that job with a renewable lease and:
    Convex. Browser input is never used directly as a filesystem path.
 2. Reads the directory modification time. If it matches the last successful
    check, the operation ends without reading the directory.
-3. Otherwise, lists that directory, ignoring symlinks, `.upgallery`, and
-   in-progress application upload files, then walks its subdirectories.
+3. Otherwise, lists that directory, ignoring symlinks and in-progress
+   application upload files, then walks its subdirectories.
 4. Adds or updates child folders and files in small Convex mutations. New
    filesystem folders default to public privacy; an existing folder keeps its
    privacy and grants.
@@ -120,6 +122,11 @@ Recommended host tree:
 /srv/upgallery/
   shared/                 # UPGALLERY_SHARED_ROOT
   uploaders/              # UPGALLERY_UPLOADER_ROOT
+  derivatives/            # UPGALLERY_DERIVATIVE_ROOT
+    gallery/
+      shared/
+      user/
+    up/
   users/
     alice/                # gallery storageRoot: alice
     studio/video-stills/  # gallery storageRoot: studio/video-stills
@@ -127,7 +134,7 @@ Recommended host tree:
 
 Use a dedicated Unix group, set directories to `02770`, and grant the storage
 container UID write access. The web container gets the same public directories
-read-only. Back up metadata and all three storage roots together; metadata
+read-only. Back up metadata and all four storage roots together; metadata
 without matching bytes is not a complete backup.
 
 Do not put an SCP private key in the application image or Convex environment.
@@ -243,7 +250,8 @@ the deployment under representative media sizes.
   links to escape into other host paths.
 - User-backed originals are served with revalidation headers because their
   content can change at a stable path. Shared content-addressed files retain
-  immutable caching.
+  immutable caching. All generated thumbnails and previews are stored beneath
+  `UPGALLERY_DERIVATIVE_ROOT`; Nginx receives only its `gallery` subtree.
 - Migration pauses new uploads, copies one item at a time, atomically switches
   metadata, then queues the old copy for reference-aware deletion.
 - Storage workers reclaim expired leases after restarts. Permanently failed

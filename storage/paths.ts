@@ -25,19 +25,19 @@ export function buildStorageKey(input: {
   if (input.thumbnail && input.preview) {
     throw new Error("A storage key cannot be both a thumbnail and a preview");
   }
+  if (input.thumbnail || input.preview) {
+    return [
+      "derivatives",
+      input.galleryKind === "uploader" ? "up" : "gallery",
+      ...(input.galleryKind === "image" ? [input.storageKind] : []),
+      input.storageRoot,
+      input.preview ? "previews" : "thumbnails",
+      input.sha256.slice(0, 2),
+      input.sha256.slice(2, 4),
+      `${input.sha256}.${input.preview ? "preview" : "thumb"}.jpg`,
+    ].join("/");
+  }
   if (input.galleryKind === "image" && input.storageKind === "user") {
-    if (input.thumbnail || input.preview) {
-      return [
-        "public",
-        "users",
-        input.storageRoot,
-        ".upgallery",
-        input.preview ? "previews" : "thumbnails",
-        input.sha256.slice(0, 2),
-        input.sha256.slice(2, 4),
-        `${input.sha256}.${input.preview ? "preview" : "thumb"}.jpg`,
-      ].join("/");
-    }
     if (input.fileName === undefined) {
       throw new Error("User-backed files require their original file name");
     }
@@ -117,6 +117,9 @@ export function storageDirectory(storageKey: string): string {
 }
 
 export function publicMediaPath(storageKey: string): string {
+  if (storageKey.startsWith("derivatives/gallery/")) {
+    return `/media/${storageKey}`;
+  }
   if (!storageKey.startsWith("public/")) {
     throw new Error("Protected files do not have direct media URLs");
   }

@@ -279,11 +279,11 @@ describe("upgallery backend", () => {
         size: 123,
         sha256: "d".repeat(64),
         storageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.jpg`,
-        thumbnailKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.thumb.jpg`,
+        thumbnailKey: `derivatives/up/counted-files/thumbnails/dd/dd/${"d".repeat(64)}.thumb.jpg`,
     });
     await t.run(async (ctx) => {
       await ctx.db.patch("entries", entryId, {
-        previewKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.preview.jpg`,
+        previewKey: `derivatives/up/counted-files/previews/dd/dd/${"d".repeat(64)}.preview.jpg`,
       });
     });
     const visitor = await seedProfile(t, { anonymous: true });
@@ -340,7 +340,7 @@ describe("upgallery backend", () => {
         token: previewTicket.token,
       }),
     ).resolves.toMatchObject({
-      storageKey: `protected/uploaders/counted-files/dd/dd/${"d".repeat(64)}.preview.jpg`,
+      storageKey: `derivatives/up/counted-files/previews/dd/dd/${"d".repeat(64)}.preview.jpg`,
       mimeType: "image/jpeg",
       disposition: "preview",
     });
@@ -440,7 +440,7 @@ describe("upgallery backend", () => {
     ).resolves.toEqual({ status: "pending" });
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: initialClaim.jobId,
-      thumbnailKey: `protected/uploaders/heic-previews/ee/ee/${sha}.thumb.jpg`,
+      thumbnailKey: `derivatives/up/heic-previews/thumbnails/ee/ee/${sha}.thumb.jpg`,
       metadataJson: '{"Resolution":"4032 × 3024"}',
     });
 
@@ -456,7 +456,7 @@ describe("upgallery backend", () => {
       generatePreview: true,
     });
     if (claim.kind !== "ready") throw new Error("Expected preview work");
-    const previewKey = `protected/uploaders/heic-previews/ee/ee/${sha}.preview.jpg`;
+    const previewKey = `derivatives/up/heic-previews/previews/ee/ee/${sha}.preview.jpg`;
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
       previewKey,
@@ -790,7 +790,7 @@ describe("upgallery backend", () => {
         mediaKind: "image",
         sha256: "a".repeat(64),
         thumbnailKey:
-          "public/users/alice/photos/.upgallery/thumbnails/aa/aa/thumb.jpg",
+          "derivatives/gallery/user/alice/photos/thumbnails/aa/aa/thumb.jpg",
     });
     await t.mutation(internal.filesystemSync.completeFilesystemSync, {
         galleryId,
@@ -976,7 +976,7 @@ describe("upgallery backend", () => {
     if (claim.kind !== "ready") throw new Error("Expected media work");
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
-      thumbnailKey: `public/shared/media-queue/cc/cc/${"c".repeat(64)}.thumb.jpg`,
+      thumbnailKey: `derivatives/gallery/shared/media-queue/thumbnails/cc/cc/${"c".repeat(64)}.thumb.jpg`,
       metadataJson: '{"Make":"Test"}',
     });
     const completed = await t.run(async (ctx) => ({
@@ -1038,7 +1038,7 @@ describe("upgallery backend", () => {
     if (initial.kind !== "ready") throw new Error("Expected media work");
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: initial.jobId,
-      thumbnailKey: `public/shared/private-metadata/aa/aa/${oldSha}.thumb.jpg`,
+      thumbnailKey: `derivatives/gallery/shared/private-metadata/thumbnails/aa/aa/${oldSha}.thumb.jpg`,
       metadataJson: '{"Make":"Acme","GPSLatitude":-37.8,"GPSLongitude":144.98}',
     });
 

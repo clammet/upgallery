@@ -80,7 +80,7 @@ test("BMP images generate JPEG thumbnails", async () => {
   });
 
   expect(thumbnailKey).toBe(
-    `protected/uploaders/bmp-test/bb/bb/${sha256}.thumb.jpg`,
+    `derivatives/up/bmp-test/thumbnails/bb/bb/${sha256}.thumb.jpg`,
   );
   const thumbnail = await readFile(join(storageRoot, thumbnailKey!));
   const metadata = await sharp(thumbnail).metadata();
@@ -144,7 +144,7 @@ test("HEIC images fall back to the libheif thumbnailer", async () => {
   });
 
   expect(thumbnailKey).toBe(
-    `protected/uploaders/heic-test/hh/hh/${sha256}.thumb.jpg`,
+    `derivatives/up/heic-test/thumbnails/hh/hh/${sha256}.thumb.jpg`,
   );
   const thumbnail = await readFile(join(storageRoot, thumbnailKey!));
   const metadata = await sharp(thumbnail).metadata();
@@ -272,7 +272,7 @@ test("full-resolution previews preserve the source pixel dimensions", async () =
   });
 
   expect(previewKey).toBe(
-    `protected/uploaders/preview-test/cc/cc/${sha256}.preview.jpg`,
+    `derivatives/up/preview-test/previews/cc/cc/${sha256}.preview.jpg`,
   );
   await expect(
     sharp(join(storageRoot, previewKey)).metadata(),

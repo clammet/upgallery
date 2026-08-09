@@ -8,12 +8,12 @@ The implementation is split deliberately:
 - Convex stores gallery metadata, users, roles, folder privacy, counters,
   upload intents, download tickets, and storage jobs.
 - The Node storage API streams shared/protected files to hash-sharded mounts
-  and serves protected uploader downloads. A separate process from the same
-  image claims durable Convex jobs for user-backed reconciliation,
-  image/video thumbnails, bounded media metadata extraction, deletion, and migration.
-- Nginx serves the React application and image-gallery originals directly from
-  the public mounts. Protected uploader storage is never mounted into an Nginx
-  location.
+  and stores every generated thumbnail and preview in a central derivative
+  root. A separate process from the same image claims durable Convex jobs for
+  user-backed reconciliation, media processing, deletion, and migration.
+- Nginx serves the React application, image-gallery originals, and only the
+  `derivatives/gallery` subtree directly. Protected uploader originals and the
+  `derivatives/up` subtree are never mounted into an Nginx location.
 - The `@clammet/convex-googly-auth` component supplies Google OIDC sessions and
   anonymous identities. Credentials and refresh tokens stay inside the
   component, while the app stores only opaque identity IDs on profiles.
@@ -152,3 +152,5 @@ changed, a recursive reconciliation. The header shows shared reactive progress
 for the folder currently being scanned.
 Uploader files are stored below `protected/uploaders` and can only be read
 through an expiring, password-aware download ticket.
+Generated assets are stored separately below `derivatives/gallery` and
+`derivatives/up`; no thumbnail or preview is placed beside an original.

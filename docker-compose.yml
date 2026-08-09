@@ -33,6 +33,7 @@ services:
       - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared
       - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users
       - ${UPGALLERY_UPLOADER_ROOT:-./data/uploaders}:/data/media/protected/uploaders
+      - ${UPGALLERY_DERIVATIVE_ROOT:-./data/derivatives}:/data/media/derivatives
       - storage-tmp:/data/media/.tmp
     tmpfs:
       - /tmp:size=256m,mode=1777
@@ -81,6 +82,7 @@ services:
       - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared
       - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users
       - ${UPGALLERY_UPLOADER_ROOT:-./data/uploaders}:/data/media/protected/uploaders
+      - ${UPGALLERY_DERIVATIVE_ROOT:-./data/derivatives}:/data/media/derivatives
     tmpfs:
       - /tmp:size=512m,mode=1777
     healthcheck:
@@ -117,6 +119,7 @@ services:
     volumes:
       - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared:ro
       - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users:ro
+      - ${UPGALLERY_DERIVATIVE_ROOT:-./data/derivatives}/gallery:/data/media/derivatives/gallery:ro
     depends_on:
       storage-api:
         condition: service_healthy

@@ -23,7 +23,7 @@ test("user-backed originals preserve folders and file names", async () => {
   ).toBe("public/users/alice/photos/2026/July/beach sunset.jpg");
 });
 
-test("user-backed generated thumbnails remain hidden and sharded", async () => {
+test("user-backed thumbnails use the central gallery derivative root", async () => {
   const { buildStorageKey } = await import("../storage/paths.js");
   expect(
     buildStorageKey({
@@ -35,7 +35,7 @@ test("user-backed generated thumbnails remain hidden and sharded", async () => {
       thumbnail: true,
     }),
   ).toBe(
-    `public/users/alice/photos/.upgallery/thumbnails/ab/cd/${"abcd".padEnd(64, "0")}.thumb.jpg`,
+    `derivatives/gallery/user/alice/photos/thumbnails/ab/cd/${"abcd".padEnd(64, "0")}.thumb.jpg`,
   );
 });
 
@@ -51,6 +51,51 @@ test("generated previews use a separate full-resolution cache path", async () =>
       preview: true,
     }),
   ).toBe(
-    `public/users/alice/photos/.upgallery/previews/ab/cd/${"abcd".padEnd(64, "0")}.preview.jpg`,
+    `derivatives/gallery/user/alice/photos/previews/ab/cd/${"abcd".padEnd(64, "0")}.preview.jpg`,
+  );
+});
+
+test("shared gallery derivatives are separated from originals", async () => {
+  const { buildStorageKey } = await import("../storage/paths.js");
+  const sha256 = "ef01".padEnd(64, "0");
+  expect(
+    buildStorageKey({
+      galleryKind: "image",
+      storageKind: "shared",
+      storageRoot: "family",
+      sha256,
+      extension: "jpg",
+      thumbnail: true,
+    }),
+  ).toBe(`derivatives/gallery/shared/family/thumbnails/ef/01/${sha256}.thumb.jpg`);
+});
+
+test("uploader derivatives use the protected central up namespace", async () => {
+  const { buildStorageKey, publicMediaPath } = await import("../storage/paths.js");
+  const sha256 = "1234".padEnd(64, "0");
+  const key = buildStorageKey({
+    galleryKind: "uploader",
+    storageKind: "shared",
+    storageRoot: "support",
+    sha256,
+    extension: "heic",
+    preview: true,
+  });
+  expect(key).toBe(
+    `derivatives/up/support/previews/12/34/${sha256}.preview.jpg`,
+  );
+  expect(() => publicMediaPath(key)).toThrow(
+    "Protected files do not have direct media URLs",
+  );
+});
+
+test("gallery derivatives have direct immutable media URLs", async () => {
+  const { publicMediaPath } = await import("../storage/paths.js");
+  expect(
+    publicMediaPath(
+      "derivatives/gallery/shared/family/thumbnails/aa/bb/hash.thumb.jpg",
+    ),
+  ).toBe(
+    "/media/derivatives/gallery/shared/family/thumbnails/aa/bb/hash.thumb.jpg",
   );
 });

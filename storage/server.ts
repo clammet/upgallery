@@ -99,6 +99,16 @@ app.post("/api/storage/user-folder-operation", (request, response) => {
   });
 });
 app.use(
+  "/media/derivatives/gallery",
+  express.static(`${config.storageRoot}/derivatives/gallery`, {
+    fallthrough: false,
+    immutable: true,
+    maxAge: "1y",
+    index: false,
+    dotfiles: "deny",
+  }),
+);
+app.use(
   "/media/users",
   express.static(`${config.storageRoot}/public/users`, {
     fallthrough: false,
