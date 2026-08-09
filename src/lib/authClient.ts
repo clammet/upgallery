@@ -1,4 +1,4 @@
-import { createGooglyAuthClient } from "convex-googly-auth/react";
+import { createGooglyAuthClient } from "@clammet/convex-googly-auth/react";
 
 export const authClient = createGooglyAuthClient({
   convexSiteUrl: import.meta.env.VITE_CONVEX_SITE_URL,

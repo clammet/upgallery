@@ -1,6 +1,6 @@
 # Google OAuth client setup
 
-Upgallery uses the `convex-googly-auth` component for Google’s OAuth 2.0
+Upgallery uses the `@clammet/convex-googly-auth` component for Google’s OAuth 2.0
 authorization-code flow, refresh-token sessions, and anonymous identity
 upgrades. A browser on any configured gallery domain first visits the Convex
 HTTP Action at `/auth/google/start`. The component validates the gallery

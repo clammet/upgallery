@@ -40,5 +40,5 @@ Machinery/interplay. Here are some notes about how the various parts of the syst
 * Image/video formats need to be served a thumbnail in the gallery view
 * There should be an extension-mapper to custom thumbnails to display for other file types in the admin interface, with hardcoded defaults.
 * The storage/resting place for files in galleries  should act as a direct nginx file serve location. As in, direct URL access should not be processed by any application server. On the other hand, "uploader" based files should only be able to be served via application so that download/view counts can be tracked.
-* Login is handled by the `convex-googly-auth` component, including anonymous cookie identities, Google SSO, secure session refresh, and identity merging.
+* Login is handled by the `@clammet/convex-googly-auth` component, including anonymous cookie identities, Google SSO, secure session refresh, and identity merging.
 * A single docker instance of this app will manage multiple galleries/uploader locations that may span various domains. So the admin interface when setting up a new gallery/uploader will need to prompt the admin for the domain(s) the uploader/gallery will serve for, and the root path.

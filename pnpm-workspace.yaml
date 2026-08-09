@@ -1,7 +1,5 @@
-packages:
-  - .
-  - ../convex-googly-auth
+minimumReleaseAgeExclude:
+  - "@clammet/*"
 
 allowBuilds:
-  convex-googly-auth: true
   esbuild: true

@@ -14,7 +14,7 @@ The implementation is split deliberately:
 - Nginx serves the React application and image-gallery originals directly from
   the public mounts. Protected uploader storage is never mounted into an Nginx
   location.
-- The `convex-googly-auth` component supplies Google OIDC sessions and
+- The `@clammet/convex-googly-auth` component supplies Google OIDC sessions and
   anonymous identities. Credentials and refresh tokens stay inside the
   component, while the app stores only opaque identity IDs on profiles.
 

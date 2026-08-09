@@ -91,5 +91,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  googlyAuth: import("convex-googly-auth/_generated/component.js").ComponentApi<"googlyAuth">;
+  googlyAuth: import("@clammet/convex-googly-auth/_generated/component.js").ComponentApi<"googlyAuth">;
 };
