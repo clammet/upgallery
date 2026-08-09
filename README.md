@@ -40,21 +40,26 @@ links to Homebrew's libvips rather than its bundled decoder. The check command
 fails with an actionable message if `.heic` and `.heif` input support is not
 available.
 
-Install packages, then configure the Convex CLI for a local development
-deployment if this checkout does not already have one:
+Create a blank local development environment with:
 
 ```bash
-pnpm install
-pnpm convex:dev --once
+pnpm devsetup
 ```
 
-The one-time Convex command creates or selects the local deployment and writes
-its selector to the ignored local environment configuration. After that,
-`pnpm dev` starts `convex dev` alongside Vite and both storage processes, so
-the local Convex backend, function deployment, code generation, and file
-watching are part of the normal development command.
+`devsetup` installs packages, creates or selects a project-local Convex
+deployment, writes the ignored `.env.local` and `.env.storage.local` files,
+and deploys the backend. It clears the project-local Convex database and
+`.storage`, so stop `pnpm dev` first and do not use it to preserve local data.
+It never targets a Convex cloud deployment. Existing local Google OAuth and
+default-administrator settings are preserved when possible; a new setup uses
+non-working OAuth placeholders until real credentials are configured below.
 
-Put the selected deployment values in `.env.local`, with exactly one copy of
+After that, `pnpm dev` starts `convex dev` alongside Vite and both storage
+processes, so the local Convex backend, function deployment, code generation,
+and file watching are part of the normal development command.
+
+`devsetup` writes the selected deployment values to `.env.local`. To enable
+Google sign-in, replace its placeholder client ID, keeping exactly one copy of
 each browser variable:
 
 ```dotenv
@@ -70,7 +75,8 @@ separate HTTP Actions origin used for OAuth and storage coordination. It is
 not the Vite URL. A browser request to the bare `http://localhost:3211` root
 returns 404 by design because only explicit HTTP Action paths are registered.
 
-Create the ignored `.env.storage.local` file from `.env.storage.example`:
+`devsetup` also creates `.env.storage.local` from `.env.storage.example` and
+generates its storage secret. Its resulting shape is:
 
 ```dotenv
 PORT=8787
@@ -83,16 +89,15 @@ STORAGE_SYNC_WORKER_CONCURRENCY=2
 MAX_ABSOLUTE_UPLOAD_BYTES=10737418240
 ```
 
-Set the server-only values on the selected local Convex deployment. Use the
-same Google client ID as `VITE_GOOGLE_CLIENT_ID`, and paste the same storage
-secret used in `.env.storage.local`. Omitting a secret value makes the CLI
-prompt for it so it does not enter shell history:
+`devsetup` applies `SITE_URL` and the generated storage secret to the local
+Convex deployment automatically. To enable Google sign-in, replace the
+server-side OAuth placeholders as well. Use the same Google client ID as
+`VITE_GOOGLE_CLIENT_ID`; omitting the client secret makes the CLI prompt for
+it so it does not enter shell history:
 
 ```bash
 pnpm exec convex env set AUTH_GOOGLE_ID '<Google OAuth web client ID>'
 pnpm exec convex env set AUTH_GOOGLE_SECRET
-pnpm exec convex env set SITE_URL 'http://localhost:5173'
-pnpm exec convex env set STORAGE_INTERNAL_SECRET
 ```
 
 Optionally set the first administrator before that Google user opens `/admin`:

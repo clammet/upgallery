@@ -12,6 +12,6 @@ Convex agent skills for common tasks can be installed by running
 
 <!-- convex-ai-end -->
 
-This codebase is not in production. If data needs to be deleted as part of schema changes, then so be it.
+This codebase is not in production. If data needs to be deleted as part of schema changes, then so be it. No backwards compatibility, no legacy code.
 
 This project has 2 "modes": a "gallery" and a "uploader". "/up" refers to the uploader.
