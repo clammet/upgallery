@@ -8,12 +8,32 @@ import { PageFrame } from "../components/PageFrame";
 import { formatBytes } from "../lib/files";
 import { friendlyError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
+import {
+  THEME_MODE_DEFAULTS,
+  type ThemeMode,
+} from "../lib/theme";
+import {
+  firstPrefixAttempt,
+  galleryNamePathSegment,
+  generatedGalleryFields,
+  nextPrefixAttempt,
+  type PrefixAttempt,
+} from "../lib/galleryDraft";
 import styles from "../styles/admin.module.css";
 import layout from "../styles/layout.module.css";
 
 type GalleryKind = "image" | "uploader";
 type StorageKind = "shared" | "user";
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [delayMs, value]);
+  return debounced;
+}
 
 export function AdminPage() {
   const profile = useQuery(api.profiles.current, {
@@ -23,7 +43,12 @@ export function AdminPage() {
   const [selected, setSelected] = useState<Id<"galleries"> | null>(null);
 
   useEffect(() => {
-    if (selected === null && galleries?.[0]) setSelected(galleries[0]._id);
+    if (
+      galleries !== undefined &&
+      (selected === null || !galleries.some((gallery) => gallery._id === selected))
+    ) {
+      setSelected(galleries[0]?._id ?? null);
+    }
   }, [galleries, selected]);
 
   if (profile === undefined || galleries === undefined) {
@@ -91,26 +116,128 @@ function CreateGallery(props: {
   const create = useMutation(api.galleries.create);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<GalleryKind>("image");
+  const [storageKind, setStorageKind] = useState<StorageKind>("shared");
+  const [autoPrefix, setAutoPrefix] = useState<PrefixAttempt>(() =>
+    firstPrefixAttempt(),
+  );
+  const [autoNameSegment, setAutoNameSegment] = useState("");
+  const [slugOverride, setSlugOverride] = useState<string | null>(null);
+  const [storageRootOverride, setStorageRootOverride] = useState<string | null>(
+    null,
+  );
+  const [rootPathOverride, setRootPathOverride] = useState<string | null>(null);
+
+  const debouncedName = useDebouncedValue(name, 400);
+  const generated = generatedGalleryFields(autoNameSegment, autoPrefix.prefix);
+  const slug = slugOverride ?? generated.slug;
+  const storageRoot = storageRootOverride ?? generated.storageRoot;
+  const rootPath = rootPathOverride ?? generated.rootPath;
+  const debouncedSlug = useDebouncedValue(slug, 400);
+  const debouncedStorageRoot = useDebouncedValue(storageRoot, 400);
+  const validationSlug = slugOverride === null ? slug : debouncedSlug;
+  const validationStorageRoot =
+    storageRootOverride === null ? storageRoot : debouncedStorageRoot;
+  const availability = useQuery(
+    api.galleries.checkAvailability,
+    validationSlug.length > 0
+      ? { slug: validationSlug, storageRoot: validationStorageRoot }
+      : "skip",
+  );
+
+  useEffect(() => {
+    if (slugOverride !== null) return;
+    setAutoNameSegment(galleryNamePathSegment(debouncedName));
+    setAutoPrefix(firstPrefixAttempt());
+  }, [debouncedName, slugOverride]);
+
+  useEffect(() => {
+    if (
+      slugOverride !== null ||
+      availability === undefined ||
+      availability.normalizedSlug !== slug ||
+      availability.normalizedStorageRoot !== storageRoot
+    ) {
+      return;
+    }
+    const generatedSlugTaken = !availability.slugAvailable;
+    const generatedStorageRootTaken =
+      storageRootOverride === null && !availability.storageRootAvailable;
+    if (generatedSlugTaken || generatedStorageRootTaken) {
+      setAutoPrefix((current) => nextPrefixAttempt(current));
+    }
+  }, [
+    availability,
+    slug,
+    slugOverride,
+    storageRoot,
+    storageRootOverride,
+  ]);
+
+  const reset = () => {
+    setError(null);
+    setName("");
+    setKind("image");
+    setStorageKind("shared");
+    setAutoNameSegment("");
+    setAutoPrefix(firstPrefixAttempt());
+    setSlugOverride(null);
+    setStorageRootOverride(null);
+    setRootPathOverride(null);
+  };
+
+  const manualSlugSettled = slugOverride === null || slug === debouncedSlug;
+  const manualStorageRootSettled =
+    storageRootOverride === null || storageRoot === debouncedStorageRoot;
+  const automaticNameSettled =
+    slugOverride !== null || name === debouncedName;
+  const slugValidationError =
+    slugOverride !== null && manualSlugSettled && slug.length === 0
+      ? "Internal slug is required."
+      : slugOverride !== null && manualSlugSettled && availability !== undefined
+        ? availability.normalizedSlug === null
+          ? "Internal slug must contain between 2 and 80 URL-safe characters."
+          : !availability.slugAvailable
+            ? "This internal slug is already in use."
+            : null
+        : null;
+  const storageRootValidationError =
+    storageRootOverride !== null &&
+    manualStorageRootSettled &&
+    availability !== undefined
+      ? availability.normalizedStorageRoot === null
+        ? "Internal storage path must be a valid relative path."
+        : !availability.storageRootAvailable
+          ? "This internal storage path is already in use."
+          : null
+      : null;
+  const availableToCreate =
+    automaticNameSettled &&
+    manualSlugSettled &&
+    manualStorageRootSettled &&
+    availability?.slugAvailable === true &&
+    availability.storageRootAvailable;
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const kind = form.get("kind") as GalleryKind;
-    const slug = String(form.get("slug"));
     void create({
-      name: String(form.get("name")),
+      name,
       slug,
       kind,
-      storageKind: form.get("storageKind") as StorageKind,
-      storageRoot: String(form.get("storageRoot") || slug),
+      storageKind,
+      storageRoot,
       hosts: [
         {
           host: String(form.get("host")),
-          rootPath: String(form.get("rootPath") || "/"),
+          rootPath,
         },
       ],
     })
       .then((id) => {
         props.onCreated(id);
+        reset();
         setOpen(false);
       })
       .catch((reason: unknown) =>
@@ -120,18 +247,50 @@ function CreateGallery(props: {
   return open ? (
     <form className={`${layout.form} ${styles.createForm}`} onSubmit={submit}>
       <h2>New gallery</h2>
-      <label>Name<input name="name" required /></label>
-      <label>Slug<input name="slug" required placeholder="family-photos" /></label>
-      <label>Kind<select name="kind"><option value="image">Image gallery</option><option value="uploader">Uploader</option></select></label>
-      <label>Storage<select name="storageKind"><option value="shared">Shared</option><option value="user">User mount</option></select></label>
-      <label>Storage root<input name="storageRoot" required placeholder="gallery-name" /></label>
+      <label>Name<input name="name" required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>
+        Internal slug
+        <input
+          name="slug"
+          required
+          placeholder="a7-family-photos"
+          value={slug}
+          aria-invalid={slugValidationError !== null}
+          onChange={(event) => {
+            if (slugOverride === null) {
+              setStorageRootOverride(storageRoot);
+              setRootPathOverride(rootPath);
+            }
+            setSlugOverride(event.target.value);
+          }}
+        />
+        {slugValidationError ? <span className={layout.formError}>{slugValidationError}</span> : null}
+      </label>
+      <label>Kind<select name="kind" value={kind} onChange={(event) => {
+        const nextKind = event.target.value as GalleryKind;
+        setKind(nextKind);
+        if (nextKind === "uploader") setStorageKind("shared");
+      }}><option value="image">Image gallery</option><option value="uploader">Uploader</option></select></label>
+      <label>Storage<select name="storageKind" value={storageKind} onChange={(event) => setStorageKind(event.target.value as StorageKind)}><option value="shared">Shared</option><option value="user" disabled={kind === "uploader"}>User mount</option></select></label>
+      <label>
+        Internal storage path
+        <input
+          name="storageRoot"
+          required
+          placeholder="a7-family-photos"
+          value={storageRoot}
+          aria-invalid={storageRootValidationError !== null}
+          onChange={(event) => setStorageRootOverride(event.target.value)}
+        />
+        {storageRootValidationError ? <span className={layout.formError}>{storageRootValidationError}</span> : null}
+      </label>
       <label>Domain<input name="host" required placeholder="photos.example.com" /></label>
-      <label>URL root<input name="rootPath" defaultValue="/" /></label>
+      <label>Public URL path<input name="rootPath" required value={rootPath} onChange={(event) => setRootPathOverride(event.target.value)} /></label>
       {error ? <p className={layout.formError}>{error}</p> : null}
-      <div className={layout.buttonRow}><button type="submit">Create</button><button type="button" onClick={() => setOpen(false)}>Cancel</button></div>
+      <div className={layout.buttonRow}><button type="submit" disabled={!availableToCreate}>Create</button><button type="button" onClick={() => { reset(); setOpen(false); }}>Cancel</button></div>
     </form>
   ) : (
-    <button type="button" className={styles.newButton} onClick={() => setOpen(true)}>
+    <button type="button" className={styles.newButton} onClick={() => { reset(); setOpen(true); }}>
       <Plus aria-hidden="true" size={16} /> New gallery
     </button>
   );
@@ -147,7 +306,14 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
   const revokeRole = useMutation(api.roles.revoke);
   const requestMigration = useMutation(api.migrations.request);
   const [message, setMessage] = useState<string | null>(null);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+
+  useEffect(() => {
+    setSettingsDirty(false);
+  }, [props.galleryId]);
+
   if (details === undefined) return <p>Loading gallery…</p>;
+  if (details === null) return <p>Gallery no longer exists.</p>;
   const gallery = details.gallery;
 
   const updateSettings = (event: FormEvent<HTMLFormElement>) => {
@@ -175,17 +341,22 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
       hosts,
       theme: {
         accent: String(data.get("accent") || "") || undefined,
+        secondary: String(data.get("secondary") || "") || undefined,
         background: String(data.get("background") || "") || undefined,
         foreground: String(data.get("foreground") || "") || undefined,
         surface: String(data.get("surface") || "") || undefined,
         muted: String(data.get("muted") || "") || undefined,
+        mode: data.get("mode") as ThemeMode,
         radius: Number(data.get("radius") || 4),
         density: data.get("density") as "compact" | "comfortable",
         thumbnailFrameSize: Number(data.get("thumbnailFrameSize") || 218),
         customCss: String(data.get("customCss") || "") || undefined,
       },
     })
-      .then(() => setMessage("Settings saved"))
+      .then(() => {
+        setSettingsDirty(false);
+        setMessage("Settings saved");
+      })
       .catch(showError(setMessage));
   };
 
@@ -208,7 +379,11 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
       {message ? <p className={message.startsWith("Error") ? layout.errorNotice : layout.notice}>{message}</p> : null}
 
       <Section title="Settings">
-        <form className={`${layout.form} ${styles.twoColumns}`} onSubmit={updateSettings}>
+        <form
+          className={`${layout.form} ${styles.twoColumns}`}
+          onChange={() => setSettingsDirty(true)}
+          onSubmit={updateSettings}
+        >
           <label>Name<input name="name" defaultValue={gallery.name} /></label>
           <label>Maximum bytes<input name="maxFileSize" type="number" defaultValue={gallery.maxFileSize} /></label>
           <label>Uploader access<select name="uploaderAccess" defaultValue={gallery.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
@@ -224,15 +399,16 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
               </select>
             </label>
           ) : null}
-          <label>Accent<input name="accent" type="color" defaultValue={gallery.theme.accent ?? "#126b5a"} /></label>
-          <label>Background<input name="background" type="color" defaultValue={gallery.theme.background ?? "#f6f7f4"} /></label>
-          <label>Foreground<input name="foreground" type="color" defaultValue={gallery.theme.foreground ?? "#17201d"} /></label>
-          <label>Surface<input name="surface" type="color" defaultValue={gallery.theme.surface ?? "#ffffff"} /></label>
-          <label>Muted<input name="muted" type="color" defaultValue={gallery.theme.muted ?? "#65716c"} /></label>
+          <ThemeControls key={gallery._id} theme={gallery.theme} />
           <label>Corner radius<input name="radius" type="number" min="0" max="40" defaultValue={gallery.theme.radius ?? 4} /></label>
-          <label className={styles.spanTwo}>Host routes <small>(one per line: host|/root)</small><textarea name="hosts" rows={3} defaultValue={details.hosts.map((host) => `${host.host}|${host.rootPath}`).join("\n")} /></label>
+          <label className={styles.spanTwo}>Host routes <small>(one per line: host|/public-path)</small><textarea name="hosts" rows={3} defaultValue={details.hosts.map((host) => `${host.host}|${host.rootPath}`).join("\n")} /></label>
           <label className={styles.spanTwo}>Scoped custom CSS<textarea name="customCss" rows={5} defaultValue={gallery.theme.customCss ?? ""} /></label>
-          <button type="submit">Save settings</button>
+          <button
+            className={settingsDirty ? styles.saveSettingsDirty : undefined}
+            type="submit"
+          >
+            Save settings
+          </button>
         </form>
       </Section>
 
@@ -313,6 +489,81 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           Delete gallery
         </button>
       </Section>
+    </>
+  );
+}
+
+function ThemeControls(props: {
+  theme: {
+    accent?: string;
+    secondary?: string;
+    background?: string;
+    foreground?: string;
+    surface?: string;
+    muted?: string;
+    mode?: ThemeMode;
+  };
+}) {
+  const [mode, setMode] = useState<ThemeMode>(props.theme.mode ?? "light");
+  const defaults = THEME_MODE_DEFAULTS[mode];
+  const [colors, setColors] = useState({
+    accent: props.theme.accent ?? defaults.accent,
+    secondary: props.theme.secondary ?? defaults.secondary,
+    background: props.theme.background ?? defaults.background,
+    foreground: props.theme.foreground ?? defaults.foreground,
+    surface: props.theme.surface ?? defaults.surface,
+    muted: props.theme.muted ?? defaults.muted,
+  });
+
+  const colorPicker = (name: keyof typeof colors, label: string) => (
+    <label>
+      {label}
+      <input
+        name={name}
+        type="color"
+        value={colors[name]}
+        onChange={(event) => {
+          const value = event.currentTarget.value;
+          setColors((current) => ({
+            ...current,
+            [name]: value,
+          }));
+        }}
+      />
+    </label>
+  );
+
+  return (
+    <>
+      <label>
+        Appearance
+        <select
+          name="mode"
+          value={mode}
+          onChange={(event) => {
+            const nextMode = event.currentTarget.value as ThemeMode;
+            setMode(nextMode);
+            const nextDefaults = THEME_MODE_DEFAULTS[nextMode];
+            setColors({
+              accent: nextDefaults.accent,
+              secondary: nextDefaults.secondary,
+              background: nextDefaults.background,
+              foreground: nextDefaults.foreground,
+              surface: nextDefaults.surface,
+              muted: nextDefaults.muted,
+            });
+          }}
+        >
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      {colorPicker("accent", "Accent")}
+      {colorPicker("secondary", "Secondary")}
+      {colorPicker("background", "Background")}
+      {colorPicker("foreground", "Foreground")}
+      {colorPicker("surface", "Surface")}
+      {colorPicker("muted", "Muted")}
     </>
   );
 }

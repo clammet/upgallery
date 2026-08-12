@@ -31,6 +31,13 @@ const hostInput = v.object({
   rootPath: v.string(),
 });
 
+const galleryAvailability = v.object({
+  normalizedSlug: v.union(v.string(), v.null()),
+  normalizedStorageRoot: v.union(v.string(), v.null()),
+  slugAvailable: v.boolean(),
+  storageRootAvailable: v.boolean(),
+});
+
 const MIN_THUMBNAIL_FRAME_SIZE = 96;
 const MAX_THUMBNAIL_FRAME_SIZE = 512;
 
@@ -118,6 +125,7 @@ export const create = mutation({
     folderPreviewMode: v.optional(folderPreviewMode),
     theme: v.optional(themeValidator),
   },
+  returns: v.id("galleries"),
   handler: async (ctx, args) => {
     const actor = await requireSystemAdmin(ctx);
     const name = args.name.trim();
@@ -131,7 +139,14 @@ export const create = mutation({
       .withIndex("by_slug", (q) => q.eq("slug", slug))
       .unique();
     if (duplicateSlug !== null) {
-      throw new Error("That gallery slug is already in use");
+      throw new Error("That internal slug is already in use");
+    }
+    const duplicateStorageRoot = await ctx.db
+      .query("galleries")
+      .withIndex("by_storageRoot", (q) => q.eq("storageRoot", storageRoot))
+      .first();
+    if (duplicateStorageRoot !== null) {
+      throw new Error("That internal storage path is already in use");
     }
     if (args.kind === "uploader" && args.storageKind !== "shared") {
       throw new Error("Uploader galleries must use shared storage");
@@ -189,6 +204,55 @@ export const create = mutation({
       createdAt: Date.now(),
     });
     return galleryId;
+  },
+});
+
+export const checkAvailability = query({
+  args: {
+    slug: v.string(),
+    storageRoot: v.string(),
+  },
+  returns: galleryAvailability,
+  handler: async (ctx, args) => {
+    await requireSystemAdmin(ctx);
+
+    let normalizedSlug: string | null = null;
+    let normalizedStorageRoot: string | null = null;
+    try {
+      normalizedSlug = normalizeSlug(args.slug);
+    } catch {
+      // Partially typed manual values are reported as unavailable, not thrown.
+    }
+    try {
+      normalizedStorageRoot = normalizeStorageRoot(args.storageRoot);
+    } catch {
+      // Partially typed manual values are reported as unavailable, not thrown.
+    }
+
+    const duplicateSlug =
+      normalizedSlug === null
+        ? null
+        : await ctx.db
+            .query("galleries")
+            .withIndex("by_slug", (q) => q.eq("slug", normalizedSlug!))
+            .first();
+    const duplicateStorageRoot =
+      normalizedStorageRoot === null
+        ? null
+        : await ctx.db
+            .query("galleries")
+            .withIndex("by_storageRoot", (q) =>
+              q.eq("storageRoot", normalizedStorageRoot!),
+            )
+            .first();
+
+    return {
+      normalizedSlug,
+      normalizedStorageRoot,
+      slugAvailable: normalizedSlug !== null && duplicateSlug === null,
+      storageRootAvailable:
+        normalizedStorageRoot !== null && duplicateStorageRoot === null,
+    };
   },
 });
 
@@ -331,7 +395,7 @@ export const adminDetails = query({
   handler: async (ctx, args) => {
     const gallery = await ctx.db.get("galleries", args.galleryId);
     if (gallery === null || gallery.deletedAt !== undefined) {
-      throw new Error("Gallery not found");
+      return null;
     }
     const rootFolder =
       gallery.rootFolderId === undefined

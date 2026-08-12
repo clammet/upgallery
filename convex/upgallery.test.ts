@@ -140,6 +140,52 @@ describe("upgallery backend", () => {
     ]);
   });
 
+  test("gallery availability and creation reserve internal storage paths globally", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    await authed.mutation(api.galleries.create, {
+      name: "Existing gallery",
+      slug: "a7-existing-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "a7-existing-gallery",
+      hosts: [{ host: "existing.example.com", rootPath: "/" }],
+    });
+
+    await expect(
+      authed.query(api.galleries.checkAvailability, {
+        slug: "a7-existing-gallery",
+        storageRoot: "b8-new-gallery",
+      }),
+    ).resolves.toMatchObject({
+      slugAvailable: false,
+      storageRootAvailable: true,
+    });
+    await expect(
+      authed.query(api.galleries.checkAvailability, {
+        slug: "b8-new-gallery",
+        storageRoot: "a7-existing-gallery",
+      }),
+    ).resolves.toMatchObject({
+      slugAvailable: true,
+      storageRootAvailable: false,
+    });
+    await expect(
+      authed.mutation(api.galleries.create, {
+        name: "Conflicting gallery",
+        slug: "b8-conflicting-gallery",
+        kind: "image",
+        storageKind: "user",
+        storageRoot: "a7-existing-gallery",
+        hosts: [{ host: "conflict.example.com", rootPath: "/" }],
+      }),
+    ).rejects.toThrow("That internal storage path is already in use");
+  });
+
   test("anonymous uploader access creates a capability without storing its plaintext", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {

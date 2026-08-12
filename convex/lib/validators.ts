@@ -73,7 +73,9 @@ export const disposition = v.union(
 
 export const themeValidator = v.object({
   accent: v.optional(v.string()),
+  secondary: v.optional(v.string()),
   background: v.optional(v.string()),
+  mode: v.optional(v.union(v.literal("light"), v.literal("dark"))),
   foreground: v.optional(v.string()),
   surface: v.optional(v.string()),
   muted: v.optional(v.string()),

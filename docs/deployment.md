@@ -18,12 +18,13 @@ and derivative storage zones:
 | Image-gallery derivatives | `/data/media/derivatives/gallery` | storage services | Nginx read-only mount | direct `/media/derivatives/gallery/...` |
 | Uploader derivatives | `/data/media/derivatives/up` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
 
-Every gallery setting contains a relative `storageRoot` such as
-`customers/alice`. Shared galleries and protected uploaders distribute
-originals below that root using the first four hex characters of the SHA-256
-digest. User-backed galleries preserve visible directory names and original
-file names. All thumbnails and previews live in the central derivative root,
-segmented first by `gallery` or `up`, and then by storage kind and gallery root:
+Every gallery setting contains an **Internal storage path** (stored as
+`storageRoot` in code) such as `customers/alice`. Shared galleries and
+protected uploaders distribute originals below that path using the first four
+hex characters of the SHA-256 digest. User-backed galleries preserve visible
+directory names and original file names. All thumbnails and previews live in
+the central derivative root, segmented first by `gallery` or `up`, and then by
+storage kind and the gallery's Internal storage path:
 
 ```text
 public/shared/family/9f/a2/9fa2…c1.jpg
@@ -128,8 +129,8 @@ Recommended host tree:
       user/
     up/
   users/
-    alice/                # gallery storageRoot: alice
-    studio/video-stills/  # gallery storageRoot: studio/video-stills
+    alice/                # Internal storage path (`storageRoot`): alice
+    studio/video-stills/  # Internal storage path (`storageRoot`): studio/video-stills
 ```
 
 Use a dedicated Unix group, set directories to `02770`, and grant the storage
@@ -241,11 +242,11 @@ the deployment under representative media sizes.
 
 ## Mount and operational rules
 
-- Gallery `storageRoot` values are relative and cannot contain `..`, absolute
-  paths, spaces, or shell syntax.
+- Each gallery's Internal storage path (`storageRoot` in code) is relative and
+  cannot contain `..`, absolute paths, spaces, or shell syntax.
 - A single user-backed directory is limited to 500 immediate visible items per
   reconciliation pass, and one requested tree walk is limited to 2,000
-  directories. Split larger collections into separate gallery roots.
+  directories. Split larger collections into separate Internal storage paths.
 - Symlinks are ignored. Mount only the intended user root rather than using
   links to escape into other host paths.
 - User-backed originals are served with revalidation headers because their

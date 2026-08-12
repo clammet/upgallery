@@ -27,7 +27,7 @@ export function normalizeStorageRoot(path: string): string {
     !/^[a-zA-Z0-9/_-]+$/.test(normalized)
   ) {
     throw new Error(
-      "Storage root must be a relative path containing only letters, numbers, /, _ and -.",
+      "Internal storage path must be relative and contain only letters, numbers, /, _ and -.",
     );
   }
   return normalized;
@@ -40,7 +40,9 @@ export function normalizeSlug(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   if (slug.length < 2 || slug.length > 80) {
-    throw new Error("Slug must contain between 2 and 80 URL-safe characters.");
+    throw new Error(
+      "Internal slug must contain between 2 and 80 URL-safe characters.",
+    );
   }
   return slug;
 }

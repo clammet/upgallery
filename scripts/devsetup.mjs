@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -50,8 +51,14 @@ console.log("Installing dependencies...");
 run("pnpm", ["install", "--frozen-lockfile"]);
 
 if (localConfig === null) {
-  console.log("Selecting a project-local Convex deployment...");
-  run("pnpm", ["exec", "convex", "deployment", "select", "local"]);
+  console.log("Creating a project-local Convex deployment...");
+  run(
+    "pnpm",
+    ["exec", "convex", "dev", "--once", "--skip-push"],
+    {
+      env: localConvexEnvironment(null, { anonymousAgent: true }),
+    },
+  );
   localConfig = readLocalConfig();
   if (localConfig === null) {
     fail(
@@ -62,19 +69,45 @@ if (localConfig === null) {
   await assertServicesStopped(localConfig);
 }
 
-const { deploymentName, ports } = validateLocalConfig(localConfig);
-const previousBrowserEnv = readEnvFile(browserEnvPath);
-const previousConvexEnv = readConvexEnvironment();
+const { deploymentKind, deploymentName, ports } =
+  validateLocalConfig(localConfig);
+const convexCommandEnvironment = localConvexEnvironment(
+  `${deploymentKind}:${deploymentName}`,
+);
+ensureLocalSelection({ deploymentKind, deploymentName });
+const previousLocalEnv = readEnvFile(browserEnvPath);
+const previousStorageEnv = readEnvFile(storageEnvPath);
+const previousConvexEnv = readConvexEnvironment(convexCommandEnvironment);
 const googleClientId = firstConfiguredValue(
-  previousBrowserEnv.VITE_GOOGLE_CLIENT_ID,
+  previousLocalEnv.VITE_GOOGLE_CLIENT_ID,
   previousConvexEnv.AUTH_GOOGLE_ID,
   "local-development-client-id",
 );
 const googleClientSecret = firstConfiguredValue(
+  previousLocalEnv.AUTH_GOOGLE_SECRET,
   previousConvexEnv.AUTH_GOOGLE_SECRET,
   "local-development-secret-not-configured",
 );
-const storageSecret = randomBytes(32).toString("hex");
+const siteUrl = firstConfiguredValue(
+  previousLocalEnv.SITE_URL,
+  previousConvexEnv.SITE_URL,
+  "http://localhost:5173",
+);
+const storageSecret =
+  firstConfiguredValue(
+    previousLocalEnv.STORAGE_INTERNAL_SECRET,
+    previousStorageEnv.STORAGE_INTERNAL_SECRET,
+    previousConvexEnv.STORAGE_INTERNAL_SECRET,
+  ) ?? randomBytes(32).toString("hex");
+if (storageSecret.length < 24) {
+  fail("STORAGE_INTERNAL_SECRET in .env.local must be at least 24 characters.");
+}
+const defaultAdminEmail = Object.hasOwn(
+  previousLocalEnv,
+  "DEFAULT_ADMIN_EMAIL",
+)
+  ? firstConfiguredValue(previousLocalEnv.DEFAULT_ADMIN_EMAIL)
+  : firstConfiguredValue(previousConvexEnv.DEFAULT_ADMIN_EMAIL);
 
 console.log("Clearing project-local Convex and storage data...");
 for (const filename of [
@@ -97,8 +130,12 @@ const convexSiteUrl = `http://localhost:${ports.site}`;
 writeEnvironmentFiles({
   convexUrl,
   convexSiteUrl,
+  deploymentKind,
   deploymentName,
+  defaultAdminEmail,
   googleClientId,
+  googleClientSecret,
+  siteUrl,
   storageSecret,
 });
 
@@ -106,20 +143,25 @@ console.log("Configuring the fresh local Convex deployment...");
 const convexEnvironment = {
   AUTH_GOOGLE_ID: googleClientId,
   AUTH_GOOGLE_SECRET: googleClientSecret,
-  SITE_URL: previousConvexEnv.SITE_URL || "http://localhost:5173",
+  SITE_URL: siteUrl,
   STORAGE_INTERNAL_SECRET: storageSecret,
 };
-if (previousConvexEnv.DEFAULT_ADMIN_EMAIL) {
-  convexEnvironment.DEFAULT_ADMIN_EMAIL = previousConvexEnv.DEFAULT_ADMIN_EMAIL;
+if (defaultAdminEmail) {
+  convexEnvironment.DEFAULT_ADMIN_EMAIL = defaultAdminEmail;
 }
-setConvexEnvironment(convexEnvironment);
+setConvexEnvironment(convexEnvironment, convexCommandEnvironment);
 
 console.log("Deploying Convex functions and generating types...");
-run("pnpm", ["exec", "convex", "dev", "--once"]);
+run("pnpm", ["exec", "convex", "dev", "--once"], {
+  env: convexCommandEnvironment,
+});
 
 console.log("\nLocal development environment is blank and ready.");
 console.log("Run: pnpm dev");
-if (googleClientId === "local-development-client-id") {
+if (
+  googleClientId === "local-development-client-id" ||
+  googleClientSecret === "local-development-secret-not-configured"
+) {
   console.log(
     "Google sign-in uses placeholders; configure the OAuth values from README.md when needed.",
   );
@@ -135,15 +177,45 @@ function readLocalConfig() {
 }
 
 function validateLocalConfig(config) {
+  const deploymentKind = config.deploymentName?.startsWith("local-")
+    ? "local"
+    : config.deploymentName?.startsWith("anonymous-")
+      ? "anonymous"
+      : null;
   if (
-    typeof config.deploymentName !== "string" ||
-    !config.deploymentName.startsWith("local-") ||
+    deploymentKind === null ||
     !Number.isInteger(config.ports?.cloud) ||
     !Number.isInteger(config.ports?.site)
   ) {
     fail("The project-local Convex configuration is invalid or is not local.");
   }
-  return config;
+  return { ...config, deploymentKind };
+}
+
+function ensureLocalSelection({ deploymentKind, deploymentName }) {
+  const existing = existsSync(browserEnvPath)
+    ? readFileSync(browserEnvPath, "utf8")
+    : "";
+  const normalized = removeEnvEntries(existing, [
+    "CONVEX_URL",
+    "CONVEX_SITE_URL",
+  ]);
+  const selected = updateEnv(normalized, {
+    CONVEX_DEPLOYMENT: `${deploymentKind}:${deploymentName}`,
+  });
+  writePrivateFile(browserEnvPath, selected);
+}
+
+function localConvexEnvironment(selection, options = {}) {
+  return {
+    ...process.env,
+    CONVEX_AGENT_MODE: options.anonymousAgent ? "anonymous" : "",
+    CONVEX_DEPLOYMENT: selection ?? "",
+    CONVEX_DEPLOY_KEY: "",
+    CONVEX_DEPLOYMENT_TOKEN: "",
+    CONVEX_SELF_HOSTED_URL: "",
+    CONVEX_SELF_HOSTED_ADMIN_KEY: "",
+  };
 }
 
 async function assertServicesStopped(config) {
@@ -176,13 +248,14 @@ async function respondsOn(port) {
   });
 }
 
-function readConvexEnvironment() {
+function readConvexEnvironment(env) {
   const result = spawnSync(
     "pnpm",
-    ["exec", "convex", "env", "--deployment", "local", "list"],
+    ["exec", "convex", "env", "list"],
     {
       cwd: projectRoot,
       encoding: "utf8",
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -190,7 +263,7 @@ function readConvexEnvironment() {
   return parseEnv(result.stdout);
 }
 
-function setConvexEnvironment(values) {
+function setConvexEnvironment(values, env) {
   const temporaryDir = mkdtempSync(join(tmpdir(), "upgallery-devsetup-"));
   const temporaryEnv = join(temporaryDir, "convex.env");
   try {
@@ -201,17 +274,19 @@ function setConvexEnvironment(values) {
         .join("\n") + "\n",
       { mode: 0o600 },
     );
-    run("pnpm", [
-      "exec",
-      "convex",
-      "env",
-      "--deployment",
-      "local",
-      "set",
-      "--from-file",
-      temporaryEnv,
-      "--force",
-    ]);
+    run(
+      "pnpm",
+      [
+        "exec",
+        "convex",
+        "env",
+        "set",
+        "--from-file",
+        temporaryEnv,
+        "--force",
+      ],
+      { env },
+    );
   } finally {
     rmSync(temporaryDir, { force: true, recursive: true });
   }
@@ -220,21 +295,27 @@ function setConvexEnvironment(values) {
 function writeEnvironmentFiles({
   convexUrl,
   convexSiteUrl,
+  deploymentKind,
   deploymentName,
+  defaultAdminEmail,
   googleClientId,
+  googleClientSecret,
+  siteUrl,
   storageSecret,
 }) {
   const browserTemplate = readFileSync(join(projectRoot, ".env.example"), "utf8");
   const browserEnv = updateEnv(browserTemplate, {
-    CONVEX_DEPLOYMENT: `local:${deploymentName}`,
-    CONVEX_URL: convexUrl,
-    CONVEX_SITE_URL: convexSiteUrl.replace("localhost", "127.0.0.1"),
+    CONVEX_DEPLOYMENT: `${deploymentKind}:${deploymentName}`,
     VITE_CONVEX_URL: convexUrl.replace("127.0.0.1", "localhost"),
     VITE_CONVEX_SITE_URL: convexSiteUrl,
     VITE_GOOGLE_CLIENT_ID: googleClientId,
     VITE_STORAGE_API_URL: "",
+    AUTH_GOOGLE_SECRET: googleClientSecret,
+    DEFAULT_ADMIN_EMAIL: defaultAdminEmail ?? "",
+    SITE_URL: siteUrl,
+    STORAGE_INTERNAL_SECRET: storageSecret,
   });
-  writeFileSync(browserEnvPath, browserEnv, { mode: 0o600 });
+  writePrivateFile(browserEnvPath, browserEnv);
 
   const storageTemplate = readFileSync(
     join(projectRoot, ".env.storage.example"),
@@ -245,7 +326,7 @@ function writeEnvironmentFiles({
     STORAGE_INTERNAL_SECRET: storageSecret,
     STORAGE_ROOT: ".storage",
   });
-  writeFileSync(storageEnvPath, storageEnv, { mode: 0o600 });
+  writePrivateFile(storageEnvPath, storageEnv);
 }
 
 function updateEnv(template, values) {
@@ -255,10 +336,32 @@ function updateEnv(template, values) {
     if (!match || !remaining.has(match[1])) return line;
     const value = remaining.get(match[1]);
     remaining.delete(match[1]);
-    return `${match[1]}=${value}`;
+    return `${match[1]}=${formatEnvValue(value)}`;
   });
-  const additions = [...remaining].map(([name, value]) => `${name}=${value}`);
+  const additions = [...remaining].map(
+    ([name, value]) => `${name}=${formatEnvValue(value)}`,
+  );
   return [...additions, ...lines].join("\n").replace(/\n*$/, "\n");
+}
+
+function removeEnvEntries(content, names) {
+  const namesToRemove = new Set(names);
+  return content
+    .split(/\r?\n/)
+    .filter((line) => {
+      const match = line.match(/^([A-Z][A-Z0-9_]*)=/);
+      return !match || !namesToRemove.has(match[1]);
+    })
+    .join("\n");
+}
+
+function formatEnvValue(value) {
+  return /^[A-Za-z0-9_./:@-]*$/.test(value) ? value : JSON.stringify(value);
+}
+
+function writePrivateFile(path, content) {
+  writeFileSync(path, content, { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 function readEnvFile(path) {
@@ -291,13 +394,15 @@ function firstConfiguredValue(...values) {
       typeof value === "string" &&
       value.length > 0 &&
       !value.startsWith("your-") &&
+      !value.startsWith("replace-") &&
       !value.startsWith("<"),
   );
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: projectRoot,
+    env: options.env ?? process.env,
     stdio: "inherit",
   });
   if (result.error) fail(result.error.message);

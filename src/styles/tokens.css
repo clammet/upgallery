@@ -1,6 +1,7 @@
 :root {
   color-scheme: light;
   --gallery-accent: #126b5a;
+  --gallery-secondary: #d3a04b;
   --gallery-bg: #f3f5f1;
   --gallery-fg: #17201d;
   --gallery-surface: #ffffff;

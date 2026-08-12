@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { AuthControls } from "./AuthControls";
+import { THEME_MODE_DEFAULTS } from "../lib/theme";
 import styles from "../styles/layout.module.css";
 
 type Props = {
@@ -13,18 +14,25 @@ type Props = {
 
 export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
   const theme = gallery?.theme;
+  const mode = theme?.mode ?? "light";
+  const modeDefaults = THEME_MODE_DEFAULTS[mode];
   const style = {
-    "--gallery-accent": theme?.accent,
-    "--gallery-bg": theme?.background,
-    "--gallery-fg": theme?.foreground,
-    "--gallery-surface": theme?.surface,
-    "--gallery-muted": theme?.muted,
+    "--gallery-accent": gallery ? theme?.accent ?? modeDefaults.accent : undefined,
+    "--gallery-secondary": gallery
+      ? theme?.secondary ?? modeDefaults.secondary
+      : undefined,
+    "--gallery-bg": gallery ? theme?.background ?? modeDefaults.background : undefined,
+    "--gallery-fg": gallery ? theme?.foreground ?? modeDefaults.foreground : undefined,
+    "--gallery-surface": gallery ? theme?.surface ?? modeDefaults.surface : undefined,
+    "--gallery-muted": gallery ? theme?.muted ?? modeDefaults.muted : undefined,
+    "--shadow": gallery ? modeDefaults.shadow : undefined,
     "--gallery-radius": theme?.radius === undefined ? undefined : `${theme.radius}px`,
     "--gallery-gap": theme?.density === "comfortable" ? "1rem" : "0.5rem",
     "--thumbnail-frame-size":
       theme?.thumbnailFrameSize === undefined
         ? undefined
         : `${theme.thumbnailFrameSize}px`,
+    colorScheme: gallery ? mode : undefined,
   } as CSSProperties;
   return (
     <div

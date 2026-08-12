@@ -3,7 +3,7 @@
 .folderCard { align-content: start; display: grid; gap: .3rem; justify-items: stretch; padding: .45rem; }
 .folderCard:hover, .fileCard:hover { border-color: var(--gallery-accent); }
 .folderPreviewFrame { aspect-ratio: 4 / 3; display: block; isolation: isolate; position: relative; width: 100%; }
-.folderBackdrop { color: #d3a04b; fill: currentColor; filter: drop-shadow(0 4px 4px rgb(64 44 14 / 24%)); height: 112%; left: -8%; position: absolute; stroke: #9d6d29; top: -2%; width: 116%; z-index: 0; }
+.folderBackdrop { color: var(--gallery-secondary); fill: currentColor; filter: drop-shadow(0 4px 4px rgb(64 44 14 / 24%)); height: 112%; left: -8%; position: absolute; stroke: color-mix(in srgb, var(--gallery-secondary) 72%, black); top: -2%; width: 116%; z-index: 0; }
 .folderPreviewSingle, .folderPreviewCard { background: color-mix(in srgb, var(--gallery-surface) 92%, #fff); border: 2px solid color-mix(in srgb, var(--gallery-surface) 92%, #fff); box-shadow: 0 4px 9px rgb(45 31 13 / 25%); object-fit: cover; position: absolute; transition: box-shadow 130ms ease, transform 130ms ease; }
 .folderPreviewSingle { height: 66%; left: 17%; top: 13%; transform: rotate(-1.5deg); width: 66%; z-index: 2; }
 .folderPreviewCard { height: 64%; top: 12%; width: 58%; }
@@ -20,7 +20,7 @@
 .fileCardContent small { color: var(--gallery-muted); }
 .thumbnailFrame { display: block; position: relative; width: 100%; }
 .fileThumb { aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-fg) 6%, transparent); border-radius: calc(var(--gallery-radius) - 1px); display: block; object-fit: cover; width: 100%; }
-.fileGlyph { align-items: center; aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: calc(var(--gallery-radius) - 1px); color: var(--gallery-accent); display: flex; font-size: 1.3rem; font-weight: 800; justify-content: center; letter-spacing: -.04em; width: 100%; }
+.fileGlyph { align-items: center; aspect-ratio: 4 / 3; background: color-mix(in srgb, var(--gallery-secondary) 10%, var(--gallery-bg)); border-radius: calc(var(--gallery-radius) - 1px); color: var(--gallery-accent); display: flex; font-size: 1.3rem; font-weight: 800; justify-content: center; letter-spacing: -.04em; width: 100%; }
 .miniGlyph { width: 64px; }
 .fileName { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activeAction { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); border-color: var(--gallery-accent); color: var(--gallery-accent); }

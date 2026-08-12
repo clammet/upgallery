@@ -43,7 +43,9 @@ export default defineSchema({
     totalBytes: v.number(),
     pendingMigrationId: v.optional(v.id("storageMigrations")),
     deletedAt: v.optional(v.number()),
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_storageRoot", ["storageRoot"]),
 
   galleryHosts: defineTable({
     galleryId: v.id("galleries"),
