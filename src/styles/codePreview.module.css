@@ -1,0 +1,150 @@
+.shell {
+  background: var(--gallery-surface);
+  color: var(--gallery-fg);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.shellWithNotice {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.themeLight {
+  --syntax-comment: #6e7781;
+  --syntax-keyword: #cf222e;
+  --syntax-literal: #0550ae;
+  --syntax-string: #0a3069;
+  --syntax-title: #8250df;
+  --syntax-attribute: #953800;
+  --syntax-meta: #116329;
+  --syntax-deletion: #82071e;
+  --syntax-deletion-bg: #ffebe9;
+  --syntax-addition: #116329;
+  --syntax-addition-bg: #dafbe1;
+}
+
+.themeDark {
+  --syntax-comment: #8b949e;
+  --syntax-keyword: #ff7b72;
+  --syntax-literal: #79c0ff;
+  --syntax-string: #a5d6ff;
+  --syntax-title: #d2a8ff;
+  --syntax-attribute: #ffa657;
+  --syntax-meta: #7ee787;
+  --syntax-deletion: #ffdcd7;
+  --syntax-deletion-bg: #67060c;
+  --syntax-addition: #aff5b4;
+  --syntax-addition-bg: #033a16;
+}
+
+.preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  tab-size: 4;
+  user-select: text;
+  white-space: pre;
+}
+
+.code {
+  background: transparent;
+  color: inherit;
+  display: block;
+  min-width: max-content;
+  padding: 0;
+}
+
+.notice,
+.status {
+  color: var(--gallery-muted);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.76rem;
+  margin: 0;
+  text-align: center;
+  white-space: normal;
+}
+
+.notice {
+  border-bottom: 1px solid color-mix(in srgb, var(--gallery-fg) 12%, transparent);
+  padding: 0.45rem 1rem;
+}
+
+.status {
+  margin: 20vh auto 0;
+  max-width: 34rem;
+}
+
+.code :global(.hljs-comment),
+.code :global(.hljs-quote) {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+.code :global(.hljs-keyword),
+.code :global(.hljs-selector-tag),
+.code :global(.hljs-subst) {
+  color: var(--syntax-keyword);
+}
+
+.code :global(.hljs-number),
+.code :global(.hljs-literal),
+.code :global(.hljs-variable),
+.code :global(.hljs-template-variable),
+.code :global(.hljs-tag .hljs-attr) {
+  color: var(--syntax-literal);
+}
+
+.code :global(.hljs-string),
+.code :global(.hljs-doctag),
+.code :global(.hljs-regexp) {
+  color: var(--syntax-string);
+}
+
+.code :global(.hljs-title),
+.code :global(.hljs-section),
+.code :global(.hljs-selector-id),
+.code :global(.hljs-selector-class) {
+  color: var(--syntax-title);
+  font-weight: 600;
+}
+
+.code :global(.hljs-type),
+.code :global(.hljs-class .hljs-title),
+.code :global(.hljs-attribute),
+.code :global(.hljs-name) {
+  color: var(--syntax-attribute);
+}
+
+.code :global(.hljs-symbol),
+.code :global(.hljs-bullet),
+.code :global(.hljs-link),
+.code :global(.hljs-meta),
+.code :global(.hljs-built_in),
+.code :global(.hljs-builtin-name) {
+  color: var(--syntax-meta);
+}
+
+.code :global(.hljs-deletion) {
+  background: var(--syntax-deletion-bg);
+  color: var(--syntax-deletion);
+}
+
+.code :global(.hljs-addition) {
+  background: var(--syntax-addition-bg);
+  color: var(--syntax-addition);
+}
+
+.code :global(.hljs-emphasis) {
+  font-style: italic;
+}
+
+.code :global(.hljs-strong) {
+  font-weight: 700;
+}

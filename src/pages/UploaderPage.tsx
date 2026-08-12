@@ -425,6 +425,7 @@ export function UploaderPage(props: {
         <MediaViewer
           items={viewerItems}
           initialIndex={viewerIndex}
+          themeMode={props.gallery.theme.mode ?? "light"}
           onMarkdownModeChange={changeViewerMarkdownMode}
           resolveSource={resolveViewerSource}
           onClose={() => setViewerEntryId(null)}

@@ -26,6 +26,8 @@ import {
   shouldRenderAsPlainText,
   shouldRenderTextAsMarkdown,
 } from "../lib/media";
+import { shouldRenderAsCode } from "../lib/codeLanguages";
+import type { ThemeMode } from "../lib/theme";
 import {
   metadataLocation,
   metadataRows,
@@ -37,6 +39,7 @@ import styles from "../styles/viewer.module.css";
 
 const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 const PlainTextPreview = lazy(() => import("./PlainTextPreview"));
+const CodePreview = lazy(() => import("./CodePreview"));
 
 export type MediaViewerItem = {
   id: string;
@@ -199,6 +202,7 @@ export function shouldOpenMediaViewer(event: {
 export function MediaViewer(props: {
   items: MediaViewerItem[];
   initialIndex: number;
+  themeMode: ThemeMode;
   onClose: () => void;
   resolveSource?: (
     item: MediaViewerItem,
@@ -285,8 +289,11 @@ export function MediaViewer(props: {
   const rendersPlainText =
     activeItem !== undefined &&
     shouldRenderAsPlainText(activeItem.mediaKind, activeItem.title);
+  const rendersCode =
+    activeItem !== undefined &&
+    shouldRenderAsCode(activeItem.title, activeItem.mimeType);
   const showsTextPreview =
-    sourceUrl !== null && (rendersMarkdown || rendersPlainText);
+    sourceUrl !== null && (rendersMarkdown || rendersPlainText || rendersCode);
   const canChangeMarkdown =
     activeItem?.canToggleMarkdown === true &&
     props.onMarkdownModeChange !== undefined;
@@ -996,6 +1003,21 @@ export function MediaViewer(props: {
                   Open in a new tab
                 </a>
               </div>
+            ) : sourceUrl !== null && rendersCode ? (
+              <Suspense
+                fallback={
+                  <div className={styles.status} role="status">
+                    <p>Preparing syntax highlighter…</p>
+                  </div>
+                }
+              >
+                <CodePreview
+                  fileName={activeItem.title}
+                  mimeType={activeItem.mimeType}
+                  sourceUrl={sourceUrl}
+                  themeMode={props.themeMode}
+                />
+              </Suspense>
             ) : sourceUrl !== null && activeItem.mediaKind === "image" ? (
               <img
                 className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}

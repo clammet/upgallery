@@ -8,6 +8,10 @@ import {
   shouldRenderTextAsMarkdown,
   shouldUseNativeHeifPreview,
 } from "../src/lib/media";
+import {
+  codeLanguageForFile,
+  shouldRenderAsCode,
+} from "../src/lib/codeLanguages";
 
 describe("HEIF image detection", () => {
   test("recognizes HEIC and HEIF MIME types", () => {
@@ -68,5 +72,28 @@ describe("Markdown text preview detection", () => {
       "guide.txt",
     );
     expect(fileNameWithMarkdownMode("notes.csv", true)).toBe("notes.csv");
+  });
+});
+
+describe("code preview detection", () => {
+  test("maps source extensions to syntax highlighter languages", () => {
+    expect(
+      codeLanguageForFile("component.TSX", "application/octet-stream"),
+    ).toBe("typescript");
+    expect(codeLanguageForFile("script.py", "text/plain")).toBe("python");
+    expect(codeLanguageForFile("Makefile", "text/plain")).toBe("makefile");
+    expect(codeLanguageForFile("styles.scss", "text/x-scss")).toBe("scss");
+  });
+
+  test("uses code MIME types when a filename has no useful extension", () => {
+    expect(codeLanguageForFile("payload", "application/ld+json")).toBe("json");
+    expect(codeLanguageForFile("feed", "application/atom+xml")).toBe("xml");
+    expect(shouldRenderAsCode("program", "text/javascript")).toBe(true);
+  });
+
+  test("does not replace the dedicated Markdown and plain-text previews", () => {
+    expect(shouldRenderAsCode("README.md", "text/markdown")).toBe(false);
+    expect(shouldRenderAsCode("notes.txt", "text/plain")).toBe(false);
+    expect(shouldRenderAsCode("README.md", "application/json")).toBe(false);
   });
 });

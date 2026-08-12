@@ -7,6 +7,7 @@ import plaintextThumbnailUrl from "../assets/file-type-icons/plaintext.png";
 import playlistThumbnailUrl from "../assets/file-type-icons/playlist.png";
 import unknownThumbnailUrl from "../assets/file-type-icons/unknown.png";
 import videoThumbnailUrl from "../assets/file-type-icons/video.png";
+import { codeFileExtensions } from "./codeLanguages";
 
 export type FileTypeIconDefinition = {
   icon: string;
@@ -43,37 +44,7 @@ const defaultFileTypeIconGroups: Array<
     thumbnailUrl: audioThumbnailUrl,
   },
   {
-    extensions: [
-      "c",
-      "cc",
-      "cpp",
-      "cs",
-      "css",
-      "go",
-      "h",
-      "hpp",
-      "htm",
-      "html",
-      "java",
-      "js",
-      "json",
-      "jsx",
-      "kt",
-      "lua",
-      "php",
-      "pl",
-      "py",
-      "rb",
-      "rs",
-      "sh",
-      "sql",
-      "swift",
-      "ts",
-      "tsx",
-      "xml",
-      "yaml",
-      "yml",
-    ],
+    extensions: codeFileExtensions,
     icon: "CODE",
     label: "Source code",
     thumbnailUrl: codeThumbnailUrl,

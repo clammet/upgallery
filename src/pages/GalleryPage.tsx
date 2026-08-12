@@ -576,6 +576,7 @@ export function GalleryPage(props: {
         <MediaViewer
           items={viewerItems}
           initialIndex={viewerIndex}
+          themeMode={props.gallery.theme.mode ?? "light"}
           onActiveItemChange={(item) => setViewerEntry(item.id, true)}
           onCopyLink={copyViewerLink}
           onTitleChange={
