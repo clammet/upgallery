@@ -68,8 +68,9 @@ export function GalleryPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
 }) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedFolder = searchParams.get("folder");
+  const viewerEntryId = searchParams.get("item");
   const folderId = (requestedFolder ?? props.rootFolder._id) as Id<"folders">;
   const [previewSeed] = useState(() => {
     const values = crypto.getRandomValues(new Uint32Array(1));
@@ -88,6 +89,7 @@ export function GalleryPage(props: {
   const requestPreview = useMutation(api.entries.requestPreview);
   const removeLocationData = useMutation(api.entries.removeLocationData);
   const refreshMetadata = useMutation(api.entries.refreshMetadata);
+  const renameEntry = useMutation(api.entries.rename);
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
   const { upload, uploading, error } = useUpload();
@@ -104,7 +106,6 @@ export function GalleryPage(props: {
   const [moveDialog, setMoveDialog] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [draggingEntries, setDraggingEntries] = useState(false);
-  const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
   const [metadataEntryId, setMetadataEntryId] =
     useState<Id<"entries"> | null>(null);
 
@@ -135,6 +136,7 @@ export function GalleryPage(props: {
           previewReady:
             !heif || nativeHeifPreview || entry.previewKey !== undefined,
           previewError: nativeHeifPreview ? undefined : entry.previewError,
+          metadataJson: entry.metadataJson,
         };
       }),
     [listing?.entries],
@@ -156,6 +158,36 @@ export function GalleryPage(props: {
     viewerEntryId === null
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
+  const setViewerEntry = useCallback(
+    (entryId: string | null, replace: boolean) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (entryId === null) next.delete("item");
+          else next.set("item", entryId);
+          return next;
+        },
+        { replace },
+      );
+    },
+    [setSearchParams],
+  );
+  const copyViewerLink = useCallback(async (item: MediaViewerItem) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("item", item.id);
+    await copyTextToClipboard(url.toString());
+  }, []);
+  const changeViewerTitle = useCallback(
+    async (item: MediaViewerItem, title: string) => {
+      const result = await renameEntry({
+        galleryId: props.gallery._id,
+        entryId: item.id as Id<"entries">,
+        name: title,
+      });
+      await completeFilesystemOperation(result);
+    },
+    [props.gallery._id, renameEntry],
+  );
   const folderPreviews = useMemo(
     () =>
       new Map(
@@ -170,6 +202,12 @@ export function GalleryPage(props: {
     metadataEntryId === null
       ? undefined
       : listing?.entries.find((entry) => entry._id === metadataEntryId);
+
+  useEffect(() => {
+    if (listing !== undefined && viewerEntryId !== null && viewerIndex < 0) {
+      setViewerEntry(null, true);
+    }
+  }, [listing, setViewerEntry, viewerEntryId, viewerIndex]);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -499,7 +537,7 @@ export function GalleryPage(props: {
             entry={entry}
             selectMode={selectMode}
             selected={selectedEntryIds.has(entry._id)}
-            onOpen={() => setViewerEntryId(entry._id)}
+            onOpen={() => setViewerEntry(entry._id, false)}
             onMetadata={() => setMetadataEntryId(entry._id)}
             onToggle={() => {
               setSelectedEntryIds((current) => {
@@ -538,8 +576,13 @@ export function GalleryPage(props: {
         <MediaViewer
           items={viewerItems}
           initialIndex={viewerIndex}
+          onActiveItemChange={(item) => setViewerEntry(item.id, true)}
+          onCopyLink={copyViewerLink}
+          onTitleChange={
+            listing.access.canEditFolder ? changeViewerTitle : undefined
+          }
           resolveSource={resolveViewerSource}
-          onClose={() => setViewerEntryId(null)}
+          onClose={() => setViewerEntry(null, true)}
         />
       ) : null}
       {metadataEntry?.metadataJson ? (
@@ -575,7 +618,7 @@ export function GalleryPage(props: {
               privacy,
               ...(previewMode === undefined ? {} : { previewMode }),
             });
-            await completeFilesystemFolderOperation(result);
+            await completeFilesystemOperation(result);
             setFolderDialog(null);
             setNotice("Folder created");
           }}
@@ -595,7 +638,7 @@ export function GalleryPage(props: {
               privacy,
               ...(previewMode === undefined ? {} : { previewMode }),
             });
-            await completeFilesystemFolderOperation(result);
+            await completeFilesystemOperation(result);
             setFolderDialog(null);
             setNotice("Folder updated");
           }}
@@ -1194,7 +1237,7 @@ function FilesystemSyncIndicator(props: {
   return null;
 }
 
-async function completeFilesystemFolderOperation(result: {
+async function completeFilesystemOperation(result: {
   kind: "complete" | "filesystem";
   operationId?: Id<"filesystemOperations">;
   token?: string;
@@ -1222,9 +1265,30 @@ async function completeFilesystemFolderOperation(result: {
       "error" in body &&
       typeof body.error === "string"
         ? body.error
-        : "Filesystem folder operation failed";
+        : "Filesystem operation failed";
     throw new Error(message);
   }
+}
+
+async function copyTextToClipboard(value: string) {
+  if (navigator.clipboard !== undefined) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fall through for browsers that expose the API but deny it here.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard access is not available");
 }
 
 function FolderForm(props: {

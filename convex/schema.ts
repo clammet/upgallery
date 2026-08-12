@@ -108,6 +108,7 @@ export default defineSchema({
     unlisted: v.optional(v.boolean()),
     state: entryState,
     moveJobId: v.optional(v.id("entryMoveJobs")),
+    filesystemOperationId: v.optional(v.id("filesystemOperations")),
     migrationState: v.optional(
       v.union(v.literal("moving"), v.literal("failed")),
     ),
@@ -129,6 +130,11 @@ export default defineSchema({
       ["folderId", "state", "mediaKind", "moveJobId", "sha256"],
     )
     .index("by_galleryId_and_state", ["galleryId", "state"])
+    .index("by_state_and_mediaKind_and_metadataVersion", [
+      "state",
+      "mediaKind",
+      "metadataVersion",
+    ])
     .index("by_galleryId_and_storageKind", ["galleryId", "storageKind"])
     .index("by_galleryId_and_storageKind_and_state", [
       "galleryId",
@@ -158,8 +164,13 @@ export default defineSchema({
     galleryId: v.id("galleries"),
     parentId: v.id("folders"),
     folderId: v.optional(v.id("folders")),
+    entryId: v.optional(v.id("entries")),
     actorProfileId: v.id("profiles"),
-    kind: v.union(v.literal("mkdir"), v.literal("rename")),
+    kind: v.union(
+      v.literal("mkdir"),
+      v.literal("rename"),
+      v.literal("fileRename"),
+    ),
     name: v.string(),
     privacy,
     previewMode: v.optional(folderPreviewMode),

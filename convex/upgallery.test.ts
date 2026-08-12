@@ -967,6 +967,163 @@ describe("upgallery backend", () => {
     });
   });
 
+  test("gallery editors can rename files and viewers cannot", async () => {
+    const t = setupTest();
+    const owner = await seedProfile(t, {
+      email: "owner@example.com",
+      admin: true,
+    });
+    const editor = await seedProfile(t, { email: "editor@example.com" });
+    const viewer = await seedProfile(t, { email: "viewer@example.com" });
+    const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+    const editorClient = asUser(t, editor.googleSubject, "editor@example.com");
+    const viewerClient = asUser(t, viewer.googleSubject, "viewer@example.com");
+    const galleryId = await ownerClient.mutation(api.galleries.create, {
+      name: "Rename gallery",
+      slug: "rename-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "rename-gallery",
+      hosts: [{ host: "rename.example.com", rootPath: "/" }],
+    });
+    const { entryId, rootFolderId } = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      const rootFolderId = gallery!.rootFolderId!;
+      await ctx.db.insert("galleryRoles", {
+        galleryId,
+        profileId: editor.profileId,
+        role: "editor",
+      });
+      const entryId = await ctx.db.insert("entries", {
+        galleryId,
+        folderId: rootFolderId,
+        ownerProfileId: owner.profileId,
+        name: "original.jpg",
+        mimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 12,
+        sha256: "a".repeat(64),
+        storageKind: "shared",
+        storageKey: "public/shared/rename-gallery/aa/aa/original.jpg",
+        state: "ready",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { entryId, rootFolderId };
+    });
+
+    await expect(
+      viewerClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId,
+        name: "not-allowed.jpg",
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      editorClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId,
+        name: "final.PNG",
+      }),
+    ).resolves.toMatchObject({ kind: "complete", name: "final.PNG" });
+    await expect(
+      t.run(async (ctx) => ctx.db.get("entries", entryId)),
+    ).resolves.toMatchObject({
+      folderId: rootFolderId,
+      name: "final.PNG",
+      extension: "png",
+    });
+  });
+
+  test("user-backed file renames commit after the filesystem operation", async () => {
+    const t = setupTest();
+    const owner = await seedProfile(t, {
+      email: "owner@example.com",
+      admin: true,
+    });
+    const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+    const galleryId = await ownerClient.mutation(api.galleries.create, {
+      name: "Filesystem rename",
+      slug: "filesystem-rename",
+      kind: "image",
+      storageKind: "user",
+      storageRoot: "studio",
+      hosts: [{ host: "files.example.com", rootPath: "/" }],
+    });
+    const entryId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      return await ctx.db.insert("entries", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        ownerProfileId: owner.profileId,
+        name: "portrait.jpg",
+        mimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image",
+        size: 12,
+        sha256: "b".repeat(64),
+        storageKind: "user",
+        storageKey: "public/users/studio/portrait.jpg",
+        filesystemModifiedAt: 10,
+        filesystemIdentity: "2:20",
+        state: "ready",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    const result = await ownerClient.mutation(api.entries.rename, {
+      galleryId,
+      entryId,
+      name: "finished.jpg",
+    });
+    expect(result.kind).toBe("filesystem");
+    if (result.kind !== "filesystem") {
+      throw new Error("Expected a filesystem operation");
+    }
+    const claim = await t.mutation(
+      internal.filesystemSync.claimFilesystemOperation,
+      { operationId: result.operationId, token: result.token },
+    );
+    expect(claim).toMatchObject({
+      kind: "fileRename",
+      sourceSegments: ["portrait.jpg"],
+      destinationSegments: ["finished.jpg"],
+    });
+    await expect(
+      t.run(async (ctx) => ctx.db.get("entries", entryId)),
+    ).resolves.toMatchObject({
+      filesystemOperationId: result.operationId,
+      migrationState: "moving",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("filesystemOperations", result.operationId, {
+        leaseExpiresAt: 0,
+      });
+    });
+    await expect(
+      t.mutation(internal.filesystemSync.claimRecoverableFilesystemOperation, {}),
+    ).resolves.toMatchObject({
+      kind: "ready",
+      operation: { operationId: result.operationId, kind: "fileRename" },
+    });
+    await t.mutation(internal.filesystemSync.completeFilesystemOperation, {
+      operationId: result.operationId,
+      identity: "2:20",
+      modifiedAt: 20,
+    });
+    const renamed = await t.run(async (ctx) => ctx.db.get("entries", entryId));
+    expect(renamed).toMatchObject({
+      name: "finished.jpg",
+      storageKey: "public/users/studio/finished.jpg",
+      filesystemModifiedAt: 20,
+      filesystemIdentity: "2:20",
+    });
+    expect(renamed?.filesystemOperationId).toBeUndefined();
+    expect(renamed?.migrationState).toBeUndefined();
+  });
+
   test("image upload completion queues durable media processing", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
@@ -1035,6 +1192,170 @@ describe("upgallery backend", () => {
     expect(completed.entry?.thumbnailKey).toContain(".thumb.jpg");
     expect(completed.entry?.metadataJson).toBe('{"Make":"Test"}');
     expect(completed.jobs).toHaveLength(0);
+  });
+
+  test("audio uploads queue metadata processing without a thumbnail", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Audio metadata",
+      slug: "audio-metadata",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "audio-metadata",
+      hosts: [{ host: "audio.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const intent = await authed.mutation(api.entries.createUploadIntent, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      name: "recording.wav",
+      mimeType: "audio/x-wav",
+      size: 27445868,
+    });
+    await t.mutation(internal.storageGateway.claimUpload, intent);
+    const sha256 = "d".repeat(64);
+    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+      intentId: intent.intentId,
+      actualMimeType: "audio/x-wav",
+      extension: "wav",
+      mediaKind: "audio",
+      size: 27445868,
+      sha256,
+      storageKey: `public/shared/audio-metadata/dd/dd/${sha256}.wav`,
+    });
+
+    const claim = await t.mutation(
+      internal.storageJobs.claimMediaProcessing,
+      {},
+    );
+    expect(claim).toMatchObject({
+      kind: "ready",
+      entryId,
+      mediaKind: "audio",
+      processThumbnail: false,
+      processMetadata: true,
+    });
+    if (claim.kind !== "ready") throw new Error("Expected audio media work");
+
+    const metadataJson = JSON.stringify({
+      AudioCodec: "PCM signed 16-bit little-endian",
+      SampleRate: 44100,
+      Channels: 2,
+      BitDepth: 16,
+      Duration: 155.588571,
+      BitRate: 1411202,
+    });
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: claim.jobId,
+      metadataJson,
+      metadataProcessed: true,
+    });
+
+    await expect(
+      t.run(async (ctx) => ctx.db.get("entries", entryId)),
+    ).resolves.toMatchObject({ metadataJson, metadataVersion: 3 });
+  });
+
+  test("existing audio without metadata is picked up for backfill", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Audio backfill",
+      slug: "audio-backfill",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "audio-backfill",
+      hosts: [{ host: "backfill.example.com", rootPath: "/" }],
+    });
+    const entryId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      return await ctx.db.insert("entries", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        ownerProfileId: admin.profileId,
+        name: "existing.wav",
+        mimeType: "audio/x-wav",
+        extension: "wav",
+        mediaKind: "audio",
+        size: 1234,
+        sha256: "e".repeat(64),
+        storageKind: "shared",
+        storageKey: `public/shared/audio-backfill/ee/ee/${"e".repeat(64)}.wav`,
+        state: "ready",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    await expect(
+      t.mutation(internal.storageJobs.claimMediaProcessing, {}),
+    ).resolves.toMatchObject({
+      kind: "ready",
+      entryId,
+      mediaKind: "audio",
+      processThumbnail: false,
+      processMetadata: true,
+    });
+  });
+
+  test("existing video is picked up when A/V metadata fields change", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Video backfill",
+      slug: "video-backfill",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "video-backfill",
+      hosts: [{ host: "video-backfill.example.com", rootPath: "/" }],
+    });
+    const entryId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      return await ctx.db.insert("entries", {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        ownerProfileId: admin.profileId,
+        name: "existing.mp4",
+        mimeType: "video/mp4",
+        extension: "mp4",
+        mediaKind: "video",
+        size: 4321,
+        sha256: "f".repeat(64),
+        storageKind: "shared",
+        storageKey: `public/shared/video-backfill/ff/ff/${"f".repeat(64)}.mp4`,
+        thumbnailKey: `derivatives/gallery/shared/video-backfill/thumbnails/ff/ff/${"f".repeat(64)}.thumb.jpg`,
+        metadataJson: '{"Duration":5}',
+        metadataVersion: 2,
+        state: "ready",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    await expect(
+      t.mutation(internal.storageJobs.claimMediaProcessing, {}),
+    ).resolves.toMatchObject({
+      kind: "ready",
+      entryId,
+      mediaKind: "video",
+      processThumbnail: false,
+      processMetadata: true,
+    });
   });
 
   test("owners can queue location removal and commit the rewritten image", async () => {

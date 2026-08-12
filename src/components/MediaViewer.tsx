@@ -12,12 +12,26 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Info,
+  Link2,
+  X,
+} from "lucide-react";
 import { friendlyError } from "../lib/errors";
 import {
   shouldRenderAsPlainText,
   shouldRenderTextAsMarkdown,
 } from "../lib/media";
+import {
+  metadataLocation,
+  metadataRows,
+  openStreetMapUrls,
+  parseMetadataJson,
+} from "../lib/metadata";
 import { MarkdownToggle } from "./MarkdownToggle";
 import styles from "../styles/viewer.module.css";
 
@@ -42,6 +56,7 @@ export type MediaViewerItem = {
   canToggleMarkdown?: boolean;
   previewReady?: boolean;
   previewError?: string;
+  metadataJson?: string;
 };
 
 type NaturalSize = {
@@ -65,6 +80,9 @@ type PointerGesture = {
 };
 
 const ZOOM_EPSILON = 0.002;
+const INFO_COLUMN_WIDTH = 320;
+const MIN_PREVIEW_WIDTH = 96;
+const VIEWER_BORDER_WIDTH = 2;
 
 function viewportSize() {
   return {
@@ -73,14 +91,32 @@ function viewportSize() {
   };
 }
 
-function viewerGeometry(
+export function mediaViewerGeometry(
   naturalSize: NaturalSize | null,
   mediaKind: MediaViewerItem["mediaKind"],
   viewport: ReturnType<typeof viewportSize>,
   scale: number,
+  infoOpen: boolean,
+  infoContentHeight: number,
 ) {
-  const maxWidth = Math.max(240, viewport.width - 32);
+  const maxViewerWidth = Math.max(
+    MIN_PREVIEW_WIDTH + VIEWER_BORDER_WIDTH,
+    viewport.width - 32,
+  );
+  const maxViewerContentWidth = maxViewerWidth - VIEWER_BORDER_WIDTH;
   const maxHeight = Math.max(160, viewport.height - 96);
+  const infoWidth = infoOpen
+    ? Math.min(
+        INFO_COLUMN_WIDTH,
+        Math.max(0, maxViewerContentWidth - MIN_PREVIEW_WIDTH),
+      )
+    : 0;
+  const maxWidth = Math.max(
+    Math.min(MIN_PREVIEW_WIDTH, maxViewerContentWidth),
+    maxViewerContentWidth - infoWidth,
+  );
+
+  let preview: { width: number; height: number; fitScale: number };
 
   if (naturalSize !== null) {
     const fitScale = Math.min(
@@ -97,25 +133,32 @@ function viewerGeometry(
       maxHeight,
       Math.max(Math.min(160, maxHeight), naturalSize.height * visibleScale),
     );
-    return {
+    preview = {
       width,
       height,
       fitScale,
     };
-  }
-
-  if (mediaKind === "audio") {
-    return {
+  } else if (mediaKind === "audio") {
+    preview = {
       width: Math.min(560, maxWidth),
       height: Math.min(160, maxHeight),
+      fitScale: 1,
+    };
+  } else {
+    preview = {
+      width: Math.min(1120, maxWidth),
+      height: maxHeight,
       fitScale: 1,
     };
   }
 
   return {
-    width: Math.min(1120, maxWidth),
-    height: maxHeight,
-    fitScale: 1,
+    ...preview,
+    height: infoOpen
+      ? Math.min(maxHeight, Math.max(preview.height, infoContentHeight))
+      : preview.height,
+    infoWidth,
+    viewerWidth: preview.width + infoWidth + VIEWER_BORDER_WIDTH,
   };
 }
 
@@ -126,6 +169,13 @@ function isEditableTarget(target: EventTarget | null) {
     target instanceof HTMLSelectElement ||
     (target instanceof HTMLElement && target.isContentEditable)
   );
+}
+
+function fileNameStemEnd(fileName: string): number {
+  const finalDot = fileName.lastIndexOf(".");
+  return finalDot > 0 && finalDot < fileName.length - 1
+    ? finalDot
+    : fileName.length;
 }
 
 export function shouldOpenMediaViewer(event: {
@@ -158,6 +208,9 @@ export function MediaViewer(props: {
     item: MediaViewerItem,
     markdown: boolean,
   ) => Promise<void>;
+  onActiveItemChange?: (item: MediaViewerItem) => void;
+  onTitleChange?: (item: MediaViewerItem, title: string) => Promise<void>;
+  onCopyLink?: (item: MediaViewerItem) => Promise<void>;
 }) {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
@@ -181,8 +234,21 @@ export function MediaViewer(props: {
     itemId: string;
     markdown: boolean;
   } | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [titlePending, setTitlePending] = useState(false);
+  const [titleFeedback, setTitleFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [copyPending, setCopyPending] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoContentHeight, setInfoContentHeight] = useState(0);
   const stageRef = useRef<HTMLDivElement>(null);
+  const infoContentRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const titleEditFormRef = useRef<HTMLFormElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const resolvedSources = useRef(new Map<string, string>());
   const pendingResolutions = useRef(new Map<string, string | null>());
   const unlockedPasswords = useRef(new Map<string, string>());
@@ -192,13 +258,22 @@ export function MediaViewer(props: {
 
   const geometry = useMemo(
     () =>
-      viewerGeometry(
+      mediaViewerGeometry(
         naturalSize,
         activeItem?.mediaKind ?? "other",
         viewport,
         scale,
+        infoOpen,
+        infoContentHeight,
       ),
-    [activeItem?.mediaKind, naturalSize, scale, viewport],
+    [
+      activeItem?.mediaKind,
+      infoContentHeight,
+      infoOpen,
+      naturalSize,
+      scale,
+      viewport,
+    ],
   );
   const fitScale = geometry.fitScale;
   const zoomed = naturalSize !== null && scale > fitScale + ZOOM_EPSILON;
@@ -215,15 +290,50 @@ export function MediaViewer(props: {
   const canChangeMarkdown =
     activeItem?.canToggleMarkdown === true &&
     props.onMarkdownModeChange !== undefined;
+  const metadata = useMemo(
+    () =>
+      activeItem?.metadataJson === undefined
+        ? null
+        : parseMetadataJson(activeItem.metadataJson),
+    [activeItem?.metadataJson],
+  );
+  const infoRows = useMemo(
+    () => (metadata === null ? [] : metadataRows(metadata)),
+    [metadata],
+  );
+  const location = useMemo(
+    () => (metadata === null ? null : metadataLocation(metadata)),
+    [metadata],
+  );
+  const mapUrls = useMemo(
+    () => (location === null ? null : openStreetMapUrls(location)),
+    [location],
+  );
+  const cancelTitleEdit = useCallback(() => {
+    setEditingTitle(false);
+    setTitleDraft(activeItem?.title ?? "");
+    setTitleFeedback(null);
+  }, [activeItem?.title]);
 
   const moveBy = useCallback(
     (direction: -1 | 1) => {
-      setIndex((current) =>
-        Math.min(Math.max(current + direction, 0), props.items.length - 1),
+      const nextIndex = Math.min(
+        Math.max(index + direction, 0),
+        props.items.length - 1,
       );
+      if (nextIndex === index) return;
+      setIndex(nextIndex);
+      const nextItem = props.items[nextIndex];
+      if (nextItem !== undefined) props.onActiveItemChange?.(nextItem);
     },
-    [props.items.length],
+    [index, props.items, props.onActiveItemChange],
   );
+
+  useEffect(() => {
+    setIndex(
+      Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
+    );
+  }, [props.initialIndex, props.items.length]);
 
   useEffect(() => {
     if (props.items.length === 0) {
@@ -289,6 +399,11 @@ export function MediaViewer(props: {
     if (itemChanged) {
       setPassword("");
       setMarkdownToggleError(null);
+      setEditingTitle(false);
+      setTitleDraft(activeItem.title);
+      setTitlePending(false);
+      setTitleFeedback(null);
+      setCopyPending(false);
     }
     setNaturalSize(null);
     setScale(1);
@@ -361,6 +476,56 @@ export function MediaViewer(props: {
       cancelled = true;
     };
   }, [activeItem, props.resolveSource, sourceRevision]);
+
+  useEffect(() => {
+    if (activeItem !== undefined && !editingTitle) {
+      setTitleDraft(activeItem.title);
+    }
+  }, [activeItem, editingTitle]);
+
+  useLayoutEffect(() => {
+    if (!infoOpen) {
+      setInfoContentHeight(0);
+      return;
+    }
+    const content = infoContentRef.current;
+    if (content === null) return;
+    const measure = () => {
+      const nextHeight = Math.ceil(content.getBoundingClientRect().height);
+      setInfoContentHeight((current) =>
+        current === nextHeight ? current : nextHeight,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [activeItem?.id, infoOpen]);
+
+  useLayoutEffect(() => {
+    if (!editingTitle || activeItem === undefined) return;
+    const input = titleInputRef.current;
+    if (input === null) return;
+    input.focus();
+    input.setSelectionRange(0, fileNameStemEnd(activeItem.title));
+  }, [activeItem?.id, editingTitle]);
+
+  useEffect(() => {
+    if (!editingTitle || titlePending) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        titleEditFormRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+      cancelTitleEdit();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [cancelTitleEdit, editingTitle, titlePending]);
 
   useEffect(() => {
     if (
@@ -485,6 +650,42 @@ export function MediaViewer(props: {
     }
   };
 
+  const saveTitle = async (event: FormEvent) => {
+    event.preventDefault();
+    if (props.onTitleChange === undefined) return;
+    setTitlePending(true);
+    setTitleFeedback(null);
+    try {
+      await props.onTitleChange(activeItem, titleDraft);
+      setEditingTitle(false);
+      setTitleFeedback({ kind: "success", message: "Filename updated" });
+    } catch (reason) {
+      setTitleFeedback({
+        kind: "error",
+        message: friendlyError(reason, "Could not update the filename"),
+      });
+    } finally {
+      setTitlePending(false);
+    }
+  };
+
+  const copyLink = async () => {
+    if (props.onCopyLink === undefined || copyPending) return;
+    setCopyPending(true);
+    setTitleFeedback(null);
+    try {
+      await props.onCopyLink(activeItem);
+      setTitleFeedback({ kind: "success", message: "Link copied" });
+    } catch (reason) {
+      setTitleFeedback({
+        kind: "error",
+        message: friendlyError(reason, "Could not copy the link"),
+      });
+    } finally {
+      setCopyPending(false);
+    }
+  };
+
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!canZoom || naturalSize === null) return;
     event.preventDefault();
@@ -500,11 +701,13 @@ export function MediaViewer(props: {
       y: event.clientY - (bounds.top + bounds.height / 2),
     };
     const ratio = nextScale / scale;
-    const nextGeometry = viewerGeometry(
+    const nextGeometry = mediaViewerGeometry(
       naturalSize,
       activeItem.mediaKind,
       viewport,
       nextScale,
+      infoOpen,
+      infoContentHeight,
     );
     const nextPan = clampPan(
       {
@@ -586,8 +789,10 @@ export function MediaViewer(props: {
           transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`,
         } satisfies CSSProperties);
   const viewerStyle = {
-    "--viewer-content-width": `${geometry.width}px`,
+    "--viewer-width": `${geometry.viewerWidth}px`,
+    "--viewer-preview-width": `${geometry.width}px`,
     "--viewer-content-height": `${geometry.height}px`,
+    "--viewer-info-width": `${geometry.infoWidth}px`,
   } as CSSProperties;
 
   return (
@@ -603,14 +808,94 @@ export function MediaViewer(props: {
         style={viewerStyle}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="media-viewer-title"
+        aria-label={activeItem.title}
       >
         <header
           className={`${styles.titlebar} ${canChangeMarkdown ? styles.titlebarWithMarkdownToggle : ""}`}
         >
-          <h2 id="media-viewer-title" title={activeItem.title}>
-            {activeItem.title}
-          </h2>
+          <div className={styles.titleGroup}>
+            {editingTitle ? (
+              <form
+                ref={titleEditFormRef}
+                className={styles.titleEditForm}
+                onSubmit={saveTitle}
+              >
+                <input
+                  ref={titleInputRef}
+                  aria-label="Filename"
+                  disabled={titlePending}
+                  maxLength={240}
+                  value={titleDraft}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cancelTitleEdit();
+                  }}
+                />
+                <button
+                  className={styles.titleButton}
+                  type="submit"
+                  disabled={titlePending || titleDraft.trim().length === 0}
+                  aria-label="Save filename"
+                  title="Save filename"
+                >
+                  <Check aria-hidden="true" size={17} />
+                </button>
+              </form>
+            ) : (
+              <h2 id="media-viewer-title" title={activeItem.title}>
+                {props.onTitleChange !== undefined ||
+                props.onCopyLink !== undefined ? (
+                  <button
+                    className={styles.titleTextButton}
+                    type="button"
+                    onClick={() => {
+                      if (props.onTitleChange !== undefined) {
+                        setTitleDraft(activeItem.title);
+                        setTitleFeedback(null);
+                        setEditingTitle(true);
+                      } else {
+                        void copyLink();
+                      }
+                    }}
+                    aria-label={
+                      props.onTitleChange !== undefined
+                        ? `Rename ${activeItem.title}`
+                        : `Copy link to ${activeItem.title}`
+                    }
+                    title={
+                      props.onTitleChange !== undefined
+                        ? "Edit filename"
+                        : "Copy link"
+                    }
+                  >
+                    {activeItem.title}
+                  </button>
+                ) : (
+                  activeItem.title
+                )}
+              </h2>
+            )}
+            {props.onTitleChange !== undefined && !editingTitle ? (
+              <button
+                className={styles.titleButton}
+                type="button"
+                onClick={() => void copyLink()}
+                disabled={copyPending}
+                aria-label={`Copy link to ${activeItem.title}`}
+                title="Copy link"
+              >
+                {titleFeedback?.kind === "success" &&
+                titleFeedback.message === "Link copied" ? (
+                  <Check aria-hidden="true" size={17} />
+                ) : (
+                  <Link2 aria-hidden="true" size={17} />
+                )}
+              </button>
+            ) : null}
+          </div>
           <span className={styles.position}>
             {index + 1} / {props.items.length}
           </span>
@@ -622,6 +907,17 @@ export function MediaViewer(props: {
               onChange={(markdown) => void changeMarkdownMode(markdown)}
             />
           ) : null}
+          <button
+            className={`${styles.titleButton} ${infoOpen ? styles.titleButtonActive : ""}`}
+            type="button"
+            onClick={() => setInfoOpen((current) => !current)}
+            aria-controls="media-viewer-info"
+            aria-expanded={infoOpen}
+            aria-label={`${infoOpen ? "Hide" : "Show"} information for ${activeItem.title}`}
+            title={`${infoOpen ? "Hide" : "Show"} information`}
+          >
+            <Info aria-hidden="true" size={18} />
+          </button>
           <a
             className={styles.titleButton}
             href={activeItem.href}
@@ -642,121 +938,185 @@ export function MediaViewer(props: {
           >
             <X aria-hidden="true" size={19} />
           </button>
+          {titleFeedback ? (
+            <span
+              className={`${styles.titleFeedback} ${titleFeedback.kind === "error" ? styles.titleFeedbackError : ""}`}
+              role="status"
+            >
+              {titleFeedback.message}
+            </span>
+          ) : null}
         </header>
 
-        <div
-          ref={stageRef}
-          className={`${styles.stage} ${showsTextPreview ? styles.stageTextPreview : ""} ${zoomed ? styles.stageZoomed : ""} ${dragging ? styles.stageDragging : ""}`}
-          onWheel={onWheel}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={finishPointerGesture}
-          onPointerCancel={finishPointerGesture}
-        >
-          {loading ? (
-            <div className={styles.status} role="status" aria-live="polite">
-              <span className={styles.spinner} aria-hidden="true" />
-              <p>
-                {activeItem.previewReady === false
-                  ? "Preparing full-resolution preview…"
-                  : "Preparing file…"}
-              </p>
-            </div>
-          ) : sourceUrl === null && activeItem.passwordProtected ? (
-            <form className={styles.passwordForm} onSubmit={openWithPassword}>
-              <p>This file is password protected.</p>
-              <label>
-                Password
-                <input
-                  type="password"
-                  autoFocus
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                />
-              </label>
-              {loadError ? (
-                <span className={styles.error}>{loadError}</span>
-              ) : null}
-              <button type="submit">View file</button>
-            </form>
-          ) : loadError ? (
-            <div className={styles.status}>
-              <p>{loadError}</p>
-              <a href={activeItem.href} target="_blank" rel="noopener noreferrer">
-                Open in a new tab
-              </a>
-            </div>
-          ) : sourceUrl !== null && activeItem.mediaKind === "image" ? (
-            <img
-              className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}
-              src={sourceUrl}
-              alt={activeItem.title}
-              draggable={false}
-              style={mediaStyle}
-              onLoad={(event) => {
-                setLoadError(null);
-                setMediaNaturalSize(
-                  event.currentTarget.naturalWidth,
-                  event.currentTarget.naturalHeight,
-                );
-              }}
-              onError={() =>
-                setLoadError("This image could not be displayed in the browser.")
-              }
-            />
-          ) : sourceUrl !== null && activeItem.mediaKind === "video" ? (
-            <video
-              className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}
-              src={sourceUrl}
-              controls
-              playsInline
-              style={mediaStyle}
-              onLoadedMetadata={(event) =>
-                setMediaNaturalSize(
-                  event.currentTarget.videoWidth,
-                  event.currentTarget.videoHeight,
-                )
-              }
-            />
-          ) : sourceUrl !== null && activeItem.mediaKind === "audio" ? (
-            <audio className={styles.audio} src={sourceUrl} controls />
-          ) : sourceUrl !== null && rendersMarkdown ? (
-            <Suspense
-              fallback={
-                <div className={styles.status} role="status">
-                  <p>Preparing Markdown renderer…</p>
-                </div>
-              }
+        <div className={styles.viewerBody}>
+          <div
+            ref={stageRef}
+            className={`${styles.stage} ${showsTextPreview ? styles.stageTextPreview : ""} ${zoomed ? styles.stageZoomed : ""} ${dragging ? styles.stageDragging : ""}`}
+            onWheel={onWheel}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={finishPointerGesture}
+            onPointerCancel={finishPointerGesture}
+          >
+            {loading ? (
+              <div className={styles.status} role="status" aria-live="polite">
+                <span className={styles.spinner} aria-hidden="true" />
+                <p>
+                  {activeItem.previewReady === false
+                    ? "Preparing full-resolution preview…"
+                    : "Preparing file…"}
+                </p>
+              </div>
+            ) : sourceUrl === null && activeItem.passwordProtected ? (
+              <form className={styles.passwordForm} onSubmit={openWithPassword}>
+                <p>This file is password protected.</p>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    autoFocus
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    required
+                  />
+                </label>
+                {loadError ? (
+                  <span className={styles.error}>{loadError}</span>
+                ) : null}
+                <button type="submit">View file</button>
+              </form>
+            ) : loadError ? (
+              <div className={styles.status}>
+                <p>{loadError}</p>
+                <a
+                  href={activeItem.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open in a new tab
+                </a>
+              </div>
+            ) : sourceUrl !== null && activeItem.mediaKind === "image" ? (
+              <img
+                className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}
+                src={sourceUrl}
+                alt={activeItem.title}
+                draggable={false}
+                style={mediaStyle}
+                onLoad={(event) => {
+                  setLoadError(null);
+                  setMediaNaturalSize(
+                    event.currentTarget.naturalWidth,
+                    event.currentTarget.naturalHeight,
+                  );
+                }}
+                onError={() =>
+                  setLoadError(
+                    "This image could not be displayed in the browser.",
+                  )
+                }
+              />
+            ) : sourceUrl !== null && activeItem.mediaKind === "video" ? (
+              <video
+                className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}
+                src={sourceUrl}
+                controls
+                playsInline
+                style={mediaStyle}
+                onLoadedMetadata={(event) =>
+                  setMediaNaturalSize(
+                    event.currentTarget.videoWidth,
+                    event.currentTarget.videoHeight,
+                  )
+                }
+              />
+            ) : sourceUrl !== null && activeItem.mediaKind === "audio" ? (
+              <audio className={styles.audio} src={sourceUrl} controls />
+            ) : sourceUrl !== null && rendersMarkdown ? (
+              <Suspense
+                fallback={
+                  <div className={styles.status} role="status">
+                    <p>Preparing Markdown renderer…</p>
+                  </div>
+                }
+              >
+                <MarkdownPreview sourceUrl={sourceUrl} />
+              </Suspense>
+            ) : sourceUrl !== null && rendersPlainText ? (
+              <Suspense
+                fallback={
+                  <div className={styles.status} role="status">
+                    <p>Preparing text renderer…</p>
+                  </div>
+                }
+              >
+                <PlainTextPreview sourceUrl={sourceUrl} />
+              </Suspense>
+            ) : sourceUrl !== null &&
+              (activeItem.mediaKind === "text" ||
+                activeItem.mimeType === "application/pdf") ? (
+              <iframe
+                className={styles.document}
+                src={sourceUrl}
+                title={activeItem.title}
+                sandbox="allow-downloads"
+              />
+            ) : sourceUrl !== null ? (
+              <div className={styles.status}>
+                <p>This file type cannot be previewed in the browser.</p>
+                <a
+                  href={activeItem.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open original
+                </a>
+              </div>
+            ) : null}
+          </div>
+          {infoOpen ? (
+            <aside
+              id="media-viewer-info"
+              className={styles.infoPanel}
+              aria-label={`Information for ${activeItem.title}`}
             >
-              <MarkdownPreview sourceUrl={sourceUrl} />
-            </Suspense>
-          ) : sourceUrl !== null && rendersPlainText ? (
-            <Suspense
-              fallback={
-                <div className={styles.status} role="status">
-                  <p>Preparing text renderer…</p>
-                </div>
-              }
-            >
-              <PlainTextPreview sourceUrl={sourceUrl} />
-            </Suspense>
-          ) : sourceUrl !== null &&
-            (activeItem.mediaKind === "text" ||
-              activeItem.mimeType === "application/pdf") ? (
-            <iframe
-              className={styles.document}
-              src={sourceUrl}
-              title={activeItem.title}
-              sandbox="allow-downloads"
-            />
-          ) : sourceUrl !== null ? (
-            <div className={styles.status}>
-              <p>This file type cannot be previewed in the browser.</p>
-              <a href={activeItem.href} target="_blank" rel="noopener noreferrer">
-                Open original
-              </a>
-            </div>
+              <div ref={infoContentRef} className={styles.infoContent}>
+                <h3>Information</h3>
+                {infoRows.length > 0 ? (
+                  <dl className={styles.infoList}>
+                    {infoRows.map((row) => (
+                      <div className={styles.infoRow} key={row.key}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className={styles.infoUnavailable}>
+                    Metadata is unavailable.
+                  </p>
+                )}
+                {mapUrls ? (
+                  <figure className={styles.infoMap}>
+                    <iframe
+                      src={mapUrls.embed}
+                      title="Media location on OpenStreetMap"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                    <figcaption>
+                      <a
+                        href={mapUrls.full}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        View larger map
+                      </a>
+                    </figcaption>
+                  </figure>
+                ) : null}
+              </div>
+            </aside>
           ) : null}
         </div>
 

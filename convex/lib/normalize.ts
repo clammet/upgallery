@@ -58,6 +58,18 @@ export function cleanFileName(value: string): string {
   return name;
 }
 
+export function fileExtensionFromName(
+  fileName: string,
+  fallback: string,
+): string {
+  const lastDot = fileName.lastIndexOf(".");
+  const candidate =
+    lastDot > 0 && lastDot < fileName.length - 1
+      ? fileName.slice(lastDot + 1).toLocaleLowerCase()
+      : "";
+  return /^[a-z0-9]{1,16}$/.test(candidate) ? candidate : fallback;
+}
+
 export function cleanFilesystemSegment(value: string): string {
   const name = value.normalize("NFKC").trim();
   if (

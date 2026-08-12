@@ -180,6 +180,7 @@ export function UploaderPage(props: {
           shouldUseNativeHeifPreview(entry.mimeType, entry.name) ||
           entry.previewKey !== undefined,
         previewError: entry.previewError,
+        metadataJson: entry.metadataJson,
       })),
     [listing?.entries, props.routeRoot],
   );

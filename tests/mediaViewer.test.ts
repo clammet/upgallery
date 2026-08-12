@@ -1,0 +1,74 @@
+import { describe, expect, test } from "vitest";
+import { mediaViewerGeometry } from "../src/components/MediaViewer";
+
+describe("media viewer information layout", () => {
+  test("adds the information column without shrinking a preview when space is available", () => {
+    const closed = mediaViewerGeometry(
+      { width: 600, height: 400 },
+      "image",
+      { width: 1200, height: 800 },
+      1,
+      false,
+      0,
+    );
+    const open = mediaViewerGeometry(
+      { width: 600, height: 400 },
+      "image",
+      { width: 1200, height: 800 },
+      1,
+      true,
+      100,
+    );
+
+    expect(open.width).toBe(closed.width);
+    expect(open.infoWidth).toBe(320);
+    expect(open.viewerWidth).toBe(closed.viewerWidth + 320);
+  });
+
+  test("reserves the information width and reduces the preview fit scale when space is tight", () => {
+    const geometry = mediaViewerGeometry(
+      { width: 1200, height: 800 },
+      "image",
+      { width: 800, height: 900 },
+      1,
+      true,
+      300,
+    );
+
+    expect(geometry.infoWidth).toBe(320);
+    expect(geometry.width).toBe(446);
+    expect(geometry.viewerWidth).toBe(768);
+    expect(geometry.fitScale).toBeCloseTo(446 / 1200);
+  });
+
+  test("grows only for taller metadata and caps the panel at the viewport limit", () => {
+    const short = mediaViewerGeometry(
+      { width: 400, height: 200 },
+      "image",
+      { width: 1200, height: 900 },
+      1,
+      true,
+      120,
+    );
+    const tall = mediaViewerGeometry(
+      { width: 400, height: 200 },
+      "image",
+      { width: 1200, height: 900 },
+      1,
+      true,
+      600,
+    );
+    const overflowing = mediaViewerGeometry(
+      { width: 400, height: 200 },
+      "image",
+      { width: 1200, height: 900 },
+      1,
+      true,
+      1200,
+    );
+
+    expect(short.height).toBe(200);
+    expect(tall.height).toBe(600);
+    expect(overflowing.height).toBe(804);
+  });
+});

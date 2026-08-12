@@ -12,6 +12,7 @@ describe("media metadata presentation", () => {
       JSON.stringify({
         GPSLongitude: 144.999,
         Duration: 2.768333,
+        BitRate: 8000000,
         Resolution: "1080 × 1920",
         GPSLatitude: -37.8109,
       }),
@@ -28,6 +29,11 @@ describe("media metadata presentation", () => {
         key: "Duration",
         label: "Duration",
         value: "2.77 s",
+      },
+      {
+        key: "BitRate",
+        label: "Bit rate",
+        value: "8 Mb/s",
       },
       {
         key: "GPSLatitude",

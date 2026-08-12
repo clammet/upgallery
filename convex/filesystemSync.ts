@@ -6,7 +6,10 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { createToken, sha256 } from "./lib/crypto";
-import { getFilesystemFolderSegments } from "./lib/filesystem";
+import {
+  getFilesystemFolderSegments,
+  getFilesystemStorageKey,
+} from "./lib/filesystem";
 import {
   replaceMediaProcessingJob,
   STORAGE_JOB_LEASE_MS,
@@ -15,6 +18,7 @@ import {
 } from "./lib/storageJobs";
 import {
   cleanFilesystemSegment,
+  fileExtensionFromName,
   filesystemSlug,
 } from "./lib/normalize";
 import { mediaKind } from "./lib/validators";
@@ -764,7 +768,37 @@ async function filesystemOperationClaim(
   );
   const parentSegments = await getFilesystemFolderSegments(ctx, gallery, parent);
   let sourceSegments: string[] | undefined;
-  if (operation.kind === "rename") {
+  if (operation.kind === "fileRename") {
+    if (operation.entryId === undefined) {
+      throw new Error("File rename operation has no file");
+    }
+    const entry = await ctx.db.get("entries", operation.entryId);
+    const claimedByThisOperation =
+      entry?.migrationState === "moving" &&
+      entry?.filesystemOperationId === operation._id;
+    const available =
+      entry?.migrationState === undefined &&
+      entry?.filesystemOperationId === undefined;
+    if (
+      entry === null ||
+      entry.galleryId !== gallery._id ||
+      entry.folderId !== parent._id ||
+      entry.storageKind !== "user" ||
+      entry.state !== "ready" ||
+      (!claimedByThisOperation && !available)
+    ) {
+      throw new Error("File is unavailable");
+    }
+    sourceSegments = [...parentSegments, cleanFilesystemSegment(entry.name)];
+    await ctx.db.patch("entries", entry._id, {
+      filesystemOperationId: operation._id,
+      migrationState: "moving",
+      migrationClaimedAt: Date.now(),
+      migrationAttempts: (operation.attempts ?? 0) + 1,
+      migrationError: undefined,
+      updatedAt: Date.now(),
+    });
+  } else if (operation.kind === "rename") {
     if (operation.folderId === undefined) {
       throw new Error("Rename operation has no folder");
     }
@@ -864,6 +898,7 @@ export const completeFilesystemOperation = internalMutation({
   args: {
     operationId: v.id("filesystemOperations"),
     identity: v.string(),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const operation = await ctx.db.get("filesystemOperations", args.operationId);
@@ -878,7 +913,48 @@ export const completeFilesystemOperation = internalMutation({
       throw new Error("Filesystem operation target no longer exists");
     }
     let folderId = operation.folderId;
-    if (operation.kind === "mkdir") {
+    if (operation.kind === "fileRename") {
+      if (operation.entryId === undefined || args.modifiedAt === undefined) {
+        throw new Error("File rename operation is incomplete");
+      }
+      const entry = await ctx.db.get("entries", operation.entryId);
+      if (
+        entry === null ||
+        entry.galleryId !== gallery._id ||
+        entry.folderId !== parent._id ||
+        entry.storageKind !== "user" ||
+        entry.state !== "ready" ||
+        entry.migrationState !== "moving" ||
+        entry.filesystemOperationId !== operation._id
+      ) {
+        throw new Error("File is no longer available");
+      }
+      const folderSegments = await getFilesystemFolderSegments(
+        ctx,
+        gallery,
+        parent,
+      );
+      const now = Date.now();
+      await ctx.db.patch("entries", entry._id, {
+        name: operation.name,
+        extension: fileExtensionFromName(operation.name, entry.extension),
+        storageKey: getFilesystemStorageKey(
+          gallery,
+          folderSegments,
+          operation.name,
+        ),
+        filesystemModifiedAt: args.modifiedAt,
+        filesystemIdentity: args.identity,
+        filesystemSyncId: undefined,
+        filesystemOperationId: undefined,
+        migrationState: undefined,
+        migrationClaimedAt: undefined,
+        migrationAttempts: undefined,
+        migrationRetryAt: undefined,
+        migrationError: undefined,
+        updatedAt: now,
+      });
+    } else if (operation.kind === "mkdir") {
       const siblings = await ctx.db
         .query("folders")
         .withIndex("by_galleryId_and_parentId", (q) =>
@@ -932,12 +1008,18 @@ export const completeFilesystemOperation = internalMutation({
       action:
         operation.kind === "mkdir"
           ? "filesystem_folder.created"
-          : "filesystem_folder.renamed",
+          : operation.kind === "rename"
+            ? "filesystem_folder.renamed"
+            : "filesystem_file.renamed",
       galleryId: gallery._id,
       detail: operation.name,
       createdAt: Date.now(),
     });
-    return { folderId };
+    return {
+      folderId: operation.kind === "fileRename" ? null : (folderId ?? null),
+      entryId:
+        operation.kind === "fileRename" ? (operation.entryId ?? null) : null,
+    };
   },
 });
 
@@ -968,6 +1050,23 @@ export const failFilesystemOperation = internalMutation({
           leaseExpiresAt: undefined,
           error,
         });
+        if (
+          operation.kind === "fileRename" &&
+          operation.entryId !== undefined
+        ) {
+          const entry = await ctx.db.get("entries", operation.entryId);
+          if (entry?.filesystemOperationId === operation._id) {
+            await ctx.db.patch("entries", entry._id, {
+              filesystemOperationId: undefined,
+              migrationState: undefined,
+              migrationClaimedAt: undefined,
+              migrationAttempts: undefined,
+              migrationRetryAt: undefined,
+              migrationError: error,
+              updatedAt: Date.now(),
+            });
+          }
+        }
       }
     }
     return null;

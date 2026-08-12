@@ -304,6 +304,7 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
     format: {
       format_long_name: "QuickTime / MOV",
       duration: "2.768333",
+      bit_rate: "8000000",
       tags: {
         "com.apple.quicktime.location.ISO6709":
           "-37.8109+144.9990+021.322/",
@@ -322,6 +323,7 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
     AudioCodec: "AAC",
     Format: "QuickTime / MOV",
     Duration: 2.768333,
+    BitRate: 8000000,
     FrameRate: 29.98,
     Rotation: -90,
     DateTimeOriginal: "2026-07-29T16:42:04+1000",
@@ -332,6 +334,48 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
     GPSLongitude: 144.999,
     GPSAltitude: 21.322,
     GPSHorizontalAccuracy: 6.431634,
+  });
+});
+
+test("audio metadata includes stream properties, tags, and bitrate", async () => {
+  const { audioMetadataFromFfprobe } = await import("../storage/media.js");
+
+  const metadata = audioMetadataFromFfprobe({
+    streams: [
+      {
+        codec_type: "audio",
+        codec_long_name: "PCM signed 16-bit little-endian",
+        sample_rate: "44100",
+        channels: 2,
+        channel_layout: "stereo",
+        bits_per_sample: 16,
+        bit_rate: "1411200",
+      },
+    ],
+    format: {
+      format_long_name: "WAV / WAVE (Waveform Audio)",
+      duration: "155.588571",
+      bit_rate: "1411202",
+      tags: {
+        title: "Across the Dream",
+        artist: "Test Artist",
+        album: "Test Album",
+      },
+    },
+  });
+
+  expect(metadata).toEqual({
+    AudioCodec: "PCM signed 16-bit little-endian",
+    SampleRate: 44100,
+    Channels: 2,
+    ChannelLayout: "stereo",
+    BitDepth: 16,
+    Format: "WAV / WAVE (Waveform Audio)",
+    Duration: 155.588571,
+    BitRate: 1411202,
+    Title: "Across the Dream",
+    Artist: "Test Artist",
+    Album: "Test Album",
   });
 });
 

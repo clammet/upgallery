@@ -10,6 +10,7 @@ import {
 import { dirname } from "node:path";
 import { callConvex } from "./convex.js";
 import type { FilesystemOperationClaim } from "./convex.js";
+import type { FilesystemOperationResult } from "./convex.js";
 import { config } from "./config.js";
 import { runWithHeartbeat } from "./heartbeat.js";
 import {
@@ -330,20 +331,34 @@ export async function executeFilesystemOperation(
       userFilesystemStorageKey(claim.storageRoot, claim.sourceSegments),
     );
     try {
+      const sourceMetadata = await stat(source);
+      const destinationMetadata = await stat(destination).catch(() => null);
+      if (
+        destinationMetadata !== null &&
+        (destinationMetadata.dev !== sourceMetadata.dev ||
+          destinationMetadata.ino !== sourceMetadata.ino)
+      ) {
+        throw new Error("A filesystem item already exists with that name");
+      }
       await rename(source, destination);
     } catch (error) {
-      if (!isMissing(error) || !(await isDirectory(destination))) {
+      const completedDestination =
+        claim.kind === "fileRename"
+          ? await isFile(destination)
+          : await isDirectory(destination);
+      if (!isMissing(error) || !completedDestination) {
         throw error;
       }
     }
   }
   signal.throwIfAborted();
   const metadata = await stat(destination);
-  return await callConvex<{ folderId: string }>(
+  return await callConvex<FilesystemOperationResult>(
     "/internal/storage/complete-filesystem-operation",
     {
       operationId: claim.operationId,
       identity: filesystemIdentity(metadata),
+      modifiedAt: metadata.mtimeMs,
     },
   );
 }
@@ -367,6 +382,12 @@ async function hashFile(path: string, signal: AbortSignal): Promise<string> {
 async function isDirectory(path: string): Promise<boolean> {
   return await stat(path)
     .then((metadata) => metadata.isDirectory())
+    .catch(() => false);
+}
+
+async function isFile(path: string): Promise<boolean> {
+  return await stat(path)
+    .then((metadata) => metadata.isFile())
     .catch(() => false);
 }
 

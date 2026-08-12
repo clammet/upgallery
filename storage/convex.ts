@@ -110,7 +110,7 @@ export type MediaProcessingClaim =
       storageKey: string;
       sha256: string;
       extension: string;
-      mediaKind: "image" | "video";
+      mediaKind: "image" | "video" | "audio";
       galleryKind: "image" | "uploader";
       storageKind: "shared" | "user";
       storageRoot: string;
@@ -124,10 +124,15 @@ export type MediaProcessingClaim =
 
 export type FilesystemOperationClaim = {
   operationId: string;
-  kind: "mkdir" | "rename";
+  kind: "mkdir" | "rename" | "fileRename";
   storageRoot: string;
   sourceSegments?: string[];
   destinationSegments: string[];
+};
+
+export type FilesystemOperationResult = {
+  folderId: string | null;
+  entryId: string | null;
 };
 
 export type RecoverableFilesystemOperationClaim =

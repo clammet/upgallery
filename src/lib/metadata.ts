@@ -26,6 +26,14 @@ type ExifrFileParser = {
 };
 
 const preferredOrder = [
+  "Title",
+  "Artist",
+  "Album",
+  "AlbumArtist",
+  "Track",
+  "Disc",
+  "Genre",
+  "Date",
   "Resolution",
   "DateTimeOriginal",
   "Make",
@@ -36,6 +44,11 @@ const preferredOrder = [
   "VideoCodec",
   "AudioCodec",
   "Duration",
+  "SampleRate",
+  "Channels",
+  "ChannelLayout",
+  "BitDepth",
+  "BitRate",
   "FrameRate",
   "Rotation",
   "ExposureTime",
@@ -49,7 +62,15 @@ const preferredOrder = [
 ];
 
 const labels: Record<string, string> = {
+  Album: "Album",
+  AlbumArtist: "Album artist",
+  Artist: "Artist",
   AudioCodec: "Audio codec",
+  BitDepth: "Bit depth",
+  BitRate: "Bit rate",
+  ChannelLayout: "Channel layout",
+  Channels: "Channels",
+  Date: "Date",
   DateTimeOriginal: "Captured",
   Duration: "Duration",
   ExposureTime: "Exposure time",
@@ -65,9 +86,14 @@ const labels: Record<string, string> = {
   LensModel: "Lens",
   Make: "Make",
   Model: "Model",
+  Disc: "Disc",
+  Genre: "Genre",
   Resolution: "Resolution",
   Rotation: "Rotation",
   Software: "Software",
+  SampleRate: "Sample rate",
+  Title: "Title",
+  Track: "Track",
   VideoCodec: "Video codec",
 };
 
@@ -182,6 +208,16 @@ function formatValue(key: string, value: string | number): string {
   switch (key) {
     case "Duration":
       return `${trimmedDecimal(value, 2)} s`;
+    case "SampleRate":
+      return value >= 1_000
+        ? `${trimmedDecimal(value / 1_000, 2)} kHz`
+        : `${trimmedDecimal(value, 0)} Hz`;
+    case "BitDepth":
+      return `${trimmedDecimal(value, 0)}-bit`;
+    case "BitRate":
+      return value >= 1_000_000
+        ? `${trimmedDecimal(value / 1_000_000, 2)} Mb/s`
+        : `${trimmedDecimal(value / 1_000, 0)} kb/s`;
     case "ExposureTime":
       return value > 0 && value < 1
         ? `1/${Math.round(1 / value)} s`

@@ -18,7 +18,7 @@
   max-height: calc(100vh - 2rem);
   max-width: calc(100vw - 2rem);
   position: relative;
-  width: var(--viewer-content-width);
+  width: var(--viewer-width);
 }
 
 .titlebar {
@@ -27,22 +27,93 @@
   border-bottom: 1px solid rgb(255 255 255 / 12%);
   display: grid;
   gap: 0.4rem;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   height: 46px;
   padding: 0.4rem;
+  position: relative;
 }
 
 .titlebarWithMarkdownToggle {
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
 }
 
-.titlebar h2 {
+.titleGroup {
+  align-items: center;
+  display: flex;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.titleGroup h2 {
   font-size: 0.88rem;
   margin: 0;
+  min-width: 0;
   overflow: hidden;
   padding-left: 0.3rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.titleTextButton {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleTextButton:hover,
+.titleTextButton:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.titleEditForm {
+  align-items: center;
+  display: flex;
+  gap: 0.2rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.titleEditForm input {
+  background: #101311;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: calc(var(--gallery-radius) - 2px);
+  color: white;
+  font-size: 0.85rem;
+  height: 30px;
+  min-width: 0;
+  padding: 0 0.45rem;
+  width: 100%;
+}
+
+.titleFeedback {
+  background: #1a1f1c;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: var(--gallery-radius);
+  color: #bff4ce;
+  font-size: 0.72rem;
+  left: 0.7rem;
+  max-width: calc(100% - 1.4rem);
+  overflow: hidden;
+  padding: 0.28rem 0.45rem;
+  position: absolute;
+  text-overflow: ellipsis;
+  top: calc(100% + 0.35rem);
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.titleFeedbackError {
+  color: #ffb1b5;
 }
 
 .position {
@@ -73,6 +144,16 @@
   outline: none;
 }
 
+.titleButtonActive {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 26%);
+}
+
+.viewerBody {
+  display: flex;
+  max-width: 100%;
+}
+
 .stage {
   align-items: center;
   background:
@@ -90,7 +171,86 @@
   position: relative;
   touch-action: none;
   user-select: none;
+  flex: 0 0 var(--viewer-preview-width);
+  width: var(--viewer-preview-width);
+}
+
+.infoPanel {
+  background: #151916;
+  border-left: 1px solid rgb(255 255 255 / 12%);
+  flex: 0 0 var(--viewer-info-width);
+  height: var(--viewer-content-height);
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.infoContent {
+  padding: 0.9rem;
+}
+
+.infoContent h3 {
+  font-size: 0.86rem;
+  margin: 0 0 0.75rem;
+}
+
+.infoList {
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--gallery-radius);
+  margin: 0;
+  overflow: hidden;
+}
+
+.infoRow {
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+  display: grid;
+  font-size: 0.76rem;
+  gap: 0.55rem;
+  grid-template-columns: minmax(5.5rem, 38%) minmax(0, 1fr);
+  padding: 0.48rem 0.55rem;
+}
+
+.infoRow:last-child {
+  border-bottom: 0;
+}
+
+.infoRow dt {
+  color: rgb(255 255 255 / 55%);
+  font-weight: 600;
+}
+
+.infoRow dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.infoUnavailable {
+  color: rgb(255 255 255 / 58%);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.infoMap {
+  margin: 0.8rem 0 0;
+}
+
+.infoMap iframe {
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--gallery-radius);
+  display: block;
+  height: 210px;
   width: 100%;
+}
+
+.infoMap figcaption {
+  font-size: 0.72rem;
+  margin-top: 0.35rem;
+  text-align: right;
+}
+
+.infoMap a {
+  color: #dbe9df;
 }
 
 .stageZoomed {
@@ -254,11 +414,11 @@
   }
 
   .titlebar {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
   .titlebarWithMarkdownToggle {
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   }
 
   .navigation {

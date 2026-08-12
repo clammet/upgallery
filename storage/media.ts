@@ -278,9 +278,15 @@ type MetadataValue = string | number;
 type MediaMetadata = Record<string, MetadataValue>;
 
 type FfprobeStream = {
+  bit_rate?: unknown;
+  bits_per_raw_sample?: unknown;
+  bits_per_sample?: unknown;
+  channel_layout?: unknown;
+  channels?: unknown;
   codec_long_name?: unknown;
   codec_name?: unknown;
   codec_type?: unknown;
+  sample_rate?: unknown;
   width?: unknown;
   height?: unknown;
   avg_frame_rate?: unknown;
@@ -292,7 +298,11 @@ export async function extractMediaMetadataJson(
   mediaKind: MediaKind,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  if (mediaKind !== "image" && mediaKind !== "video") {
+  if (
+    mediaKind !== "image" &&
+    mediaKind !== "video" &&
+    mediaKind !== "audio"
+  ) {
     return undefined;
   }
   try {
@@ -300,7 +310,7 @@ export async function extractMediaMetadataJson(
     const metadata =
       mediaKind === "image"
         ? await extractImageMetadata(filePath, signal)
-        : await extractVideoMetadata(filePath, signal);
+        : await extractFfprobeMetadata(filePath, signal);
     if (Object.keys(metadata).length === 0) {
       return undefined;
     }
@@ -406,16 +416,24 @@ function imageExifInput(
   return filePath;
 }
 
-async function extractVideoMetadata(
+async function extractFfprobeMetadata(
   filePath: string,
   signal?: AbortSignal,
 ): Promise<MediaMetadata> {
   const payload = await runFfprobe(filePath, signal);
   signal?.throwIfAborted();
-  return videoMetadataFromFfprobe(payload);
+  return mediaMetadataFromFfprobe(payload);
 }
 
 export function videoMetadataFromFfprobe(payload: unknown): MediaMetadata {
+  return mediaMetadataFromFfprobe(payload);
+}
+
+export function audioMetadataFromFfprobe(payload: unknown): MediaMetadata {
+  return mediaMetadataFromFfprobe(payload);
+}
+
+function mediaMetadataFromFfprobe(payload: unknown): MediaMetadata {
   if (!isRecord(payload)) return {};
   const format = isRecord(payload.format) ? payload.format : {};
   const tags = isRecord(format.tags) ? format.tags : {};
@@ -445,9 +463,34 @@ export function videoMetadataFromFfprobe(payload: unknown): MediaMetadata {
       "AudioCodec",
       audio.codec_long_name ?? audio.codec_name,
     );
+    copyNumber(metadata, "SampleRate", audio.sample_rate);
+    copyNumber(metadata, "Channels", audio.channels);
+    copyString(metadata, "ChannelLayout", audio.channel_layout);
+    copyNumber(
+      metadata,
+      "BitDepth",
+      audio.bits_per_raw_sample ?? audio.bits_per_sample,
+    );
   }
   copyString(metadata, "Format", format.format_long_name);
   copyNumber(metadata, "Duration", format.duration);
+  copyNumber(
+    metadata,
+    "BitRate",
+    format.bit_rate ?? video?.bit_rate ?? audio?.bit_rate,
+  );
+  copyString(metadata, "Title", firstTag(tags, "title", "TITLE"));
+  copyString(metadata, "Artist", firstTag(tags, "artist", "ARTIST"));
+  copyString(metadata, "Album", firstTag(tags, "album", "ALBUM"));
+  copyString(
+    metadata,
+    "AlbumArtist",
+    firstTag(tags, "album_artist", "ALBUMARTIST", "ALBUM_ARTIST"),
+  );
+  copyString(metadata, "Genre", firstTag(tags, "genre", "GENRE"));
+  copyString(metadata, "Track", firstTag(tags, "track", "TRACK"));
+  copyString(metadata, "Disc", firstTag(tags, "disc", "DISC"));
+  copyString(metadata, "Date", firstTag(tags, "date", "DATE", "year", "YEAR"));
   copyString(
     metadata,
     "DateTimeOriginal",
@@ -534,7 +577,7 @@ async function runFfprobe(
         "-print_format",
         "json",
         "-show_entries",
-        "stream=codec_name,codec_long_name,codec_type,width,height,avg_frame_rate:stream_tags=creation_time:stream_side_data=rotation:format=format_long_name,duration:format_tags",
+        "stream=codec_name,codec_long_name,codec_type,width,height,avg_frame_rate,sample_rate,channels,channel_layout,bits_per_sample,bits_per_raw_sample,bit_rate:stream_tags=creation_time:stream_side_data=rotation:format=format_long_name,duration,bit_rate:format_tags",
         sourcePath,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },

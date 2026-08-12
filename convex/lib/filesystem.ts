@@ -28,3 +28,17 @@ export async function getFilesystemFolderSegments(
   }
   return segments;
 }
+
+export function getFilesystemStorageKey(
+  gallery: Doc<"galleries">,
+  folderSegments: string[],
+  fileName: string,
+): string {
+  return [
+    "public",
+    "users",
+    ...gallery.storageRoot.split("/"),
+    ...folderSegments.map(cleanFilesystemSegment),
+    cleanFilesystemSegment(fileName),
+  ].join("/");
+}

@@ -13,6 +13,7 @@ import {
   cleanDescription,
   cleanFileName,
   cleanFilesystemSegment,
+  fileExtensionFromName,
 } from "./lib/normalize";
 import {
   createPasswordHash,
@@ -29,6 +30,7 @@ import {
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
 const MAX_BULK_ENTRIES = 128;
+const MAX_FILESYSTEM_DIRECTORY_ITEMS = 500;
 
 function isHeifEntry(entry: {
   mimeType: string;
@@ -430,7 +432,9 @@ export const refreshMetadata = mutation({
       entry === null ||
       entry.galleryId !== gallery._id ||
       entry.state !== "ready" ||
-      (entry.mediaKind !== "image" && entry.mediaKind !== "video")
+      (entry.mediaKind !== "image" &&
+        entry.mediaKind !== "video" &&
+        entry.mediaKind !== "audio")
     ) {
       throw new Error("Media not found");
     }
@@ -632,6 +636,107 @@ export const updateMetadata = mutation({
       updatedAt: Date.now(),
     });
     return null;
+  },
+});
+
+export const rename = mutation({
+  args: {
+    galleryId: v.id("galleries"),
+    entryId: v.id("entries"),
+    name: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      kind: v.literal("complete"),
+      entryId: v.id("entries"),
+      name: v.string(),
+    }),
+    v.object({
+      kind: v.literal("filesystem"),
+      operationId: v.id("filesystemOperations"),
+      token: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const [gallery, entry] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("entries", args.entryId),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image" ||
+      entry === null ||
+      entry.galleryId !== gallery._id ||
+      entry.state !== "ready"
+    ) {
+      throw new Error("File not found");
+    }
+    const folder = await ctx.db.get("folders", entry.folderId);
+    if (folder === null || folder.galleryId !== gallery._id) {
+      throw new Error("File not found");
+    }
+    const actor = await requireGalleryRole(ctx, gallery, folder, "editor");
+    if (entry.migrationState !== undefined) {
+      throw new Error("File is currently being moved");
+    }
+
+    const name =
+      gallery.storageKind === "user"
+        ? cleanFilesystemSegment(args.name)
+        : cleanFileName(args.name);
+    if (name === entry.name) {
+      return { kind: "complete" as const, entryId: entry._id, name };
+    }
+
+    if (gallery.storageKind === "user") {
+      const siblings = await ctx.db
+        .query("entries")
+        .withIndex("by_folderId_and_state", (q) =>
+          q.eq("folderId", folder._id).eq("state", "ready"),
+        )
+        .take(MAX_FILESYSTEM_DIRECTORY_ITEMS + 1);
+      if (siblings.length > MAX_FILESYSTEM_DIRECTORY_ITEMS) {
+        throw new Error("Directory contains too many tracked files");
+      }
+      if (
+        siblings.some(
+          (sibling) => sibling._id !== entry._id && sibling.name === name,
+        )
+      ) {
+        throw new Error("A file with that name already exists here");
+      }
+      const token = createToken();
+      const operationId = await ctx.db.insert("filesystemOperations", {
+        galleryId: gallery._id,
+        parentId: folder._id,
+        entryId: entry._id,
+        actorProfileId: actor._id,
+        kind: "fileRename",
+        name,
+        privacy: folder.privacy,
+        tokenHash: await sha256(token),
+        expiresAt: Date.now() + 15 * 60 * 1000,
+        state: "pending",
+        attempts: 0,
+      });
+      return { kind: "filesystem" as const, operationId, token };
+    }
+
+    const now = Date.now();
+    await ctx.db.patch("entries", entry._id, {
+      name,
+      extension: fileExtensionFromName(name, entry.extension),
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "entry.renamed",
+      galleryId: gallery._id,
+      detail: `${entry.name} → ${name}`,
+      createdAt: now,
+    });
+    return { kind: "complete" as const, entryId: entry._id, name };
   },
 });
 

@@ -180,9 +180,48 @@ export const claimMediaProcessing = internalMutation({
           .lt("processorVersion", MEDIA_PROCESSOR_VERSION),
       )
       .first();
-    const job = stale ?? queued ?? failedFromOlderProcessor;
+    let job = stale ?? queued ?? failedFromOlderProcessor;
     if (job === null) {
-      return { kind: "none" as const };
+      const unprocessedAudio = await ctx.db
+        .query("entries")
+        .withIndex(
+          "by_state_and_mediaKind_and_metadataVersion",
+          (q) =>
+            q
+              .eq("state", "ready")
+              .eq("mediaKind", "audio")
+              .lt("metadataVersion", MEDIA_METADATA_VERSION),
+        )
+        .first();
+      const unprocessedVideo =
+        unprocessedAudio === null
+          ? await ctx.db
+              .query("entries")
+              .withIndex(
+                "by_state_and_mediaKind_and_metadataVersion",
+                (q) =>
+                  q
+                    .eq("state", "ready")
+                    .eq("mediaKind", "video")
+                    .lt("metadataVersion", MEDIA_METADATA_VERSION),
+              )
+              .first()
+          : null;
+      const unprocessedMedia = unprocessedAudio ?? unprocessedVideo;
+      if (unprocessedMedia === null) {
+        return { kind: "none" as const };
+      }
+      const jobId = await ctx.db.insert("mediaProcessingJobs", {
+        entryId: unprocessedMedia._id,
+        expectedStorageKey: unprocessedMedia.storageKey,
+        expectedSha256: unprocessedMedia.sha256,
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+        processorVersion: MEDIA_PROCESSOR_VERSION,
+      });
+      job = await ctx.db.get("mediaProcessingJobs", jobId);
+      if (job === null) throw new Error("Media processing job was not created");
     }
     const entry = await ctx.db.get("entries", job.entryId);
     const gallery =
@@ -193,7 +232,9 @@ export const claimMediaProcessing = internalMutation({
       entry.state !== "ready" ||
       entry.storageKey !== job.expectedStorageKey ||
       entry.sha256 !== job.expectedSha256 ||
-      (entry.mediaKind !== "image" && entry.mediaKind !== "video")
+      (entry.mediaKind !== "image" &&
+        entry.mediaKind !== "video" &&
+        entry.mediaKind !== "audio")
     ) {
       await ctx.db.delete("mediaProcessingJobs", job._id);
       return { kind: "none" as const };
@@ -223,13 +264,14 @@ export const claimMediaProcessing = internalMutation({
       storageKey: entry.storageKey,
       sha256: entry.sha256,
       extension: entry.extension,
-      mediaKind: entry.mediaKind as "image" | "video",
+      mediaKind: entry.mediaKind as "image" | "video" | "audio",
       galleryKind: gallery.kind,
       storageKind: entry.storageKind,
       storageRoot: gallery.storageRoot,
       size: entry.size,
       filesystemModifiedAt: entry.filesystemModifiedAt,
-      processThumbnail: entry.thumbnailKey === undefined,
+      processThumbnail:
+        entry.mediaKind !== "audio" && entry.thumbnailKey === undefined,
       processMetadata:
         entry.metadataVersion !== MEDIA_METADATA_VERSION ||
         job.removeLocationData === true,

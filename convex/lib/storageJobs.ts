@@ -4,7 +4,7 @@ import type { MutationCtx } from "../_generated/server";
 export const STORAGE_JOB_LEASE_MS = 2 * 60 * 1000;
 export const STORAGE_JOB_MAX_ATTEMPTS = 5;
 export const MEDIA_PROCESSOR_VERSION = 2;
-export const MEDIA_METADATA_VERSION = 2;
+export const MEDIA_METADATA_VERSION = 3;
 
 export function storageJobRetryDelay(attempts: number): number {
   return Math.min(5 * 60 * 1000, 1_000 * 2 ** Math.max(0, attempts - 1));
@@ -34,7 +34,9 @@ export async function replaceMediaProcessingJob(
   }
   if (
     (input.alreadyProcessed && !shouldGeneratePreview) ||
-    (input.mediaKind !== "image" && input.mediaKind !== "video")
+    (input.mediaKind !== "image" &&
+      input.mediaKind !== "video" &&
+      input.mediaKind !== "audio")
   ) {
     return;
   }
