@@ -291,6 +291,8 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
       {
         codec_type: "video",
         codec_long_name: "H.265 / HEVC",
+        bit_rate: "7000000",
+        bits_per_raw_sample: "10",
         width: 1920,
         height: 1080,
         avg_frame_rate: "49800/1661",
@@ -299,6 +301,11 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
       {
         codec_type: "audio",
         codec_long_name: "AAC",
+        bit_rate: "192000",
+        bits_per_sample: 24,
+        channel_layout: "stereo",
+        channels: 2,
+        sample_rate: "48000",
       },
     ],
     format: {
@@ -318,14 +325,19 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
   });
 
   expect(metadata).toMatchObject({
-    Resolution: "1080 × 1920",
+    VideoResolution: "1080 × 1920",
     VideoCodec: "H.265 / HEVC",
+    VideoBitRate: 7000000,
+    VideoFrameRate: 29.98,
+    VideoBitDepth: 10,
     AudioCodec: "AAC",
+    AudioBitRate: 192000,
+    AudioSampleRate: 48000,
+    AudioChannels: "2 (stereo)",
+    AudioBitDepth: 24,
     Format: "QuickTime / MOV",
     Duration: 2.768333,
-    BitRate: 8000000,
-    FrameRate: 29.98,
-    Rotation: -90,
+    VideoRotation: -90,
     DateTimeOriginal: "2026-07-29T16:42:04+1000",
     Make: "Apple",
     Model: "iPhone 16",
@@ -335,6 +347,7 @@ test("QuickTime metadata includes display resolution and decoded location", asyn
     GPSAltitude: 21.322,
     GPSHorizontalAccuracy: 6.431634,
   });
+  expect(metadata).not.toHaveProperty("BitRate");
 });
 
 test("audio metadata includes stream properties, tags, and bitrate", async () => {
@@ -366,17 +379,91 @@ test("audio metadata includes stream properties, tags, and bitrate", async () =>
 
   expect(metadata).toEqual({
     AudioCodec: "PCM signed 16-bit little-endian",
-    SampleRate: 44100,
-    Channels: 2,
-    ChannelLayout: "stereo",
-    BitDepth: 16,
+    AudioBitRate: 1411200,
+    AudioSampleRate: 44100,
+    AudioChannels: "2 (stereo)",
+    AudioBitDepth: 16,
     Format: "WAV / WAVE (Waveform Audio)",
     Duration: 155.588571,
-    BitRate: 1411202,
     Title: "Across the Dream",
     Artist: "Test Artist",
     Album: "Test Album",
   });
+});
+
+test("multiple A/V tracks stay separate and subtitle languages are deduplicated", async () => {
+  const { videoMetadataFromFfprobe } = await import("../storage/media.js");
+
+  const metadata = videoMetadataFromFfprobe({
+    streams: [
+      {
+        codec_type: "video",
+        codec_long_name: "H.264 / AVC",
+        width: 1920,
+        height: 1080,
+        avg_frame_rate: "24/1",
+        bit_rate: "5000000",
+      },
+      {
+        codec_type: "video",
+        codec_long_name: "H.265 / HEVC",
+        width: 1280,
+        height: 720,
+        avg_frame_rate: "30/1",
+        bit_rate: "2500000",
+      },
+      {
+        codec_type: "audio",
+        codec_long_name: "AAC",
+        sample_rate: "48000",
+        channels: 2,
+        channel_layout: "stereo",
+        bit_rate: "192000",
+        tags: { language: "eng" },
+      },
+      {
+        codec_type: "audio",
+        codec_long_name: "Opus",
+        sample_rate: "48000",
+        channels: 6,
+        channel_layout: "5.1",
+        bit_rate: "384000",
+        tags: { language: "jpn" },
+      },
+      { codec_type: "subtitle", tags: { language: "eng" } },
+      { codec_type: "subtitle", tags: { language: "jpn" } },
+      { codec_type: "subtitle", tags: { language: "eng" } },
+      { codec_type: "subtitle" },
+    ],
+    format: {
+      format_long_name: "Matroska / WebM",
+      duration: "120",
+    },
+  });
+
+  expect(metadata).toMatchObject({
+    Video1Resolution: "1920 × 1080",
+    Video1Codec: "H.264 / AVC",
+    Video1BitRate: 5000000,
+    Video1FrameRate: 24,
+    Video2Resolution: "1280 × 720",
+    Video2Codec: "H.265 / HEVC",
+    Video2BitRate: 2500000,
+    Video2FrameRate: 30,
+    Audio1Codec: "AAC",
+    Audio1Language: "eng",
+    Audio1BitRate: 192000,
+    Audio1SampleRate: 48000,
+    Audio1Channels: "2 (stereo)",
+    Audio2Codec: "Opus",
+    Audio2Language: "jpn",
+    Audio2BitRate: 384000,
+    Audio2SampleRate: 48000,
+    Audio2Channels: "6 (5.1)",
+    Subtitles: "eng, jpn, und",
+  });
+  expect(metadata).not.toHaveProperty("VideoCodec");
+  expect(metadata).not.toHaveProperty("AudioCodec");
 });
 
 function twoByTwoBmp(): Buffer {

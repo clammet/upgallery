@@ -41,16 +41,10 @@ const preferredOrder = [
   "LensModel",
   "Software",
   "Format",
-  "VideoCodec",
-  "AudioCodec",
   "Duration",
-  "SampleRate",
-  "Channels",
-  "ChannelLayout",
-  "BitDepth",
-  "BitRate",
-  "FrameRate",
-  "Rotation",
+  "__videoStreams",
+  "__audioStreams",
+  "Subtitles",
   "ExposureTime",
   "FNumber",
   "ISO",
@@ -65,11 +59,6 @@ const labels: Record<string, string> = {
   Album: "Album",
   AlbumArtist: "Album artist",
   Artist: "Artist",
-  AudioCodec: "Audio codec",
-  BitDepth: "Bit depth",
-  BitRate: "Bit rate",
-  ChannelLayout: "Channel layout",
-  Channels: "Channels",
   Date: "Date",
   DateTimeOriginal: "Captured",
   Duration: "Duration",
@@ -77,7 +66,6 @@ const labels: Record<string, string> = {
   FNumber: "Aperture",
   FocalLength: "Focal length",
   Format: "Format",
-  FrameRate: "Frame rate",
   GPSAltitude: "Altitude",
   GPSHorizontalAccuracy: "Location accuracy",
   GPSLatitude: "Latitude",
@@ -91,10 +79,46 @@ const labels: Record<string, string> = {
   Resolution: "Resolution",
   Rotation: "Rotation",
   Software: "Software",
-  SampleRate: "Sample rate",
+  Subtitles: "Subtitles",
   Title: "Title",
   Track: "Track",
-  VideoCodec: "Video codec",
+};
+
+const videoStreamFields: readonly string[] = [
+  "Resolution",
+  "Codec",
+  "Language",
+  "BitRate",
+  "FrameRate",
+  "BitDepth",
+  "Rotation",
+];
+
+const audioStreamFields: readonly string[] = [
+  "Codec",
+  "Language",
+  "BitRate",
+  "SampleRate",
+  "Channels",
+  "BitDepth",
+];
+
+type StreamMetadataKey = {
+  kind: "Video" | "Audio";
+  track?: number;
+  field: string;
+};
+
+const streamFieldLabels: Record<string, string> = {
+  BitDepth: "bit depth",
+  BitRate: "bitrate",
+  Channels: "channels",
+  Codec: "codec",
+  FrameRate: "frame rate",
+  Language: "language",
+  Resolution: "resolution",
+  Rotation: "rotation",
+  SampleRate: "sample rate",
 };
 
 export function parseMetadataJson(json: string): MediaMetadata | null {
@@ -127,13 +151,12 @@ export function metadataRows(metadata: MediaMetadata): MetadataRow[] {
   return Object.entries(metadata)
     .sort(
       ([left], [right]) =>
-        (rank.get(left) ?? preferredOrder.length) -
-          (rank.get(right) ?? preferredOrder.length) ||
+        metadataRank(left, rank) - metadataRank(right, rank) ||
         left.localeCompare(right),
     )
     .map(([key, value]) => ({
       key,
-      label: labels[key] ?? humanizeKey(key),
+      label: metadataLabel(key),
       value: formatValue(key, value),
     }));
 }
@@ -205,7 +228,8 @@ export async function fileHasLocationMetadata(
 
 function formatValue(key: string, value: string | number): string {
   if (typeof value === "string") return value;
-  switch (key) {
+  const streamField = parseStreamMetadataKey(key)?.field;
+  switch (streamField ?? key) {
     case "Duration":
       return `${trimmedDecimal(value, 2)} s`;
     case "SampleRate":
@@ -239,6 +263,44 @@ function formatValue(key: string, value: string | number): string {
     default:
       return String(value);
   }
+}
+
+function metadataRank(key: string, rank: Map<string, number>): number {
+  const stream = parseStreamMetadataKey(key);
+  if (stream !== null) {
+    const anchor =
+      rank.get(stream.kind === "Video" ? "__videoStreams" : "__audioStreams") ??
+      preferredOrder.length;
+    const fields =
+      stream.kind === "Video" ? videoStreamFields : audioStreamFields;
+    const fieldRank = fields.indexOf(stream.field);
+    return (
+      anchor * 100_000 +
+      ((stream.track ?? 1) - 1) * 100 +
+      (fieldRank < 0 ? fields.length : fieldRank)
+    );
+  }
+  return (rank.get(key) ?? preferredOrder.length) * 100_000;
+}
+
+function metadataLabel(key: string): string {
+  const stream = parseStreamMetadataKey(key);
+  if (stream === null) return labels[key] ?? humanizeKey(key);
+  const track = stream.track === undefined ? "" : ` ${stream.track}`;
+  return `${stream.kind}${track} ${streamFieldLabels[stream.field] ?? humanizeKey(stream.field).toLocaleLowerCase()}`;
+}
+
+function parseStreamMetadataKey(key: string): StreamMetadataKey | null {
+  const match = key.match(
+    /^(Video|Audio)(\d+)?(Resolution|Codec|Language|BitRate|FrameRate|SampleRate|Channels|BitDepth|Rotation)$/,
+  );
+  if (match === null) return null;
+  const track = match[2] === undefined ? undefined : Number(match[2]);
+  return {
+    kind: match[1] as "Video" | "Audio",
+    ...(track === undefined ? {} : { track }),
+    field: match[3]!,
+  };
 }
 
 function numericValue(value: string | number | undefined): number | undefined {

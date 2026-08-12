@@ -1246,11 +1246,11 @@ describe("upgallery backend", () => {
 
     const metadataJson = JSON.stringify({
       AudioCodec: "PCM signed 16-bit little-endian",
-      SampleRate: 44100,
-      Channels: 2,
-      BitDepth: 16,
+      AudioBitRate: 1411200,
+      AudioSampleRate: 44100,
+      AudioChannels: "2 (stereo)",
+      AudioBitDepth: 16,
       Duration: 155.588571,
-      BitRate: 1411202,
     });
     await t.mutation(internal.storageJobs.completeMediaProcessing, {
       jobId: claim.jobId,
@@ -1260,7 +1260,7 @@ describe("upgallery backend", () => {
 
     await expect(
       t.run(async (ctx) => ctx.db.get("entries", entryId)),
-    ).resolves.toMatchObject({ metadataJson, metadataVersion: 3 });
+    ).resolves.toMatchObject({ metadataJson, metadataVersion: 5 });
   });
 
   test("existing audio without metadata is picked up for backfill", async () => {

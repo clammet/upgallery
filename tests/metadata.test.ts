@@ -12,8 +12,10 @@ describe("media metadata presentation", () => {
       JSON.stringify({
         GPSLongitude: 144.999,
         Duration: 2.768333,
-        BitRate: 8000000,
-        Resolution: "1080 × 1920",
+        VideoResolution: "1080 × 1920",
+        VideoBitRate: 7000000,
+        AudioBitRate: 192000,
+        AudioChannels: "2 (stereo)",
         GPSLatitude: -37.8109,
       }),
     );
@@ -21,19 +23,29 @@ describe("media metadata presentation", () => {
     expect(metadata).not.toBeNull();
     expect(metadataRows(metadata!)).toEqual([
       {
-        key: "Resolution",
-        label: "Resolution",
-        value: "1080 × 1920",
-      },
-      {
         key: "Duration",
         label: "Duration",
         value: "2.77 s",
       },
       {
-        key: "BitRate",
-        label: "Bit rate",
-        value: "8 Mb/s",
+        key: "VideoResolution",
+        label: "Video resolution",
+        value: "1080 × 1920",
+      },
+      {
+        key: "VideoBitRate",
+        label: "Video bitrate",
+        value: "7 Mb/s",
+      },
+      {
+        key: "AudioBitRate",
+        label: "Audio bitrate",
+        value: "192 kb/s",
+      },
+      {
+        key: "AudioChannels",
+        label: "Audio channels",
+        value: "2 (stereo)",
       },
       {
         key: "GPSLatitude",
@@ -44,6 +56,56 @@ describe("media metadata presentation", () => {
         key: "GPSLongitude",
         label: "Longitude",
         value: "144.999°",
+      },
+    ]);
+  });
+
+  test("orders and labels numbered streams and subtitle languages", () => {
+    expect(
+      metadataRows({
+        Subtitles: "eng, jpn",
+        Audio2Channels: "6 (5.1)",
+        Video2Codec: "H.265 / HEVC",
+        Audio1Codec: "AAC",
+        Video1Codec: "H.264 / AVC",
+        Audio1SampleRate: 48000,
+        Video1BitRate: 5000000,
+      }),
+    ).toEqual([
+      {
+        key: "Video1Codec",
+        label: "Video 1 codec",
+        value: "H.264 / AVC",
+      },
+      {
+        key: "Video1BitRate",
+        label: "Video 1 bitrate",
+        value: "5 Mb/s",
+      },
+      {
+        key: "Video2Codec",
+        label: "Video 2 codec",
+        value: "H.265 / HEVC",
+      },
+      {
+        key: "Audio1Codec",
+        label: "Audio 1 codec",
+        value: "AAC",
+      },
+      {
+        key: "Audio1SampleRate",
+        label: "Audio 1 sample rate",
+        value: "48 kHz",
+      },
+      {
+        key: "Audio2Channels",
+        label: "Audio 2 channels",
+        value: "6 (5.1)",
+      },
+      {
+        key: "Subtitles",
+        label: "Subtitles",
+        value: "eng, jpn",
       },
     ]);
   });

@@ -287,6 +287,7 @@ type FfprobeStream = {
   codec_name?: unknown;
   codec_type?: unknown;
   sample_rate?: unknown;
+  tags?: unknown;
   width?: unknown;
   height?: unknown;
   avg_frame_rate?: unknown;
@@ -438,47 +439,56 @@ function mediaMetadataFromFfprobe(payload: unknown): MediaMetadata {
   const format = isRecord(payload.format) ? payload.format : {};
   const tags = isRecord(format.tags) ? format.tags : {};
   const streams = ffprobeStreams(payload);
-  const video = firstVideoStream(payload);
-  const audio = streams.find((stream) => stream.codec_type === "audio");
+  const videos = streams.filter((stream) => stream.codec_type === "video");
+  const audios = streams.filter((stream) => stream.codec_type === "audio");
+  const subtitles = streams.filter(
+    (stream) => stream.codec_type === "subtitle",
+  );
   const metadata: MediaMetadata = {};
 
-  if (video !== undefined) {
+  for (const [index, video] of videos.entries()) {
+    const prefix = streamPrefix("Video", index, videos.length);
     const rotation = videoRotation(video);
     const resolution = displayResolution(video);
-    if (resolution !== undefined) metadata.Resolution = resolution;
+    if (resolution !== undefined) metadata[`${prefix}Resolution`] = resolution;
     copyString(
       metadata,
-      "VideoCodec",
+      `${prefix}Codec`,
       video.codec_long_name ?? video.codec_name,
     );
+    copyString(metadata, `${prefix}Language`, streamLanguage(video));
+    copyNumber(metadata, `${prefix}BitRate`, streamBitRate(video));
     const frameRate = parseFrameRate(video.avg_frame_rate);
-    if (frameRate !== undefined) metadata.FrameRate = frameRate;
+    if (frameRate !== undefined) metadata[`${prefix}FrameRate`] = frameRate;
+    copyNumber(metadata, `${prefix}BitDepth`, streamBitDepth(video));
     if (rotation !== undefined && rotation !== 0) {
-      metadata.Rotation = rotation;
+      metadata[`${prefix}Rotation`] = rotation;
     }
   }
-  if (audio !== undefined) {
+  for (const [index, audio] of audios.entries()) {
+    const prefix = streamPrefix("Audio", index, audios.length);
     copyString(
       metadata,
-      "AudioCodec",
+      `${prefix}Codec`,
       audio.codec_long_name ?? audio.codec_name,
     );
-    copyNumber(metadata, "SampleRate", audio.sample_rate);
-    copyNumber(metadata, "Channels", audio.channels);
-    copyString(metadata, "ChannelLayout", audio.channel_layout);
-    copyNumber(
-      metadata,
-      "BitDepth",
-      audio.bits_per_raw_sample ?? audio.bits_per_sample,
-    );
+    copyString(metadata, `${prefix}Language`, streamLanguage(audio));
+    copyNumber(metadata, `${prefix}BitRate`, streamBitRate(audio));
+    copyNumber(metadata, `${prefix}SampleRate`, audio.sample_rate);
+    const channels = audioChannelDescription(audio);
+    if (channels !== undefined) metadata[`${prefix}Channels`] = channels;
+    copyNumber(metadata, `${prefix}BitDepth`, streamBitDepth(audio));
+  }
+  const subtitleLanguages = [
+    ...new Set(
+      subtitles.map((stream) => streamLanguage(stream) ?? "und"),
+    ),
+  ];
+  if (subtitleLanguages.length > 0) {
+    metadata.Subtitles = subtitleLanguages.join(", ");
   }
   copyString(metadata, "Format", format.format_long_name);
   copyNumber(metadata, "Duration", format.duration);
-  copyNumber(
-    metadata,
-    "BitRate",
-    format.bit_rate ?? video?.bit_rate ?? audio?.bit_rate,
-  );
   copyString(metadata, "Title", firstTag(tags, "title", "TITLE"));
   copyString(metadata, "Artist", firstTag(tags, "artist", "ARTIST"));
   copyString(metadata, "Album", firstTag(tags, "album", "ALBUM"));
@@ -577,7 +587,7 @@ async function runFfprobe(
         "-print_format",
         "json",
         "-show_entries",
-        "stream=codec_name,codec_long_name,codec_type,width,height,avg_frame_rate,sample_rate,channels,channel_layout,bits_per_sample,bits_per_raw_sample,bit_rate:stream_tags=creation_time:stream_side_data=rotation:format=format_long_name,duration,bit_rate:format_tags",
+        "stream=codec_name,codec_long_name,codec_type,width,height,avg_frame_rate,sample_rate,channels,channel_layout,bits_per_sample,bits_per_raw_sample,bit_rate:stream_tags:stream_side_data=rotation:format=format_long_name,duration:format_tags",
         sourcePath,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
@@ -674,6 +684,52 @@ function parseFrameRate(value: unknown): number | undefined {
     return undefined;
   }
   return Math.round((numerator / denominator) * 100) / 100;
+}
+
+function streamBitRate(stream: FfprobeStream): number | undefined {
+  const tags = isRecord(stream.tags) ? stream.tags : {};
+  const bitRate = finiteNumber(
+    stream.bit_rate ?? firstTag(tags, "BPS", "BPS-eng", "bps"),
+  );
+  return bitRate !== undefined && bitRate > 0 ? bitRate : undefined;
+}
+
+function streamBitDepth(stream: FfprobeStream): number | undefined {
+  const bitDepth = finiteNumber(
+    stream.bits_per_raw_sample ?? stream.bits_per_sample,
+  );
+  return bitDepth !== undefined && bitDepth > 0 ? bitDepth : undefined;
+}
+
+function audioChannelDescription(
+  stream: FfprobeStream,
+): string | number | undefined {
+  const channels = finiteNumber(stream.channels);
+  const layout =
+    typeof stream.channel_layout === "string" &&
+      stream.channel_layout.trim() !== ""
+      ? stream.channel_layout.trim()
+      : undefined;
+  if (channels !== undefined && layout !== undefined) {
+    return `${channels} (${layout})`;
+  }
+  return channels ?? layout;
+}
+
+function streamPrefix(
+  kind: "Video" | "Audio",
+  index: number,
+  count: number,
+): string {
+  return count === 1 ? kind : `${kind}${index + 1}`;
+}
+
+function streamLanguage(stream: FfprobeStream): string | undefined {
+  const tags = isRecord(stream.tags) ? stream.tags : {};
+  const language = firstTag(tags, "language", "LANGUAGE");
+  return typeof language === "string" && language.trim() !== ""
+    ? language.trim()
+    : undefined;
 }
 
 function firstTag(
