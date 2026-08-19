@@ -1,0 +1,38 @@
+name: Renovate
+
+# Self-hosted Renovate: the same engine Mend runs, executed in this repo's
+# own Actions on a schedule, so no third-party service holds write access.
+# Authenticates as a self-owned GitHub App (secrets RENOVATE_APP_ID and
+# RENOVATE_APP_PRIVATE_KEY) rather than GITHUB_TOKEN, because PRs opened
+# with GITHUB_TOKEN would not trigger the CI workflows that gate automerge.
+# Repo-level behavior (automerge policy, the libvips custom manager, lockfile
+# maintenance) lives in renovate.json at the repo root.
+
+on:
+  schedule:
+    - cron: "37 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+
+      - uses: renovatebot/github-action@v46.2.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_PLATFORM: github
