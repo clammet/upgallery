@@ -32,19 +32,24 @@ jobs:
           cache: pnpm
 
       # The storage tests shell out to ffmpeg (present in the production
-      # image via apk, but not on the hosted runner). Apt mirrors on hosted
-      # runners occasionally hang without timing out, so bound every fetch
-      # and the step itself rather than stalling the job for hours.
+      # image via apk, but not on the hosted runner). Azure's apt mirror
+      # intermittently blackholes connections when many jobs start at once
+      # and apt's own timeouts don't always fire, so bound each command with
+      # timeout(1) and retry against the canonical Ubuntu mirror. A healthy
+      # install takes ~2 minutes.
       - name: Install ffmpeg
-        timeout-minutes: 8
+        timeout-minutes: 15
         run: |
-          APT_OPTS='-o Acquire::http::Timeout=30 -o Acquire::Retries=3'
-          for attempt in 1 2 3; do
-            sudo apt-get update -qq $APT_OPTS \
-              && sudo apt-get install -y -qq $APT_OPTS --no-install-recommends ffmpeg \
-              && break
-            echo "apt attempt $attempt failed; retrying" && sleep 10
-          done
+          install_ffmpeg() {
+            sudo timeout 120 apt-get update -qq &&
+              sudo timeout 300 apt-get install -y -qq --no-install-recommends ffmpeg
+          }
+          if ! install_ffmpeg; then
+            echo "apt failed against the default mirror; retrying via archive.ubuntu.com"
+            sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g' \
+              /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+            install_ffmpeg
+          fi
           ffmpeg -version | head -1
 
       - name: Install dependencies
