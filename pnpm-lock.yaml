@@ -82,8 +82,8 @@ importers:
         specifier: ^10.0.4
         version: 10.0.5
       convex-test:
-        specifier: ^0.0.54
-        version: 0.0.54(convex@1.43.0(react@19.2.8))
+        specifier: ^0.0.55
+        version: 0.0.55(convex@1.43.0(react@19.2.8))
       node-addon-api:
         specifier: ^8.9.0
         version: 8.9.0
@@ -1216,10 +1216,10 @@ packages:
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
-  convex-test@0.0.54:
-    resolution: {integrity: sha512-C0v2SQcuxrELAJRNzE6fQ686XDPor7UFoC22jcoJXeCRqhLo8ZIMZ4jyUHoo1UdAL2enCb0AbiprCVpLDN8u9Q==}
+  convex-test@0.0.55:
+    resolution: {integrity: sha512-ablJ6vR3WUpyTaYrrRQf8yxInGrhHyqBEQsCFzloda3G0MDEu2RMKNGUkvlBXYWPiiEP0UIKPS7gZuLbqGnvQw==}
     peerDependencies:
-      convex: ^1.32.0
+      convex: ^1.43.0
 
   convex@1.43.0:
     resolution: {integrity: sha512-huZWEUZQYxIRG104o22ZI99HkviSEVltwezZRDi+pQDPrQbc5EoCPa4Y7pJDqUBQw9dc/iEEXj2/rLZg1j7Dww==}
@@ -3299,7 +3299,7 @@ snapshots:
 
   convert-source-map@2.0.0: {}
 
-  convex-test@0.0.54(convex@1.43.0(react@19.2.8)):
+  convex-test@0.0.55(convex@1.43.0(react@19.2.8)):
     dependencies:
       convex: 1.43.0(react@19.2.8)
 
