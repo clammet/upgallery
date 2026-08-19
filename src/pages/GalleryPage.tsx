@@ -71,6 +71,31 @@ const uploadConcurrency = parseTransferConcurrency(
   import.meta.env.VITE_UPLOAD_CONCURRENCY,
 );
 
+const ENTRY_DRAG_TYPE = "application/x-upgallery-entry-ids";
+const FOLDER_DRAG_TYPE = "application/x-upgallery-folder-ids";
+
+function hasInternalDrag(dataTransfer: DataTransfer | null): boolean {
+  return (
+    dataTransfer !== null &&
+    (dataTransfer.types.includes(ENTRY_DRAG_TYPE) ||
+      dataTransfer.types.includes(FOLDER_DRAG_TYPE))
+  );
+}
+
+function readDraggedIds<T extends string>(
+  transferred: string,
+  fallback: T[],
+): T[] {
+  if (fallback.length > 0) return fallback;
+  if (!transferred) return [];
+  try {
+    const parsed: unknown = JSON.parse(transferred);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
 
 type FolderPreviewData = {
@@ -108,12 +133,14 @@ export function GalleryPage(props: {
   const removeFolders = useMutation(api.folders.removeMany);
   const removeEntries = useMutation(api.entries.removeMany);
   const moveEntries = useMutation(api.entries.moveMany);
+  const moveFolders = useMutation(api.folders.moveMany);
   const requestPreview = useMutation(api.entries.requestPreview);
   const removeLocationData = useMutation(api.entries.removeLocationData);
   const refreshMetadata = useMutation(api.entries.refreshMetadata);
   const renameEntry = useMutation(api.entries.rename);
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
+  const draggedFolderIds = useRef<Array<Id<"folders">>>([]);
   // Listing-based proof that a transfer's work landed despite a reported
   // failure, keyed by transfer id. Only checked against the folder the
   // transfer started in.
@@ -145,7 +172,7 @@ export function GalleryPage(props: {
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [moveDialog, setMoveDialog] = useState(false);
   const [actionPending, setActionPending] = useState(false);
-  const [draggingEntries, setDraggingEntries] = useState(false);
+  const [draggingItems, setDraggingItems] = useState(false);
   const [metadataEntryId, setMetadataEntryId] =
     useState<Id<"entries"> | null>(null);
 
@@ -359,34 +386,28 @@ export function GalleryPage(props: {
   };
 
   useEffect(() => {
-    if (!listing?.access.canUpload && !selectMode) return;
+    const canUpload = listing?.access.canUpload === true;
+    const canManage = listing?.access.canManage === true;
+    if (!canUpload && !canManage) return;
     const onDragOver = (event: DragEvent) => {
-      if (
-        selectMode &&
-        event.dataTransfer?.types.includes(
-          "application/x-upgallery-entry-ids",
-        )
-      ) {
+      if (canManage && hasInternalDrag(event.dataTransfer)) {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
         return;
       }
-      if (!listing?.access.canUpload) return;
+      if (!canUpload) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
     };
     const onDrop = (event: DragEvent) => {
-      if (
-        event.dataTransfer?.types.includes(
-          "application/x-upgallery-entry-ids",
-        )
-      ) {
+      if (hasInternalDrag(event.dataTransfer)) {
         event.preventDefault();
         draggedEntryIds.current = [];
-        setDraggingEntries(false);
+        draggedFolderIds.current = [];
+        setDraggingItems(false);
         return;
       }
-      if (!listing?.access.canUpload) return;
+      if (!canUpload) return;
       event.preventDefault();
       if (event.dataTransfer === null) return;
       // collectDroppedFiles must run synchronously while the items are live.
@@ -417,7 +438,12 @@ export function GalleryPage(props: {
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("paste", onPaste);
     };
-  }, [listing?.access.canUpload, folderId, selectMode]);
+  }, [
+    listing?.access.canUpload,
+    listing?.access.canManage,
+    folderId,
+    selectMode,
+  ]);
 
   useEffect(() => {
     setNotice(null);
@@ -517,6 +543,7 @@ export function GalleryPage(props: {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
   }
 
+  const canManage = listing.access.canManage;
   const selectedIds = [...selectedEntryIds];
   const selectedFolderIdList = [...selectedFolderIds];
   const selectedCount = selectedIds.length + selectedFolderIdList.length;
@@ -606,6 +633,135 @@ export function GalleryPage(props: {
     }
   };
 
+  const queueFolderMove = async (
+    folderIds: Array<Id<"folders">>,
+    destinationFolderId: Id<"folders">,
+  ) => {
+    if (folderIds.length === 0) return;
+    setActionPending(true);
+    setActionError(null);
+    const folderNames = new Map(
+      listing.folders.map((folder) => [folder._id, folder.name]),
+    );
+    const transfers = new Map(
+      folderIds.map((movedFolderId) => [
+        movedFolderId,
+        beginTransfer(folderNames.get(movedFolderId) ?? "Folder", "move", null),
+      ]),
+    );
+    for (const [movedFolderId, transferId] of transfers) {
+      transferResolutions.current.set(transferId, {
+        folderId,
+        condition: { kind: "folderGone", folderId: movedFolderId },
+      });
+    }
+    try {
+      const result = await moveFolders({
+        galleryId: props.gallery._id,
+        destinationFolderId,
+        folderIds,
+      });
+      const errors: string[] = [];
+      if (result.kind === "filesystem") {
+        // From here the directory renames are driven by this tab.
+        for (const transferId of transfers.values()) {
+          markTransferClientWork(transferId);
+        }
+        for (const operation of result.operations) {
+          const transferId = transfers.get(operation.folderId);
+          transfers.delete(operation.folderId);
+          try {
+            await completeFilesystemOperation({
+              kind: "filesystem",
+              operationId: operation.operationId,
+              token: operation.token,
+            });
+            if (transferId !== undefined) {
+              completeTransfer(transferId);
+            }
+          } catch (reason) {
+            const message = friendlyError(
+              reason,
+              "Could not move the folder",
+            );
+            if (transferId !== undefined) {
+              failTransfer(transferId, message, () =>
+                retryFilesystemOperation(
+                  transferId,
+                  operation.operationId,
+                  operation.token,
+                ),
+              );
+            }
+            errors.push(message);
+          }
+        }
+      }
+      for (const transferId of transfers.values()) {
+        completeTransfer(transferId);
+      }
+      // Every transfer is settled now; a throw below must not re-fail them.
+      transfers.clear();
+      if (errors.length > 0) {
+        setActionError(errors[0]);
+        throw new Error(errors[0]);
+      }
+      setSelectedFolderIds(new Set());
+      setMoveDialog(false);
+      setNotice(
+        result.moved === 0
+          ? "The selected folders are already in that folder."
+          : `${result.moved} folder${result.moved === 1 ? "" : "s"} moved.`,
+      );
+    } catch (reason) {
+      const message = friendlyError(
+        reason,
+        "Could not move the selected folders",
+      );
+      for (const [movedFolderId, transferId] of transfers) {
+        failTransfer(transferId, message, () =>
+          retryFolderMove(movedFolderId, destinationFolderId, transferId),
+        );
+      }
+      setActionError(message);
+      throw reason;
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const retryFolderMove = (
+    movedFolderId: Id<"folders">,
+    destinationFolderId: Id<"folders">,
+    transferId: number,
+  ) => {
+    moveFolders({
+      galleryId: props.gallery._id,
+      destinationFolderId,
+      folderIds: [movedFolderId],
+    })
+      .then(async (result) => {
+        if (result.kind === "filesystem") {
+          markTransferClientWork(transferId);
+          for (const operation of result.operations) {
+            await completeFilesystemOperation({
+              kind: "filesystem",
+              operationId: operation.operationId,
+              token: operation.token,
+            });
+          }
+        }
+        completeTransfer(transferId);
+      })
+      .catch((reason: unknown) => {
+        failTransfer(
+          transferId,
+          friendlyError(reason, "Could not move the folder"),
+          () => retryFolderMove(movedFolderId, destinationFolderId, transferId),
+        );
+      });
+  };
+
   const retryFilesystemOperation = (
     transferId: number,
     operationId: Id<"filesystemOperations">,
@@ -665,49 +821,125 @@ export function GalleryPage(props: {
       });
   };
 
-  const dropSelectedEntries = (
+  const startItemDrag = (
+    event: ReactDragEvent<HTMLElement>,
+    entryIds: Array<Id<"entries">>,
+    folderIds: Array<Id<"folders">>,
+  ) => {
+    draggedEntryIds.current = entryIds;
+    draggedFolderIds.current = folderIds;
+    event.dataTransfer.effectAllowed = "move";
+    if (entryIds.length > 0) {
+      event.dataTransfer.setData(ENTRY_DRAG_TYPE, JSON.stringify(entryIds));
+    }
+    if (folderIds.length > 0) {
+      event.dataTransfer.setData(FOLDER_DRAG_TYPE, JSON.stringify(folderIds));
+    }
+    // Chromium cancels a drag whose source re-renders during dragstart, so
+    // any state update has to wait until the drag is underway.
+    window.setTimeout(() => setDraggingItems(true), 0);
+  };
+
+  const endItemDrag = () => {
+    draggedEntryIds.current = [];
+    draggedFolderIds.current = [];
+    setDraggingItems(false);
+  };
+
+  const beginEntryDrag = (
+    event: ReactDragEvent<HTMLElement>,
+    entryId: Id<"entries">,
+  ) => {
+    const dragsSelection = selectMode && selectedEntryIds.has(entryId);
+    if (selectMode && !dragsSelection) {
+      window.setTimeout(() => {
+        setSelectedEntryIds(new Set([entryId]));
+        setSelectedFolderIds(new Set());
+      }, 0);
+    }
+    startItemDrag(
+      event,
+      dragsSelection ? selectedIds : [entryId],
+      dragsSelection ? selectedFolderIdList : [],
+    );
+  };
+
+  const beginFolderDrag = (
+    event: ReactDragEvent<HTMLElement>,
+    dragFolderId: Id<"folders">,
+  ) => {
+    const dragsSelection = selectMode && selectedFolderIds.has(dragFolderId);
+    if (selectMode && !dragsSelection) {
+      window.setTimeout(() => {
+        setSelectedEntryIds(new Set());
+        setSelectedFolderIds(new Set([dragFolderId]));
+      }, 0);
+    }
+    startItemDrag(
+      event,
+      dragsSelection ? selectedIds : [],
+      dragsSelection ? selectedFolderIdList : [dragFolderId],
+    );
+  };
+
+  const dropDraggedItems = (
     event: ReactDragEvent<HTMLElement>,
     destinationGalleryId: Id<"galleries">,
     destinationFolderId: Id<"folders">,
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    const transferred = event.dataTransfer.getData(
-      "application/x-upgallery-entry-ids",
+    const entryIds = readDraggedIds<Id<"entries">>(
+      event.dataTransfer.getData(ENTRY_DRAG_TYPE),
+      draggedEntryIds.current,
     );
-    let entryIds = draggedEntryIds.current;
-    if (entryIds.length === 0 && transferred) {
-      try {
-        entryIds = JSON.parse(transferred) as Array<Id<"entries">>;
-      } catch {
-        entryIds = [];
-      }
+    const folderIds = readDraggedIds<Id<"folders">>(
+      event.dataTransfer.getData(FOLDER_DRAG_TYPE),
+      draggedFolderIds.current,
+    );
+    endItemDrag();
+    if (folderIds.includes(destinationFolderId)) return;
+    if (entryIds.length > 0) {
+      void queueMove(
+        entryIds,
+        destinationGalleryId,
+        destinationFolderId,
+      ).catch(() => undefined);
     }
-    draggedEntryIds.current = [];
-    setDraggingEntries(false);
-    void queueMove(
-      entryIds,
-      destinationGalleryId,
-      destinationFolderId,
-    ).catch(() => undefined);
+    if (folderIds.length > 0) {
+      void queueFolderMove(folderIds, destinationFolderId).catch(
+        () => undefined,
+      );
+    }
+  };
+
+  const dragOverFolderTarget = (
+    event: ReactDragEvent<HTMLElement>,
+    targetFolderId: Id<"folders">,
+  ) => {
+    if (
+      !hasInternalDrag(event.dataTransfer) ||
+      draggedFolderIds.current.includes(targetFolderId)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
   };
 
   const breadcrumbs = listing.breadcrumbs.map((crumb, index) => (
     <span
-      className={draggingEntries ? styles.breadcrumbDropTarget : undefined}
+      className={draggingItems ? styles.breadcrumbDropTarget : undefined}
       key={crumb._id}
       onDragOver={
-        selectMode
-          ? (event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-            }
+        canManage
+          ? (event) => dragOverFolderTarget(event, crumb._id)
           : undefined
       }
       onDrop={
-        selectMode
+        canManage
           ? (event) =>
-              dropSelectedEntries(event, props.gallery._id, crumb._id)
+              dropDraggedItems(event, props.gallery._id, crumb._id)
           : undefined
       }
     >
@@ -776,18 +1008,15 @@ export function GalleryPage(props: {
                   >
                     <TrashIcon />
                   </button>
-                  {selectedIds.length > 0 &&
-                  selectedFolderIdList.length === 0 ? (
-                    <button
-                      className={layout.iconButton}
-                      type="button"
-                      onClick={() => setMoveDialog(true)}
-                      aria-label={`Move ${selectedIds.length} selected files`}
-                      title="Move to…"
-                    >
-                      <MoveIcon />
-                    </button>
-                  ) : null}
+                  <button
+                    className={layout.iconButton}
+                    type="button"
+                    onClick={() => setMoveDialog(true)}
+                    aria-label={`Move ${selectionSummary}`}
+                    title="Move to…"
+                  >
+                    <MoveIcon />
+                  </button>
                 </>
               ) : null}
             </>
@@ -834,7 +1063,10 @@ export function GalleryPage(props: {
             preview={folderPreviews.get(folder._id)}
             selectMode={selectMode}
             selected={selectedFolderIds.has(folder._id)}
-            dropTarget={draggingEntries}
+            dropTarget={
+              draggingItems && !draggedFolderIds.current.includes(folder._id)
+            }
+            draggable={canManage}
             onToggle={() => {
               setSelectedFolderIds((current) => {
                 const next = new Set(current);
@@ -843,18 +1075,21 @@ export function GalleryPage(props: {
                 return next;
               });
             }}
+            onDragStart={
+              canManage
+                ? (event) => beginFolderDrag(event, folder._id)
+                : undefined
+            }
+            onDragEnd={canManage ? endItemDrag : undefined}
             onDragOver={
-              selectMode
-                ? (event) => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                  }
+              canManage
+                ? (event) => dragOverFolderTarget(event, folder._id)
                 : undefined
             }
             onDrop={
-              selectMode
+              canManage
                 ? (event) =>
-                    dropSelectedEntries(
+                    dropDraggedItems(
                       event,
                       props.gallery._id,
                       folder._id,
@@ -869,6 +1104,7 @@ export function GalleryPage(props: {
             entry={entry}
             selectMode={selectMode}
             selected={selectedEntryIds.has(entry._id)}
+            draggable={canManage}
             onOpen={() => setViewerEntry(entry._id, false)}
             onMetadata={() => setMetadataEntryId(entry._id)}
             onToggle={() => {
@@ -879,25 +1115,8 @@ export function GalleryPage(props: {
                 return next;
               });
             }}
-            onDragStart={(event) => {
-              const ids = selectedEntryIds.has(entry._id)
-                ? selectedIds
-                : [entry._id];
-              if (!selectedEntryIds.has(entry._id)) {
-                setSelectedEntryIds(new Set(ids));
-              }
-              draggedEntryIds.current = ids;
-              setDraggingEntries(true);
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData(
-                "application/x-upgallery-entry-ids",
-                JSON.stringify(ids),
-              );
-            }}
-            onDragEnd={() => {
-              draggedEntryIds.current = [];
-              setDraggingEntries(false);
-            }}
+            onDragStart={(event) => beginEntryDrag(event, entry._id)}
+            onDragEnd={endItemDrag}
           />
         ))}
       </div>
@@ -1175,18 +1394,28 @@ export function GalleryPage(props: {
       {moveDialog ? (
         <MoveDialog
           currentGalleryId={props.gallery._id}
-          selectedCount={selectedIds.length}
+          selectedEntryCount={selectedIds.length}
+          selectedFolderIds={selectedFolderIdList}
+          selectionSummary={selectionSummary}
           pending={actionPending}
           onClose={() => {
             if (!actionPending) setMoveDialog(false);
           }}
-          onMove={(destinationGalleryId, destinationFolderId) =>
-            queueMove(
-              selectedIds,
-              destinationGalleryId,
-              destinationFolderId,
-            )
-          }
+          onMove={async (destinationGalleryId, destinationFolderId) => {
+            if (selectedIds.length > 0) {
+              await queueMove(
+                selectedIds,
+                destinationGalleryId,
+                destinationFolderId,
+              );
+            }
+            if (selectedFolderIdList.length > 0) {
+              await queueFolderMove(
+                selectedFolderIdList,
+                destinationFolderId,
+              );
+            }
+          }}
         />
       ) : null}
     </PageFrame>
@@ -1262,7 +1491,10 @@ function GalleryFolderCard(props: {
   selectMode: boolean;
   selected: boolean;
   dropTarget: boolean;
+  draggable: boolean;
   onToggle: () => void;
+  onDragStart?: (event: ReactDragEvent<HTMLElement>) => void;
+  onDragEnd?: () => void;
   onDragOver?: (event: ReactDragEvent<HTMLElement>) => void;
   onDrop?: (event: ReactDragEvent<HTMLElement>) => void;
 }) {
@@ -1281,6 +1513,9 @@ function GalleryFolderCard(props: {
       <Link
         className={`${styles.folderCard} ${dropTargetClass}`}
         to={`?folder=${props.folder._id}`}
+        draggable={props.draggable}
+        onDragStart={props.onDragStart}
+        onDragEnd={props.onDragEnd}
         onDragOver={props.onDragOver}
         onDrop={props.onDrop}
       >
@@ -1295,6 +1530,9 @@ function GalleryFolderCard(props: {
       onClick={props.onToggle}
       aria-label={`${props.selected ? "Deselect" : "Select"} folder ${props.folder.name}`}
       aria-pressed={props.selected}
+      draggable={props.draggable}
+      onDragStart={props.onDragStart}
+      onDragEnd={props.onDragEnd}
       onDragOver={props.onDragOver}
       onDrop={props.onDrop}
     >
@@ -1315,6 +1553,7 @@ function GalleryEntryCard(props: {
   entry: Doc<"entries">;
   selectMode: boolean;
   selected: boolean;
+  draggable: boolean;
   onOpen: () => void;
   onMetadata: () => void;
   onToggle: () => void;
@@ -1365,9 +1604,9 @@ function GalleryEntryCard(props: {
   return (
     <article
       className={`${styles.fileCard} ${props.selected ? styles.selectedCard : ""}`}
-      draggable={props.selectMode}
-      onDragStart={props.selectMode ? props.onDragStart : undefined}
-      onDragEnd={props.selectMode ? props.onDragEnd : undefined}
+      draggable={props.draggable}
+      onDragStart={props.draggable ? props.onDragStart : undefined}
+      onDragEnd={props.draggable ? props.onDragEnd : undefined}
     >
       {props.selectMode ? (
         <button
@@ -1552,7 +1791,9 @@ function GalleryMetadataDialog(props: {
 
 function MoveDialog(props: {
   currentGalleryId: Id<"galleries">;
-  selectedCount: number;
+  selectedEntryCount: number;
+  selectedFolderIds: Array<Id<"folders">>;
+  selectionSummary: string;
   pending: boolean;
   onClose: () => void;
   onMove: (
@@ -1560,7 +1801,19 @@ function MoveDialog(props: {
     folderId: Id<"folders">,
   ) => Promise<void>;
 }) {
-  const galleries = useQuery(api.galleries.listOwnedImageGalleries);
+  // Folders can only move within their own gallery, so a selection that
+  // includes folders pins the gallery column to the current gallery.
+  const movingFolders = props.selectedFolderIds.length > 0;
+  const ownedGalleries = useQuery(api.galleries.listOwnedImageGalleries);
+  const galleries = useMemo(
+    () =>
+      movingFolders
+        ? ownedGalleries?.filter(
+            (gallery) => gallery._id === props.currentGalleryId,
+          )
+        : ownedGalleries,
+    [movingFolders, ownedGalleries, props.currentGalleryId],
+  );
   const [galleryId, setGalleryId] = useState<Id<"galleries"> | null>(null);
   const [folderId, setFolderId] = useState<Id<"folders"> | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -1594,8 +1847,15 @@ function MoveDialog(props: {
     if (folders === undefined || galleryId === null) return [];
     const gallery = galleries?.find((candidate) => candidate._id === galleryId);
     if (gallery === undefined) return [];
+    // A folder cannot move into itself or one of its descendants.
+    const movedIds = new Set(props.selectedFolderIds);
+    const destinations = folders.filter(
+      (folder) =>
+        !movedIds.has(folder._id) &&
+        !folder.ancestorIds.some((ancestorId) => movedIds.has(ancestorId)),
+    );
     const children = new Map<string, typeof folders>();
-    for (const folder of folders) {
+    for (const folder of destinations) {
       const key = folder.parentId ?? "";
       children.set(key, [...(children.get(key) ?? []), folder]);
     }
@@ -1609,7 +1869,7 @@ function MoveDialog(props: {
         visit(folder._id);
       }
     };
-    const root = folders.find(
+    const root = destinations.find(
       (folder) => folder._id === gallery.rootFolderId,
     );
     if (root !== undefined) {
@@ -1617,10 +1877,10 @@ function MoveDialog(props: {
       visit(root._id);
     }
     return ordered;
-  }, [folders, galleries, galleryId]);
+  }, [folders, galleries, galleryId, props.selectedFolderIds]);
 
   return (
-    <Dialog title={`Move ${props.selectedCount} selected file${props.selectedCount === 1 ? "" : "s"}`} onClose={props.onClose}>
+    <Dialog title={`Move ${props.selectionSummary}`} onClose={props.onClose}>
       <form
         className={layout.form}
         onSubmit={(event) => {
@@ -1629,7 +1889,7 @@ function MoveDialog(props: {
           setDialogError(null);
           void props.onMove(galleryId, folderId).catch((reason: unknown) => {
             setDialogError(
-              friendlyError(reason, "Could not move the selected files"),
+              friendlyError(reason, "Could not move the selected items"),
             );
           });
         }}
@@ -1651,6 +1911,9 @@ function MoveDialog(props: {
               ))}
               {galleries?.length === 0 ? (
                 <p>No owned image galleries are available.</p>
+              ) : null}
+              {movingFolders && (galleries?.length ?? 0) > 0 ? (
+                <p>Folders move within their own gallery.</p>
               ) : null}
             </div>
           </section>

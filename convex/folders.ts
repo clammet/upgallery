@@ -1,8 +1,12 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { folderPreviewMode, privacy } from "./lib/validators";
 import type { Id } from "./_generated/dataModel";
+import {
+  getFilesystemFolderSegments,
+  getFilesystemStorageKey,
+} from "./lib/filesystem";
 import {
   cleanFilesystemSegment,
   MAX_FOLDER_DEPTH,
@@ -440,6 +444,257 @@ export const removeMany = mutation({
       createdAt: now,
     });
     return { kind: "complete" as const };
+  },
+});
+
+export const moveMany = mutation({
+  args: {
+    galleryId: v.id("galleries"),
+    destinationFolderId: v.id("folders"),
+    folderIds: v.array(v.id("folders")),
+  },
+  handler: async (ctx, args) => {
+    const folderIds = [...new Set(args.folderIds)];
+    if (folderIds.length < 1 || folderIds.length > MAX_BULK_FOLDERS) {
+      throw new Error(
+        `Select between 1 and ${MAX_BULK_FOLDERS} folders to move`,
+      );
+    }
+    const [gallery, destination] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("folders", args.destinationFolderId),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image"
+    ) {
+      throw new Error("Gallery not found");
+    }
+    if (gallery.pendingMigrationId !== undefined) {
+      throw new Error("Folders cannot be moved during storage migration");
+    }
+    if (
+      destination === null ||
+      destination.galleryId !== gallery._id ||
+      destination.filesystemMissingAt !== undefined
+    ) {
+      throw new Error("Destination folder is unavailable");
+    }
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+
+    const selectedIds = new Set(folderIds);
+    const folders = [];
+    for (const folderId of folderIds) {
+      const folder = await ctx.db.get("folders", folderId);
+      if (
+        folder === null ||
+        folder.galleryId !== gallery._id ||
+        folder.filesystemMissingAt !== undefined
+      ) {
+        throw new Error("A selected folder is no longer available");
+      }
+      if (gallery.rootFolderId === folder._id || folder.parentId === undefined) {
+        throw new Error("The root folder cannot be moved");
+      }
+      if (
+        destination._id === folder._id ||
+        destination.ancestorIds.includes(folder._id)
+      ) {
+        throw new Error(`${folder.name} cannot be moved into itself`);
+      }
+      if (folder.ancestorIds.some((ancestorId) => selectedIds.has(ancestorId))) {
+        throw new Error("Move one branch of nested folders at a time");
+      }
+      folders.push(folder);
+    }
+    const movingFolders = folders.filter(
+      (folder) => folder.parentId !== destination._id,
+    );
+    if (movingFolders.length === 0) {
+      return { kind: "complete" as const, moved: 0 };
+    }
+
+    const siblings = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q.eq("galleryId", gallery._id).eq("parentId", destination._id),
+      )
+      .take(512);
+    const movingIds = new Set(movingFolders.map((folder) => folder._id));
+    const reserved = siblings.filter(
+      (sibling) =>
+        !movingIds.has(sibling._id) &&
+        sibling.filesystemMissingAt === undefined,
+    );
+    const reservedSlugs = new Set(reserved.map((sibling) => sibling.slug));
+    const reservedNames = new Set(reserved.map((sibling) => sibling.name));
+    for (const folder of movingFolders) {
+      if (
+        reservedSlugs.has(folder.slug) ||
+        (gallery.storageKind === "user" && reservedNames.has(folder.name))
+      ) {
+        throw new Error(
+          `A folder named ${folder.name} already exists in the destination`,
+        );
+      }
+      reservedSlugs.add(folder.slug);
+      reservedNames.add(folder.name);
+    }
+
+    // The moved folder's subtree must still fit inside MAX_FOLDER_DEPTH at
+    // its new position, so measure each subtree's height first. The walk is
+    // capped: a tree too large to measure is too risky to move blindly.
+    const movedAncestorCount = destination.ancestorIds.length + 1;
+    if (movedAncestorCount >= MAX_FOLDER_DEPTH) {
+      throw new Error(
+        `Folders cannot be nested deeper than ${MAX_FOLDER_DEPTH}`,
+      );
+    }
+    let walked = 0;
+    for (const folder of movingFolders) {
+      let frontier = [folder._id];
+      let depth = movedAncestorCount;
+      while (frontier.length > 0) {
+        const next: Array<Id<"folders">> = [];
+        for (const frontierId of frontier) {
+          const children = await ctx.db
+            .query("folders")
+            .withIndex("by_galleryId_and_parentId", (q) =>
+              q.eq("galleryId", gallery._id).eq("parentId", frontierId),
+            )
+            .take(512);
+          walked += children.length;
+          if (walked > 2048) {
+            throw new Error("The selected folders contain too many subfolders to move");
+          }
+          for (const child of children) {
+            if (child.filesystemMissingAt === undefined) {
+              next.push(child._id);
+            }
+          }
+        }
+        if (next.length > 0 && depth + 1 >= MAX_FOLDER_DEPTH) {
+          throw new Error(
+            `Folders cannot be nested deeper than ${MAX_FOLDER_DEPTH}`,
+          );
+        }
+        frontier = next;
+        depth += 1;
+      }
+    }
+
+    const now = Date.now();
+    if (gallery.storageKind === "user") {
+      const operations = [];
+      for (const folder of movingFolders) {
+        cleanFilesystemSegment(folder.name);
+        const token = createToken();
+        const operationId = await ctx.db.insert("filesystemOperations", {
+          galleryId: gallery._id,
+          // For a move the operation's parent is the destination folder; the
+          // moved folder itself travels in folderId.
+          parentId: destination._id,
+          folderId: folder._id,
+          actorProfileId: actor._id,
+          kind: "move",
+          name: folder.name,
+          privacy: folder.privacy,
+          previewMode: folder.previewMode,
+          tokenHash: await sha256(token),
+          expiresAt: now + 15 * 60 * 1000,
+          state: "pending",
+          attempts: 0,
+        });
+        operations.push({ folderId: folder._id, operationId, token });
+      }
+      return {
+        kind: "filesystem" as const,
+        operations,
+        moved: movingFolders.length,
+      };
+    }
+    for (const folder of movingFolders) {
+      await ctx.db.patch("folders", folder._id, {
+        parentId: destination._id,
+        ancestorIds: [...destination.ancestorIds, destination._id],
+      });
+      await ctx.scheduler.runAfter(0, internal.folders.reparentSubtree, {
+        folderId: folder._id,
+      });
+    }
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "folders.moved",
+      galleryId: gallery._id,
+      detail: `${movingFolders.length} folder${movingFolders.length === 1 ? "" : "s"} to ${destination.name}`,
+      createdAt: now,
+    });
+    return { kind: "complete" as const, moved: movingFolders.length };
+  },
+});
+
+// After a folder is reparented or renamed its descendants' denormalized
+// state is stale: child folders still carry the old ancestor chain, and in
+// user-backed galleries entry storage keys still embed the old path. Walk
+// the subtree one folder per transaction, repairing both.
+export const reparentSubtree = internalMutation({
+  args: { folderId: v.id("folders") },
+  handler: async (ctx, args) => {
+    const folder = await ctx.db.get("folders", args.folderId);
+    if (folder === null || folder.filesystemMissingAt !== undefined) {
+      return null;
+    }
+    const gallery = await ctx.db.get("galleries", folder.galleryId);
+    if (gallery === null || gallery.deletedAt !== undefined) {
+      return null;
+    }
+    if (gallery.storageKind === "user" && gallery.rootFolderId !== undefined) {
+      const segments = await getFilesystemFolderSegments(ctx, gallery, folder);
+      const entries = ctx.db
+        .query("entries")
+        .withIndex("by_folderId_and_state", (q) =>
+          q.eq("folderId", folder._id),
+        );
+      for await (const entry of entries) {
+        if (entry.storageKind !== "user") {
+          continue;
+        }
+        const storageKey = getFilesystemStorageKey(
+          gallery,
+          segments,
+          entry.name,
+        );
+        if (storageKey !== entry.storageKey) {
+          await ctx.db.patch("entries", entry._id, {
+            storageKey,
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    }
+    const ancestorIds = [...folder.ancestorIds, folder._id];
+    const children = ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q.eq("galleryId", folder.galleryId).eq("parentId", folder._id),
+      );
+    for await (const child of children) {
+      if (
+        child.ancestorIds.length !== ancestorIds.length ||
+        child.ancestorIds.some((id, index) => id !== ancestorIds[index])
+      ) {
+        await ctx.db.patch("folders", child._id, { ancestorIds });
+      }
+      await ctx.scheduler.runAfter(0, internal.folders.reparentSubtree, {
+        folderId: child._id,
+      });
+    }
+    return null;
   },
 });
 

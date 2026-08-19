@@ -815,6 +815,26 @@ async function filesystemOperationClaim(
       throw new Error("Folder is unavailable");
     }
     sourceSegments = await getFilesystemFolderSegments(ctx, gallery, folder);
+  } else if (operation.kind === "move") {
+    // A move's parent is the destination folder, so the folder being moved
+    // starts somewhere else and must not contain its destination.
+    if (operation.folderId === undefined) {
+      throw new Error("Folder operation has no folder");
+    }
+    const folder = await ctx.db.get("folders", operation.folderId);
+    if (
+      folder === null ||
+      folder.galleryId !== gallery._id ||
+      folder.filesystemMissingAt !== undefined ||
+      folder.parentId === undefined ||
+      gallery.rootFolderId === folder._id ||
+      folder.name !== operation.name ||
+      parent._id === folder._id ||
+      parent.ancestorIds.includes(folder._id)
+    ) {
+      throw new Error("Folder is unavailable");
+    }
+    sourceSegments = await getFilesystemFolderSegments(ctx, gallery, folder);
   }
   const now = Date.now();
   await ctx.db.patch("filesystemOperations", operation._id, {
@@ -1008,6 +1028,28 @@ export const completeFilesystemOperation = internalMutation({
           { folderId: folder._id },
         );
       }
+    } else if (operation.kind === "move") {
+      if (folderId === undefined) {
+        throw new Error("Move operation has no folder");
+      }
+      const folder = await ctx.db.get("folders", folderId);
+      if (
+        folder === null ||
+        folder.galleryId !== gallery._id ||
+        parent._id === folder._id ||
+        parent.ancestorIds.includes(folder._id)
+      ) {
+        throw new Error("Folder is no longer available");
+      }
+      await ctx.db.patch("folders", folder._id, {
+        parentId: parent._id,
+        ancestorIds: [...parent.ancestorIds, parent._id],
+        filesystemIdentity: args.identity,
+        filesystemMissingAt: undefined,
+      });
+      await ctx.scheduler.runAfter(0, internal.folders.reparentSubtree, {
+        folderId: folder._id,
+      });
     } else {
       if (folderId === undefined) {
         throw new Error("Rename operation has no folder");
@@ -1019,6 +1061,11 @@ export const completeFilesystemOperation = internalMutation({
         previewMode: operation.previewMode,
         filesystemIdentity: args.identity,
         filesystemMissingAt: undefined,
+      });
+      // The rename changed every descendant path on disk; repair the
+      // subtree's stored storage keys to match.
+      await ctx.scheduler.runAfter(0, internal.folders.reparentSubtree, {
+        folderId,
       });
     }
     await ctx.db.patch("filesystemOperations", operation._id, {
@@ -1036,7 +1083,9 @@ export const completeFilesystemOperation = internalMutation({
             ? "filesystem_folder.renamed"
             : operation.kind === "rmdir"
               ? "filesystem_folder.deleted"
-              : "filesystem_file.renamed",
+              : operation.kind === "move"
+                ? "filesystem_folder.moved"
+                : "filesystem_file.renamed",
       galleryId: gallery._id,
       detail: operation.name,
       createdAt: Date.now(),

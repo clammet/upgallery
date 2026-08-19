@@ -175,6 +175,7 @@ export default defineSchema({
       v.literal("rename"),
       v.literal("rmdir"),
       v.literal("fileRename"),
+      v.literal("move"),
     ),
     name: v.string(),
     privacy,

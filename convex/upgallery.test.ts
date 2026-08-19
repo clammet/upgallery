@@ -2411,4 +2411,221 @@ describe("upgallery backend", () => {
       },
     ]);
   });
+
+  test("gallery owners can move folders and their subtrees within a gallery", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const owner = await seedProfile(t, {
+        email: "owner@example.com",
+        admin: true,
+      });
+      const editor = await seedProfile(t, { email: "editor@example.com" });
+      const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+      const editorClient = asUser(t, editor.googleSubject, "editor@example.com");
+      const galleryId = await ownerClient.mutation(api.galleries.create, {
+        name: "Folder move gallery",
+        slug: "folder-move-gallery",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "folder-move",
+        hosts: [{ host: "folder-move.example.com", rootPath: "/" }],
+      });
+      const rootFolderId = await t.run(async (ctx) => {
+        await ctx.db.insert("galleryRoles", {
+          galleryId,
+          profileId: editor.profileId,
+          role: "editor",
+        });
+        const gallery = await ctx.db.get("galleries", galleryId);
+        return gallery!.rootFolderId!;
+      });
+      const createFolder = async (parentId: typeof rootFolderId, name: string) => {
+        const result = await ownerClient.mutation(api.folders.create, {
+          galleryId,
+          parentId,
+          name,
+          privacy: "public" as const,
+        });
+        if (result.kind !== "complete") {
+          throw new Error("Shared gallery unexpectedly required filesystem I/O");
+        }
+        return result.folderId;
+      };
+      const tripsId = await createFolder(rootFolderId, "Trips");
+      const japanId = await createFolder(tripsId, "Japan");
+      const archiveId = await createFolder(rootFolderId, "Archive");
+
+      await expect(
+        editorClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: archiveId,
+          folderIds: [tripsId],
+        }),
+      ).rejects.toThrow("Unauthorized");
+      await expect(
+        ownerClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: archiveId,
+          folderIds: [rootFolderId],
+        }),
+      ).rejects.toThrow("The root folder cannot be moved");
+      await expect(
+        ownerClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: japanId,
+          folderIds: [tripsId],
+        }),
+      ).rejects.toThrow("Trips cannot be moved into itself");
+
+      await expect(
+        ownerClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: archiveId,
+          folderIds: [tripsId],
+        }),
+      ).resolves.toEqual({ kind: "complete", moved: 1 });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const moved = await t.run(async (ctx) => ({
+        trips: await ctx.db.get("folders", tripsId),
+        japan: await ctx.db.get("folders", japanId),
+      }));
+      expect(moved.trips).toMatchObject({
+        parentId: archiveId,
+        ancestorIds: [rootFolderId, archiveId],
+      });
+      expect(moved.japan).toMatchObject({
+        ancestorIds: [rootFolderId, archiveId, tripsId],
+      });
+
+      await expect(
+        ownerClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: archiveId,
+          folderIds: [tripsId],
+        }),
+      ).resolves.toEqual({ kind: "complete", moved: 0 });
+
+      const conflictingId = await createFolder(rootFolderId, "Trips");
+      await expect(
+        ownerClient.mutation(api.folders.moveMany, {
+          galleryId,
+          destinationFolderId: archiveId,
+          folderIds: [conflictingId],
+        }),
+      ).rejects.toThrow("A folder named Trips already exists in the destination");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("user-backed folder moves commit after the filesystem operation and repath entries", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const owner = await seedProfile(t, {
+        email: "owner@example.com",
+        admin: true,
+      });
+      const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+      const galleryId = await ownerClient.mutation(api.galleries.create, {
+        name: "Movedir gallery",
+        slug: "movedir-gallery",
+        kind: "image",
+        storageKind: "user",
+        storageRoot: "movedir-studio",
+        hosts: [{ host: "movedir.example.com", rootPath: "/" }],
+      });
+      const { rootFolderId, shootsId, archiveId, entryId } = await t.run(
+        async (ctx) => {
+          const gallery = await ctx.db.get("galleries", galleryId);
+          const rootFolderId = gallery!.rootFolderId!;
+          const shootsId = await ctx.db.insert("folders", {
+            galleryId,
+            parentId: rootFolderId,
+            ancestorIds: [rootFolderId],
+            name: "Shoots",
+            slug: "shoots",
+            privacy: "public",
+            filesystemIdentity: "4:40",
+          });
+          const archiveId = await ctx.db.insert("folders", {
+            galleryId,
+            parentId: rootFolderId,
+            ancestorIds: [rootFolderId],
+            name: "Archive",
+            slug: "archive",
+            privacy: "public",
+            filesystemIdentity: "4:41",
+          });
+          const entryId = await ctx.db.insert("entries", {
+            galleryId,
+            folderId: shootsId,
+            ownerProfileId: owner.profileId,
+            name: "portrait.jpg",
+            mimeType: "image/jpeg",
+            extension: "jpg",
+            mediaKind: "image",
+            size: 20,
+            sha256: "d".repeat(64),
+            storageKind: "user",
+            storageKey: "public/users/movedir-studio/Shoots/portrait.jpg",
+            state: "ready",
+            createdAt: 1,
+            updatedAt: 1,
+          });
+          return { rootFolderId, shootsId, archiveId, entryId };
+        },
+      );
+
+      const result = await ownerClient.mutation(api.folders.moveMany, {
+        galleryId,
+        destinationFolderId: archiveId,
+        folderIds: [shootsId],
+      });
+      if (result.kind !== "filesystem") {
+        throw new Error("Expected a filesystem operation");
+      }
+      expect(result.moved).toBe(1);
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].folderId).toBe(shootsId);
+      const beforeCommit = await t.run(async (ctx) =>
+        ctx.db.get("folders", shootsId),
+      );
+      expect(beforeCommit).toMatchObject({ parentId: rootFolderId });
+
+      const claim = await t.mutation(
+        internal.filesystemSync.claimFilesystemOperation,
+        {
+          operationId: result.operations[0].operationId,
+          token: result.operations[0].token,
+        },
+      );
+      expect(claim).toMatchObject({
+        kind: "move",
+        sourceSegments: ["Shoots"],
+        destinationSegments: ["Archive", "Shoots"],
+      });
+      await t.mutation(internal.filesystemSync.completeFilesystemOperation, {
+        operationId: result.operations[0].operationId,
+        identity: "4:40",
+        modifiedAt: 1234,
+      });
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const committed = await t.run(async (ctx) => ({
+        folder: await ctx.db.get("folders", shootsId),
+        entry: await ctx.db.get("entries", entryId),
+      }));
+      expect(committed.folder).toMatchObject({
+        parentId: archiveId,
+        ancestorIds: [rootFolderId, archiveId],
+      });
+      expect(committed.entry).toMatchObject({
+        storageKey: "public/users/movedir-studio/Archive/Shoots/portrait.jpg",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
