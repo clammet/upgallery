@@ -102,11 +102,6 @@ services:
     build:
       context: .
       target: web
-      args:
-        VITE_CONVEX_URL: ${PUBLIC_CONVEX_URL:?set PUBLIC_CONVEX_URL}
-        VITE_CONVEX_SITE_URL: ${PUBLIC_CONVEX_SITE_URL:?set PUBLIC_CONVEX_SITE_URL}
-        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID}
-        VITE_STORAGE_API_URL: ""
     restart: unless-stopped
     stop_grace_period: 30s
     pids_limit: 128
@@ -116,6 +111,9 @@ services:
       - "${WEB_PORT:-8080}:80"
     environment:
       STORAGE_UPSTREAM: storage-api:8787
+      PUBLIC_CONVEX_URL: ${PUBLIC_CONVEX_URL:?set PUBLIC_CONVEX_URL}
+      PUBLIC_CONVEX_SITE_URL: ${PUBLIC_CONVEX_SITE_URL:?set PUBLIC_CONVEX_SITE_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID}
     volumes:
       - ${UPGALLERY_SHARED_ROOT:-./data/shared}:/data/media/public/shared:ro
       - ${UPGALLERY_USER_ROOT:-./data/users}:/data/media/public/users:ro

@@ -66,15 +66,9 @@ RUN pnpm install --frozen-lockfile \
 COPY scripts/check-sharp-heic.mjs ./scripts/check-sharp-heic.mjs
 RUN node scripts/check-sharp-heic.mjs
 
+# Deployment-agnostic build: Convex and OAuth values are not baked in. The web
+# stage renders /config.json from environment variables at container startup.
 FROM dependencies AS web-build
-ARG VITE_CONVEX_URL
-ARG VITE_CONVEX_SITE_URL
-ARG VITE_GOOGLE_CLIENT_ID
-ARG VITE_STORAGE_API_URL=
-ENV VITE_CONVEX_URL=$VITE_CONVEX_URL
-ENV VITE_CONVEX_SITE_URL=$VITE_CONVEX_SITE_URL
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
-ENV VITE_STORAGE_API_URL=$VITE_STORAGE_API_URL
 COPY index.html tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts ./
 COPY src ./src
 COPY convex ./convex
@@ -86,8 +80,17 @@ RUN pnpm exec tsc -p storage/tsconfig.json
 
 FROM nginx:1.29-alpine AS web
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --chmod=755 deploy/render-config.sh /docker-entrypoint.d/40-render-config.sh
 COPY --from=web-build /app/dist /usr/share/nginx/html
 EXPOSE 80
+
+# File-only artifact for deployments whose primary web server serves the site
+# directly instead of running the nginx image above: the compiled SPA under
+# /srv/www with no web server, entrypoint, or config.json. The deployment
+# extracts the files (docker create + docker cp) and renders config.json next
+# to them; keys must match src/config.ts. See docs/deployment.md.
+FROM scratch AS web-dist
+COPY --from=web-build /app/dist /srv/www
 
 FROM ${NODE_ALPINE_IMAGE} AS storage-runtime
 WORKDIR /app

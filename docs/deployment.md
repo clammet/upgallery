@@ -216,6 +216,96 @@ limits.
    infrastructure-provided Convex origins. Preserve the original Host header
    for gallery host/path resolution.
 
+## Runtime web configuration
+
+All published images are deployment-agnostic; no deployment values are baked
+in at image build time. The compiled web application fetches `/config.json`
+at startup and reads `CONVEX_URL`, `CONVEX_SITE_URL`, and `GOOGLE_CLIENT_ID`
+from it (falling back to `VITE_*` env vars only during local development).
+
+The web container renders that file when it starts. Provide either:
+
+- The `PUBLIC_CONVEX_URL`, `PUBLIC_CONVEX_SITE_URL`, and `GOOGLE_CLIENT_ID`
+  environment variables — the Compose file passes them through from the host
+  `.env` (step 4 above), and an entrypoint script renders
+  `/usr/share/nginx/html/config.json` from them. The container refuses to
+  start if one is missing.
+- A complete `config.json` bind-mounted at `/usr/share/nginx/html/config.json`,
+  which takes precedence and skips rendering.
+
+Changing the values only requires recreating the container, not rebuilding
+the image.
+
+### Serving the site without the web container (`web-dist`)
+
+An infrastructure that already runs a primary web server in front of
+everything should not run the `web` image behind it — that is a second nginx
+whose only job is handing files to the first. For that case the `web-dist`
+image is a file-only artifact (`FROM scratch`, no web server or entrypoint,
+cannot be run) holding the same compiled site under `/srv/www`. Extract it
+(`docker create` + `docker cp`) and have the primary server serve the files
+directly, rendering `config.json` next to them with the keys from
+`src/config.ts`.
+
+`deploy/nginx.conf.template` is the reference for what that server must
+replicate; the load-bearing behaviors are:
+
+- SPA fallback: unknown paths serve `/index.html`, with `Cache-Control:
+  no-cache`. Serve `/config.json` uncached as well.
+- No request body size limit on `/api/storage/` (`client_max_body_size 0` —
+  uploads up to `MAX_ABSOLUTE_UPLOAD_BYTES` stream through it).
+- `/api/storage/` proxies to the storage API with request buffering disabled,
+  hour-long read/send timeouts, and the original `Host` header preserved
+  (required for gallery host resolution).
+- `/media/` aliases: the `users` tree is served `must-revalidate` (editable
+  in place), while `shared` and `derivatives/gallery` are content-addressed
+  and served `immutable`. Never expose `protected/uploaders` or
+  `derivatives/up`; those must pass through the storage API.
+
+## GitHub Actions configuration
+
+Configuration lives in three places, and the split matters:
+
+- **Convex deployment environment** (dashboard): the server-side values from
+  step 3 above (`SITE_URL`, `DEFAULT_ADMIN_EMAIL`, `STORAGE_INTERNAL_SECRET`,
+  `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`). These never go in GitHub.
+- **Docker host `.env`** (step 4 above): runtime values read by Compose when
+  starting containers, including the web configuration above.
+- **GitHub repository → Settings → Secrets and variables → Actions**: only
+  the Convex deploy key below.
+
+### Docker images (`.github/workflows/docker.yml`)
+
+Runs on every push to `main` and publishes the `storage`, `web`, and
+`web-dist` image targets to `ghcr.io/<owner>/<repo>/storage`,
+`ghcr.io/<owner>/<repo>/web`, and `ghcr.io/<owner>/<repo>/web-dist`, tagged
+`latest` and with the commit SHA. Registry authentication uses the workflow's
+automatic `GITHUB_TOKEN`, and the images take all deployment values at
+runtime, so this workflow needs no configured secrets or variables at all.
+The Compose file as written builds images locally; to run the published
+images instead, replace its `build:` sections with `image:` references.
+
+Packages published by a workflow default to private; after the first run,
+make each GHCR package public in its package settings if anonymous pulls are
+wanted.
+
+### Convex deploy (`.github/workflows/convex-deploy.yml`)
+
+Run manually from the Actions tab; it pushes the functions, crons, and auth
+config in `convex/` with `convex deploy`. Under the **Secrets** tab, define:
+
+| Secret | Value |
+| --- | --- |
+| `CONVEX_DEPLOY_KEY` | Production deploy key, generated in the Convex dashboard on the production deployment's settings page (Deploy Keys) |
+
+The deploy key selects the target deployment, so no URL needs configuring.
+For a self-hosted Convex backend, the CLI instead reads
+`CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`; add those as a
+variable and secret respectively and pass them in the workflow's deploy step
+in place of `CONVEX_DEPLOY_KEY`. Once the production deployment is live,
+enable the commented-out `push` trigger in the workflow to deploy on every
+`main` push.
+
 ## Worker recovery and concurrency
 
 Storage work is claimed from Convex using renewable leases:
