@@ -41,14 +41,15 @@ jobs:
         timeout-minutes: 15
         run: |
           install_ffmpeg() {
-            sudo timeout 120 apt-get update -qq &&
-              sudo timeout 300 apt-get install -y -qq --no-install-recommends ffmpeg
+            sudo timeout 120 apt-get update -qq -o Acquire::ForceIPv4=true -o Acquire::Retries=3 &&
+              sudo timeout 300 apt-get install -y -qq -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
+                --no-install-recommends ffmpeg
           }
           if ! install_ffmpeg; then
             echo "apt failed against the default mirror; retrying via archive.ubuntu.com"
             sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g' \
               /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-            install_ffmpeg
+            install_ffmpeg || { sleep 30; install_ffmpeg; }
           fi
           ffmpeg -version | head -1
 
