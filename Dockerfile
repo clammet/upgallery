@@ -97,6 +97,15 @@ COPY --from=web-build /app/dist /srv/www
 
 FROM ${NODE_ALPINE_IMAGE} AS storage-runtime
 WORKDIR /app
+# Dedicated fixed identity instead of the base image's `node` user (uid 1000):
+# deployments pre-chown their bind-mounted media roots to this UID/GID, and it
+# deliberately sits far above the range where hosts create interactive users so
+# the owner of the protected uploader data can never coincide with a human
+# login (10001 is passwordreset's, 10002 pyburlybot's). /data/media/.tmp is
+# baked in owned by it so a fresh named volume mounted there inherits the
+# ownership.
+ARG RUN_UID=10003
+ARG RUN_GID=10003
 RUN apk add --no-cache \
   cairo \
   expat \
@@ -116,8 +125,10 @@ RUN apk add --no-cache \
   pango \
   tiff \
   tini \
+  && addgroup -g "${RUN_GID}" storage \
+  && adduser -D -G storage -u "${RUN_UID}" storage \
   && mkdir -p /data/media/.tmp \
-  && chown -R node:node /data
+  && chown -R storage:storage /data
 ENV NODE_ENV=production
 ENV LD_LIBRARY_PATH=/opt/vips/lib
 ENV PATH=/opt/vips/bin:$PATH
@@ -129,7 +140,7 @@ COPY --from=storage-build /app/storage-dist ./storage-dist
 
 FROM storage-runtime AS storage
 RUN node scripts/check-sharp-heic.mjs --decode-smoke
-USER node
+USER storage
 EXPOSE 8787 8788
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "storage-dist/server.js"]

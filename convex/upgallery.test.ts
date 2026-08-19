@@ -216,6 +216,27 @@ describe("upgallery backend", () => {
     );
     expect(gallery?.maxFileSize).toBe(32 * 1024 * 1024);
     expect(gallery?.maxFileSizeLimit).toBe(32 * 1024 * 1024);
+
+    // Quick move defaults off and owners can toggle it both ways.
+    expect(gallery?.quickMove).toBeUndefined();
+    await ownerAuthed.mutation(api.galleries.update, {
+      ...base,
+      maxFileSize: 32 * 1024 * 1024,
+      quickMove: true,
+    });
+    const quickMoveOn = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    expect(quickMoveOn?.quickMove).toBe(true);
+    await ownerAuthed.mutation(api.galleries.update, {
+      ...base,
+      maxFileSize: 32 * 1024 * 1024,
+      quickMove: false,
+    });
+    const quickMoveOff = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    expect(quickMoveOff?.quickMove).toBeUndefined();
   });
 
   test("gallery admin access requires a gallery-wide owner grant", async () => {

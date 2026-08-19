@@ -1,3 +1,7 @@
+# The storage image runs as its dedicated `storage` user (uid/gid 10003, see
+# Dockerfile). On a Linux host, chown the bind-mounted ./data roots to
+# 10003:10003 (or export UPGALLERY_*_ROOT paths that already are); Docker
+# Desktop on macOS/Windows maps ownership automatically.
 services:
   storage-api:
     build:

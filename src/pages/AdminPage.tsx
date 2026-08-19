@@ -381,6 +381,10 @@ function GalleryAdmin(props: {
         gallery.kind === "image"
           ? (data.get("folderPreviewMode") as FolderPreviewMode)
           : gallery.folderPreviewMode ?? "first",
+      quickMove:
+        gallery.kind === "image"
+          ? data.get("quickMove") === "on"
+          : gallery.quickMove,
       ...systemFields,
       theme: {
         accent: String(data.get("accent") || "") || undefined,
@@ -449,6 +453,14 @@ function GalleryAdmin(props: {
                 <option value="random">Random</option>
                 <option value="first3">First 3</option>
                 <option value="random3">Random 3</option>
+              </select>
+            </label>
+          ) : null}
+          {gallery.kind === "image" ? (
+            <label>Quick move <small>(drag items into folders without select mode)</small>
+              <select name="quickMove" defaultValue={gallery.quickMove === true ? "on" : "off"}>
+                <option value="off">Off</option>
+                <option value="on">On</option>
               </select>
             </label>
           ) : null}

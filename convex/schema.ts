@@ -42,6 +42,8 @@ export default defineSchema({
     uploaderAccess,
     rootFolderId: v.optional(v.id("folders")),
     folderPreviewMode: v.optional(folderPreviewMode),
+    // Allows owners to drag items into folders without entering select mode.
+    quickMove: v.optional(v.boolean()),
     theme: themeValidator,
     itemCount: v.number(),
     totalBytes: v.number(),

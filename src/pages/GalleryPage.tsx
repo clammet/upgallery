@@ -388,9 +388,11 @@ export function GalleryPage(props: {
   useEffect(() => {
     const canUpload = listing?.access.canUpload === true;
     const canManage = listing?.access.canManage === true;
+    const canDragMove =
+      canManage && (selectMode || props.gallery.quickMove === true);
     if (!canUpload && !canManage) return;
     const onDragOver = (event: DragEvent) => {
-      if (canManage && hasInternalDrag(event.dataTransfer)) {
+      if (canDragMove && hasInternalDrag(event.dataTransfer)) {
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
         return;
@@ -441,6 +443,7 @@ export function GalleryPage(props: {
   }, [
     listing?.access.canUpload,
     listing?.access.canManage,
+    props.gallery.quickMove,
     folderId,
     selectMode,
   ]);
@@ -544,6 +547,10 @@ export function GalleryPage(props: {
   }
 
   const canManage = listing.access.canManage;
+  // Dragging always works inside select mode; the per-gallery quick-move
+  // option extends it to normal browsing.
+  const canDragMove =
+    canManage && (selectMode || props.gallery.quickMove === true);
   const selectedIds = [...selectedEntryIds];
   const selectedFolderIdList = [...selectedFolderIds];
   const selectedCount = selectedIds.length + selectedFolderIdList.length;
@@ -932,12 +939,12 @@ export function GalleryPage(props: {
       className={draggingItems ? styles.breadcrumbDropTarget : undefined}
       key={crumb._id}
       onDragOver={
-        canManage
+        canDragMove
           ? (event) => dragOverFolderTarget(event, crumb._id)
           : undefined
       }
       onDrop={
-        canManage
+        canDragMove
           ? (event) =>
               dropDraggedItems(event, props.gallery._id, crumb._id)
           : undefined
@@ -1066,7 +1073,7 @@ export function GalleryPage(props: {
             dropTarget={
               draggingItems && !draggedFolderIds.current.includes(folder._id)
             }
-            draggable={canManage}
+            draggable={canDragMove}
             onToggle={() => {
               setSelectedFolderIds((current) => {
                 const next = new Set(current);
@@ -1076,18 +1083,18 @@ export function GalleryPage(props: {
               });
             }}
             onDragStart={
-              canManage
+              canDragMove
                 ? (event) => beginFolderDrag(event, folder._id)
                 : undefined
             }
-            onDragEnd={canManage ? endItemDrag : undefined}
+            onDragEnd={canDragMove ? endItemDrag : undefined}
             onDragOver={
-              canManage
+              canDragMove
                 ? (event) => dragOverFolderTarget(event, folder._id)
                 : undefined
             }
             onDrop={
-              canManage
+              canDragMove
                 ? (event) =>
                     dropDraggedItems(
                       event,
@@ -1104,7 +1111,7 @@ export function GalleryPage(props: {
             entry={entry}
             selectMode={selectMode}
             selected={selectedEntryIds.has(entry._id)}
-            draggable={canManage}
+            draggable={canDragMove}
             onOpen={() => setViewerEntry(entry._id, false)}
             onMetadata={() => setMetadataEntryId(entry._id)}
             onToggle={() => {

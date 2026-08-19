@@ -446,6 +446,7 @@ export const update = mutation({
     uploaderAccess,
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
+    quickMove: v.optional(v.boolean()),
     theme: themeValidator,
   },
   handler: async (ctx, args) => {
@@ -519,6 +520,7 @@ export const update = mutation({
       uploaderAccess: args.uploaderAccess,
       folderPreviewMode:
         args.folderPreviewMode ?? gallery.folderPreviewMode ?? "first",
+      quickMove: args.quickMove === true ? true : undefined,
       theme: args.theme,
     });
     if (rootFolder !== null) {
