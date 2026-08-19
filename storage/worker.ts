@@ -20,6 +20,17 @@ import {
 let lastSuccessfulConvexAt = 0;
 const shutdown = new AbortController();
 
+// Claimed jobs currently being processed, per lane. Interrupting one is
+// recoverable (leases expire and another worker reclaims the work) but wastes
+// the progress made, so /statusz exposes these counts for host-side tooling
+// such as a guarded image updater.
+const activeJobs = {
+  media: 0,
+  filesystemSync: 0,
+  maintenance: 0,
+  filesystemOperationRecovery: 0,
+};
+
 await mkdir(config.storageRoot, { recursive: true });
 configureMediaConcurrency();
 
@@ -36,6 +47,11 @@ const healthServer = createServer((request, response) => {
       Date.now() - lastSuccessfulConvexAt <= maximumAge;
     response.statusCode = ready ? 200 : 503;
     response.end(JSON.stringify({ ok: ready }));
+    return;
+  }
+  if (request.url === "/statusz") {
+    const busy = Object.values(activeJobs).some((count) => count > 0);
+    response.end(JSON.stringify({ ok: true, busy, jobs: { ...activeJobs } }));
     return;
   }
   response.statusCode = 404;
@@ -110,16 +126,21 @@ async function claimAndProcessMedia(signal: AbortSignal): Promise<boolean> {
     "/internal/storage/claim-media-processing",
   );
   if (claim.kind === "none") return false;
-  await runWithHeartbeat({
-    signal,
-    timeoutMs: config.workerTaskTimeoutMs,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    renew: () =>
-      trackedCall("/internal/storage/renew-media-processing", {
-        jobId: claim.jobId,
-      }),
-    task: (taskSignal) => processMediaClaim(claim, taskSignal),
-  });
+  activeJobs.media += 1;
+  try {
+    await runWithHeartbeat({
+      signal,
+      timeoutMs: config.workerTaskTimeoutMs,
+      heartbeatIntervalMs: config.heartbeatIntervalMs,
+      renew: () =>
+        trackedCall("/internal/storage/renew-media-processing", {
+          jobId: claim.jobId,
+        }),
+      task: (taskSignal) => processMediaClaim(claim, taskSignal),
+    });
+  } finally {
+    activeJobs.media -= 1;
+  }
   return true;
 }
 
@@ -130,6 +151,7 @@ async function claimAndProcessFilesystemSync(
     "/internal/storage/claim-filesystem-sync-job",
   );
   if (claim.kind === "none") return false;
+  activeJobs.filesystemSync += 1;
   try {
     await runWithHeartbeat({
       signal,
@@ -158,6 +180,8 @@ async function claimAndProcessFilesystemSync(
           ? error.message
           : "Filesystem synchronization failed",
     });
+  } finally {
+    activeJobs.filesystemSync -= 1;
   }
   return true;
 }
@@ -169,13 +193,18 @@ async function claimAndProcessMaintenance(
     "/internal/storage/claim-maintenance",
   );
   if (claim.kind === "none") return false;
-  await runWithHeartbeat({
-    signal,
-    timeoutMs: config.workerTaskTimeoutMs,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    renew: () => renewMaintenanceClaim(claim),
-    task: (taskSignal) => processMaintenanceClaim(claim, taskSignal),
-  });
+  activeJobs.maintenance += 1;
+  try {
+    await runWithHeartbeat({
+      signal,
+      timeoutMs: config.workerTaskTimeoutMs,
+      heartbeatIntervalMs: config.heartbeatIntervalMs,
+      renew: () => renewMaintenanceClaim(claim),
+      task: (taskSignal) => processMaintenanceClaim(claim, taskSignal),
+    });
+  } finally {
+    activeJobs.maintenance -= 1;
+  }
   return true;
 }
 
@@ -205,6 +234,7 @@ async function claimAndRecoverFilesystemOperation(
     "/internal/storage/claim-recoverable-filesystem-operation",
   );
   if (claim.kind === "none") return false;
+  activeJobs.filesystemOperationRecovery += 1;
   try {
     await runWithHeartbeat({
       signal,
@@ -227,6 +257,8 @@ async function claimAndRecoverFilesystemOperation(
           : "Filesystem operation recovery failed",
       retry: true,
     });
+  } finally {
+    activeJobs.filesystemOperationRecovery -= 1;
   }
   return true;
 }

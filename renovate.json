@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "sharp is compiled against the libvips built in the Dockerfile; update them together so compatibility is proven by a single Docker build",
+      "groupName": "sharp + libvips",
+      "matchPackageNames": ["sharp", "libvips/libvips"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the source-built libvips in the Dockerfile: bumps VIPS_VERSION and refreshes VIPS_SHA256 from the release tarball",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "ARG VIPS_VERSION=(?<currentValue>[\\d.]+)\\nARG VIPS_SHA256=(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "depNameTemplate": "libvips/libvips",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ]
+}

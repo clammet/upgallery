@@ -1,0 +1,47 @@
+name: CI
+
+# Validates every pull request (including Renovate's automated dependency
+# bumps) with the typecheck, test suite, and production builds. The Docker
+# image build in docker.yml also runs on pull requests and is the check that
+# actually exercises the sharp/libvips/HEIC stack.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build web
+        run: pnpm exec vite build
+
+      - name: Build storage
+        run: pnpm exec tsc -p storage/tsconfig.json

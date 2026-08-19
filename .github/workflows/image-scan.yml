@@ -1,0 +1,39 @@
+name: Image vulnerability scan
+
+# Weekly watchdog for the published images: between dependency merges, a CVE
+# can be announced against packages already baked into :latest (libheif,
+# libjpeg-turbo, sharp, ...). This scan fails loudly when the published image
+# contains a HIGH/CRITICAL vulnerability that has an upstream fix; remediation
+# is merging any open Renovate PR or dispatching the Docker workflow, either
+# of which rebuilds with current packages.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [storage, web]
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan ${{ matrix.image }}:latest
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}/${{ matrix.image }}:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

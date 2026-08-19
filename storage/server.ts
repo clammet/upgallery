@@ -44,6 +44,28 @@ app.get("/readyz", (_request, response) => {
       });
     });
 });
+// Activity pulse for host-side tooling (for example a guarded image updater
+// that must not recreate the container mid-upload). Like /healthz and /readyz
+// this is reachable only on the internal port: the public gateway forwards
+// only /api/storage/ paths here. Streamed uploads cannot resume after a
+// restart, so `busy` reports queued work as well as active work.
+app.get("/statusz", (_request, response) => {
+  const activity = {
+    uploads: { active: uploads.activeCount, queued: uploads.queuedCount },
+    downloads: {
+      active: downloads.activeCount,
+      queued: downloads.queuedCount,
+    },
+    filesystemOperations: {
+      active: filesystemOperations.activeCount,
+      queued: filesystemOperations.queuedCount,
+    },
+  };
+  const busy = Object.values(activity).some(
+    (lane) => lane.active > 0 || lane.queued > 0,
+  );
+  response.json({ ok: true, busy, ...activity });
+});
 app.post("/api/storage/upload", (request, response) => {
   runLimited(uploads, response, () => handleUpload(request, response));
 });

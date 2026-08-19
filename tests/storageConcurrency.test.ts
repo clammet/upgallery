@@ -26,6 +26,9 @@ describe("storage concurrency limits", () => {
     const second = semaphore.run(() => task(secondGate));
     await Promise.resolve();
 
+    expect(semaphore.activeCount).toBe(1);
+    expect(semaphore.queuedCount).toBe(1);
+
     await expect(semaphore.run(async () => undefined)).rejects.toBeInstanceOf(
       CapacityError,
     );
@@ -35,5 +38,7 @@ describe("storage concurrency limits", () => {
     releaseSecond();
     await second;
     expect(maximumActive).toBe(1);
+    expect(semaphore.activeCount).toBe(0);
+    expect(semaphore.queuedCount).toBe(0);
   });
 });

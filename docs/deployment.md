@@ -362,6 +362,16 @@ the deployment under representative media sizes.
 - The API and worker expose `/healthz` and `/readyz`; Compose uses readiness
   checks that include connectivity to the provisioned Convex HTTP Actions
   origin.
+- The API and worker also expose `/statusz`, an activity pulse for host-side
+  tooling such as a guarded image updater that should not recreate containers
+  while work is in flight. The API reports active and queued uploads,
+  downloads, and filesystem operations; the worker reports claimed jobs per
+  lane. Both include a summary `busy` boolean. A restart is destructive for
+  streamed uploads (they cannot resume) and merely wasteful for worker jobs
+  (leases expire and the work is reclaimed), so an updater should skip while
+  either reports `busy`. Like the health endpoints, `/statusz` is reachable
+  only on the internal ports; the gateway forwards only `/api/storage/`
+  paths.
 - The storage image initializes `/data/media/.tmp` for its non-root UID. The
   API removes stale `upload-*` directories at startup.
 - Use immutable backups or snapshots for the content roots. Test a restore that

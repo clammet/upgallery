@@ -14,6 +14,14 @@ export class AsyncSemaphore {
     private readonly maxQueued: number,
   ) {}
 
+  get activeCount(): number {
+    return this.active;
+  }
+
+  get queuedCount(): number {
+    return this.waiters.length;
+  }
+
   async run<T>(task: () => Promise<T>): Promise<T> {
     await this.acquire();
     try {
