@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Settings,
   Upload,
+  X,
 } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -39,6 +40,7 @@ import { publicMediaUrl, formatBytes, storageApi } from "../lib/files";
 import { collectDroppedFiles, type DroppedFile } from "../lib/dropUpload";
 import {
   beginTransfer,
+  clearFinishedTransfers,
   completeTransfer,
   failTransfer,
   parseTransferConcurrency,
@@ -379,6 +381,9 @@ export function GalleryPage(props: {
   }, [listing?.access.canUpload, folderId, selectMode]);
 
   useEffect(() => {
+    setNotice(null);
+    setActionError(null);
+    clearFinishedTransfers();
     setSelectedEntryIds(new Set());
     setSelectedFolderIds(new Set());
     setDeleteDialog(false);
@@ -604,10 +609,25 @@ export function GalleryPage(props: {
         </>
       }
     >
-      <TransferStatus />
+      {/* Keyed on the folder so its detail panel closes on navigation. */}
+      <TransferStatus key={folderId} />
       {(actionError || notice) && (
-        <div className={actionError ? layout.errorNotice : layout.notice}>
-          {actionError ?? notice}
+        <div
+          className={`${actionError ? layout.errorNotice : layout.notice} ${layout.noticeBar}`}
+        >
+          <span>{actionError ?? notice}</span>
+          <button
+            className={layout.iconButton}
+            type="button"
+            onClick={() => {
+              setActionError(null);
+              setNotice(null);
+            }}
+            aria-label="Dismiss message"
+            title="Dismiss"
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
         </div>
       )}
       {selectMode ? (

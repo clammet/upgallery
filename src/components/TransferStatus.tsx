@@ -36,16 +36,31 @@ export function TransferStatus() {
         <span className={failed > 0 && active === 0 ? styles.barFailed : undefined}>
           {summary}
         </span>
-        <button
-          className={layout.iconButton}
-          type="button"
-          onClick={() => setOpen((current) => !current)}
-          aria-expanded={open}
-          aria-label={open ? "Hide transfer details" : "Show transfer details"}
-          title={open ? "Hide transfer details" : "Show transfer details"}
-        >
-          <ArrowUpDown aria-hidden="true" size={18} />
-        </button>
+        <div className={styles.barActions}>
+          <button
+            className={layout.iconButton}
+            type="button"
+            onClick={() => setOpen((current) => !current)}
+            aria-expanded={open}
+            aria-label={open ? "Hide transfer details" : "Show transfer details"}
+            title={open ? "Hide transfer details" : "Show transfer details"}
+          >
+            <ArrowUpDown aria-hidden="true" size={18} />
+          </button>
+          <button
+            className={layout.iconButton}
+            type="button"
+            onClick={() => {
+              clearFinishedTransfers();
+              setOpen(false);
+            }}
+            disabled={active === items.length}
+            aria-label="Clear finished transfers"
+            title="Clear finished transfers"
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
+        </div>
       </div>
       {open ? (
         <aside className={styles.panel} aria-label="Transfers">

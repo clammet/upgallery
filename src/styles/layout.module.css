@@ -23,6 +23,7 @@
 .main { padding: var(--gallery-gap); width: 100%; }
 .footer { color: var(--gallery-muted); font-size: .72rem; padding: .5rem; text-align: center; }
 .notice, .errorNotice { border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0 0 var(--gallery-gap); padding: .5rem .65rem; }
+.noticeBar { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
 .notice { background: color-mix(in srgb, var(--gallery-accent) 8%, var(--gallery-surface)); }
 .errorNotice, .formError { color: #bd2c31; }
 .backdrop { align-items: center; background: rgb(0 0 0 / 45%); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 50; }

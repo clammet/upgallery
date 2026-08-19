@@ -69,7 +69,9 @@ export function failTransfer(id: number, error: string): void {
 }
 
 export function clearFinishedTransfers(): void {
-  items = items.filter((item) => item.status === "active");
+  const remaining = items.filter((item) => item.status === "active");
+  if (remaining.length === items.length) return;
+  items = remaining;
   emit();
 }
 

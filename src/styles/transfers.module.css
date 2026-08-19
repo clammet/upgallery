@@ -1,5 +1,6 @@
 .bar { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
 .barFailed { color: #bd2c31; }
+.barActions { align-items: center; display: flex; gap: .25rem; }
 .panel { background: var(--gallery-surface); border: 1px solid var(--border); border-right: 0; border-radius: var(--gallery-radius) 0 0 var(--gallery-radius); bottom: .65rem; box-shadow: var(--shadow); display: flex; flex-direction: column; position: fixed; right: 0; top: 52px; width: min(320px, 90vw); z-index: 40; }
 .panelHeader { align-items: center; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; padding: .55rem .75rem; }
 .panelHeader h2 { font-size: .95rem; margin: 0; }
