@@ -86,7 +86,7 @@ importers:
         version: 0.0.55(convex@1.43.0(react@19.2.8))
       node-addon-api:
         specifier: ^8.9.0
-        version: 8.9.0
+        version: 8.9.2
       node-gyp:
         specifier: ^13.0.1
         version: 13.0.1
@@ -1883,8 +1883,8 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  node-addon-api@8.9.0:
-    resolution: {integrity: sha512-ekZMeaaIzSQTSpr7X2X3iJM7lTzgnx8ahAG9pJfT/7+14mlEM8ZYQ9cgCDvSSRbReFK0oHli3WrZdCiRsgAT9Q==}
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
     engines: {node: ^18 || ^20 || >= 21}
 
   node-gyp@13.0.1:
@@ -4143,7 +4143,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  node-addon-api@8.9.0: {}
+  node-addon-api@8.9.2: {}
 
   node-gyp@13.0.1:
     dependencies:
