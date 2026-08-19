@@ -124,7 +124,7 @@ export type MediaProcessingClaim =
 
 export type FilesystemOperationClaim = {
   operationId: string;
-  kind: "mkdir" | "rename" | "fileRename";
+  kind: "mkdir" | "rename" | "rmdir" | "fileRename";
   storageRoot: string;
   sourceSegments?: string[];
   destinationSegments: string[];

@@ -671,7 +671,11 @@ export const cleanupMissingFolder = internalMutation({
       if (counter !== null) {
         await ctx.db.delete("entryCounters", counter._id);
       }
+      // User-backed originals disappear with the directory itself, so only
+      // derived assets need deletion; shared originals must be deleted too.
+      const deleteOriginal = entry.storageKind !== "user";
       if (
+        deleteOriginal ||
         entry.thumbnailKey !== undefined ||
         entry.previewKey !== undefined
       ) {
@@ -680,7 +684,7 @@ export const cleanupMissingFolder = internalMutation({
           storageKey: entry.storageKey,
           thumbnailKey: entry.thumbnailKey,
           previewKey: entry.previewKey,
-          deleteOriginal: false,
+          deleteOriginal,
           deleteEntry: false,
           status: "queued",
           attempts: 0,
@@ -798,9 +802,9 @@ async function filesystemOperationClaim(
       migrationError: undefined,
       updatedAt: Date.now(),
     });
-  } else if (operation.kind === "rename") {
+  } else if (operation.kind === "rename" || operation.kind === "rmdir") {
     if (operation.folderId === undefined) {
-      throw new Error("Rename operation has no folder");
+      throw new Error("Folder operation has no folder");
     }
     const folder = await ctx.db.get("folders", operation.folderId);
     if (
@@ -897,13 +901,16 @@ export const renewFilesystemOperation = internalMutation({
 export const completeFilesystemOperation = internalMutation({
   args: {
     operationId: v.id("filesystemOperations"),
-    identity: v.string(),
+    identity: v.optional(v.string()),
     modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const operation = await ctx.db.get("filesystemOperations", args.operationId);
     if (operation === null || operation.state !== "uploading") {
       throw new Error("Filesystem operation is not active");
+    }
+    if (operation.kind !== "rmdir" && args.identity === undefined) {
+      throw new Error("Filesystem operation result has no identity");
     }
     const [gallery, parent] = await Promise.all([
       ctx.db.get("galleries", operation.galleryId),
@@ -984,6 +991,23 @@ export const completeFilesystemOperation = internalMutation({
           filesystemIdentity: args.identity,
         });
       }
+    } else if (operation.kind === "rmdir") {
+      if (folderId === undefined) {
+        throw new Error("Folder operation has no folder");
+      }
+      const folder = await ctx.db.get("folders", folderId);
+      if (folder !== null && folder.galleryId === gallery._id) {
+        if (folder.filesystemMissingAt === undefined) {
+          await ctx.db.patch("folders", folder._id, {
+            filesystemMissingAt: Date.now(),
+          });
+        }
+        await ctx.scheduler.runAfter(
+          0,
+          internal.filesystemSync.cleanupMissingFolder,
+          { folderId: folder._id },
+        );
+      }
     } else {
       if (folderId === undefined) {
         throw new Error("Rename operation has no folder");
@@ -1010,13 +1034,18 @@ export const completeFilesystemOperation = internalMutation({
           ? "filesystem_folder.created"
           : operation.kind === "rename"
             ? "filesystem_folder.renamed"
-            : "filesystem_file.renamed",
+            : operation.kind === "rmdir"
+              ? "filesystem_folder.deleted"
+              : "filesystem_file.renamed",
       galleryId: gallery._id,
       detail: operation.name,
       createdAt: Date.now(),
     });
     return {
-      folderId: operation.kind === "fileRename" ? null : (folderId ?? null),
+      folderId:
+        operation.kind === "fileRename" || operation.kind === "rmdir"
+          ? null
+          : (folderId ?? null),
       entryId:
         operation.kind === "fileRename" ? (operation.entryId ?? null) : null,
     };

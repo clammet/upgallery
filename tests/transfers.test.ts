@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import {
+  beginTransfer,
+  clearFinishedTransfers,
+  completeTransfer,
+  failTransfer,
+  getTransfers,
+  parseTransferConcurrency,
+  reportTransferProgress,
+  runWithConcurrency,
+  subscribeTransfers,
+} from "../src/lib/transfers";
+
+describe("transfers store", () => {
+  it("tracks a transfer through progress to completion", () => {
+    const id = beginTransfer("photo.jpg", "upload");
+    let item = getTransfers().find((candidate) => candidate.id === id);
+    expect(item).toMatchObject({ status: "active", progress: 0 });
+
+    reportTransferProgress(id, 0.5);
+    item = getTransfers().find((candidate) => candidate.id === id);
+    expect(item?.progress).toBe(0.5);
+
+    completeTransfer(id);
+    item = getTransfers().find((candidate) => candidate.id === id);
+    expect(item).toMatchObject({ status: "success", progress: 1 });
+  });
+
+  it("skips sub-percent progress updates but always applies completion", () => {
+    const id = beginTransfer("large.bin", "upload");
+    reportTransferProgress(id, 0.5);
+    const before = getTransfers();
+    reportTransferProgress(id, 0.505);
+    expect(getTransfers()).toBe(before);
+    reportTransferProgress(id, 1);
+    expect(
+      getTransfers().find((candidate) => candidate.id === id)?.progress,
+    ).toBe(1);
+  });
+
+  it("records failures and clears only finished items", () => {
+    const failedId = beginTransfer("broken.png", "upload");
+    const activeId = beginTransfer("pending.png", "delete", null);
+    failTransfer(failedId, "Upload failed");
+    expect(
+      getTransfers().find((candidate) => candidate.id === failedId),
+    ).toMatchObject({ status: "error", error: "Upload failed" });
+
+    clearFinishedTransfers();
+    const remaining = getTransfers();
+    expect(
+      remaining.find((candidate) => candidate.id === failedId),
+    ).toBeUndefined();
+    expect(
+      remaining.find((candidate) => candidate.id === activeId),
+    ).toMatchObject({ status: "active", progress: null });
+  });
+
+  it("notifies subscribers and stops after unsubscribe", () => {
+    let notified = 0;
+    const unsubscribe = subscribeTransfers(() => {
+      notified += 1;
+    });
+    const id = beginTransfer("notify.txt", "upload");
+    expect(notified).toBe(1);
+    unsubscribe();
+    completeTransfer(id);
+    expect(notified).toBe(1);
+  });
+
+  it("ignores progress reports for finished transfers", () => {
+    const id = beginTransfer("done.txt", "upload");
+    completeTransfer(id);
+    reportTransferProgress(id, 0.2);
+    expect(
+      getTransfers().find((candidate) => candidate.id === id),
+    ).toMatchObject({ status: "success", progress: 1 });
+  });
+});
+
+describe("parseTransferConcurrency", () => {
+  it("defaults to 2 when unset or invalid", () => {
+    expect(parseTransferConcurrency(undefined)).toBe(2);
+    expect(parseTransferConcurrency("")).toBe(2);
+    expect(parseTransferConcurrency("banana")).toBe(2);
+    expect(parseTransferConcurrency("0")).toBe(2);
+    expect(parseTransferConcurrency("-3")).toBe(2);
+  });
+
+  it("accepts explicit values and caps them at 8", () => {
+    expect(parseTransferConcurrency("1")).toBe(1);
+    expect(parseTransferConcurrency("4")).toBe(4);
+    expect(parseTransferConcurrency("50")).toBe(8);
+  });
+});
+
+describe("runWithConcurrency", () => {
+  it("processes every task while keeping at most `limit` in flight", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const done: number[] = [];
+    await runWithConcurrency([1, 2, 3, 4, 5], 2, async (task) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      done.push(task);
+    });
+    expect(done.toSorted((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    expect(peak).toBe(2);
+  });
+
+  it("handles an empty task list and limits above the task count", async () => {
+    await runWithConcurrency([], 4, () => Promise.reject(new Error("no")));
+    const seen: string[] = [];
+    await runWithConcurrency(["only"], 8, async (task) => {
+      seen.push(task);
+    });
+    expect(seen).toEqual(["only"]);
+  });
+});

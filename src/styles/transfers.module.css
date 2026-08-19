@@ -1,0 +1,24 @@
+.bar { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
+.barFailed { color: #bd2c31; }
+.panel { background: var(--gallery-surface); border: 1px solid var(--border); border-right: 0; border-radius: var(--gallery-radius) 0 0 var(--gallery-radius); bottom: .65rem; box-shadow: var(--shadow); display: flex; flex-direction: column; position: fixed; right: 0; top: 52px; width: min(320px, 90vw); z-index: 40; }
+.panelHeader { align-items: center; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; padding: .55rem .75rem; }
+.panelHeader h2 { font-size: .95rem; margin: 0; }
+.panelActions { align-items: center; display: flex; gap: .4rem; }
+.list { align-content: start; display: grid; flex: 1; gap: .65rem; list-style: none; margin: 0; overflow-y: auto; padding: .6rem .75rem .75rem; }
+.row { display: grid; gap: .3rem; }
+.rowTop { align-items: center; display: flex; gap: .45rem; }
+.rowName { flex: 1; font-size: .8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowKind { color: var(--gallery-muted); flex: none; font-size: .68rem; text-transform: capitalize; }
+.spinner { animation: transfer-spin .9s linear infinite; color: var(--gallery-muted); flex: none; }
+.tick { color: var(--gallery-accent); flex: none; }
+.cross { color: #bd2c31; flex: none; }
+.rowError { color: #bd2c31; font-size: .72rem; margin: 0; overflow-wrap: anywhere; }
+.progressTrack { background: color-mix(in srgb, var(--gallery-fg) 12%, transparent); border-radius: 99px; height: 4px; overflow: hidden; }
+.progressFill { background: var(--gallery-accent); border-radius: inherit; height: 100%; transition: width .2s ease; width: 0; }
+.progressIndeterminate { animation: transfer-slide 1.1s ease-in-out infinite; width: 40%; }
+@keyframes transfer-spin { to { transform: rotate(360deg); } }
+@keyframes transfer-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1.8s; }
+  .progressIndeterminate { animation-duration: 2.2s; }
+}

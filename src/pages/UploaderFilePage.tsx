@@ -6,6 +6,7 @@ import { PageFrame } from "../components/PageFrame";
 import { friendlyError } from "../lib/errors";
 import { storageApi } from "../lib/files";
 import { anonymousClaim } from "../lib/authClient";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import {
   isHeifImage,
   shouldUseNativeHeifPreview,
@@ -30,6 +31,12 @@ export function UploaderFilePage(props: {
   const [opening, setOpening] = useState(false);
   const [previewRequested, setPreviewRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useDocumentTitle(
+    entry === undefined || entry === null
+      ? props.gallery.name
+      : `${props.gallery.name} - ${entry.name}`,
+  );
 
   const openFile = useCallback(
     async (suppliedPassword?: string) => {

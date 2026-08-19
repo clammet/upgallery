@@ -5,6 +5,7 @@ import {
   mkdir,
   readdir,
   rename,
+  rm,
   stat,
 } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -316,6 +317,18 @@ export async function executeFilesystemOperation(
     claim.destinationSegments,
   );
   const destination = absoluteStoragePath(destinationKey);
+  if (claim.kind === "rmdir") {
+    const metadata = await lstat(destination).catch(() => null);
+    if (metadata !== null && !metadata.isDirectory()) {
+      throw new Error("Requested user-backed path is not a directory");
+    }
+    await rm(destination, { recursive: true, force: true });
+    signal.throwIfAborted();
+    return await callConvex<FilesystemOperationResult>(
+      "/internal/storage/complete-filesystem-operation",
+      { operationId: claim.operationId },
+    );
+  }
   await mkdir(dirname(destination), { recursive: true });
   if (claim.kind === "mkdir") {
     await mkdir(destination).catch(async (error: unknown) => {

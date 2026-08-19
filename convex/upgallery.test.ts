@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import authComponent from "@clammet/convex-googly-auth/test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
@@ -965,6 +965,235 @@ describe("upgallery backend", () => {
       previewMode: "random3",
       filesystemIdentity: "2:20",
     });
+  });
+
+  test("gallery owners can bulk delete folders with their contents", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const owner = await seedProfile(t, {
+        email: "owner@example.com",
+        admin: true,
+      });
+      const editor = await seedProfile(t, { email: "editor@example.com" });
+      const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+      const editorClient = asUser(t, editor.googleSubject, "editor@example.com");
+      const galleryId = await ownerClient.mutation(api.galleries.create, {
+        name: "Folder delete gallery",
+        slug: "folder-delete-gallery",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "folder-delete",
+        hosts: [{ host: "folder-delete.example.com", rootPath: "/" }],
+      });
+      const rootFolderId = await t.run(async (ctx) => {
+        await ctx.db.insert("galleryRoles", {
+          galleryId,
+          profileId: editor.profileId,
+          role: "editor",
+        });
+        const gallery = await ctx.db.get("galleries", galleryId);
+        return gallery!.rootFolderId!;
+      });
+      const trips = await ownerClient.mutation(api.folders.create, {
+        galleryId,
+        parentId: rootFolderId,
+        name: "Trips",
+        privacy: "public",
+      });
+      if (trips.kind !== "complete") {
+        throw new Error("Shared gallery unexpectedly required filesystem I/O");
+      }
+      const japan = await ownerClient.mutation(api.folders.create, {
+        galleryId,
+        parentId: trips.folderId,
+        name: "Japan",
+        privacy: "public",
+      });
+      if (japan.kind !== "complete") {
+        throw new Error("Shared gallery unexpectedly required filesystem I/O");
+      }
+      const entryId = await t.run(async (ctx) => {
+        await ctx.db.patch("galleries", galleryId, {
+          itemCount: 1,
+          totalBytes: 12,
+        });
+        return await ctx.db.insert("entries", {
+          galleryId,
+          folderId: japan.folderId,
+          ownerProfileId: owner.profileId,
+          name: "shrine.jpg",
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image",
+          size: 12,
+          sha256: "b".repeat(64),
+          storageKind: "shared",
+          storageKey: "public/shared/folder-delete/bb/bb/shrine.jpg",
+          state: "ready",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      });
+
+      await expect(
+        editorClient.mutation(api.folders.removeMany, {
+          galleryId,
+          folderIds: [trips.folderId],
+        }),
+      ).rejects.toThrow("Unauthorized");
+      await expect(
+        ownerClient.mutation(api.folders.removeMany, {
+          galleryId,
+          folderIds: [rootFolderId],
+        }),
+      ).rejects.toThrow("The root folder cannot be deleted");
+
+      await expect(
+        ownerClient.mutation(api.folders.removeMany, {
+          galleryId,
+          folderIds: [trips.folderId],
+        }),
+      ).resolves.toEqual({ kind: "complete" });
+      const listing = await ownerClient.query(api.folders.list, {
+        galleryId,
+        folderId: rootFolderId,
+      });
+      expect(listing.folders).toHaveLength(0);
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const cleaned = await t.run(async (ctx) => ({
+        trips: await ctx.db.get("folders", trips.folderId),
+        japan: await ctx.db.get("folders", japan.folderId),
+        entry: await ctx.db.get("entries", entryId),
+        gallery: await ctx.db.get("galleries", galleryId),
+        deleteJobs: await ctx.db
+          .query("storageDeleteJobs")
+          .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+          .take(10),
+      }));
+      expect(cleaned.trips).toBeNull();
+      expect(cleaned.japan).toBeNull();
+      expect(cleaned.entry).toBeNull();
+      expect(cleaned.gallery).toMatchObject({ itemCount: 0, totalBytes: 0 });
+      expect(cleaned.deleteJobs).toMatchObject([
+        {
+          storageKey: "public/shared/folder-delete/bb/bb/shrine.jpg",
+          deleteOriginal: true,
+          deleteEntry: false,
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("user-backed folder deletion commits after the rmdir filesystem operation", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const owner = await seedProfile(t, {
+        email: "owner@example.com",
+        admin: true,
+      });
+      const ownerClient = asUser(t, owner.googleSubject, "owner@example.com");
+      const galleryId = await ownerClient.mutation(api.galleries.create, {
+        name: "Rmdir gallery",
+        slug: "rmdir-gallery",
+        kind: "image",
+        storageKind: "user",
+        storageRoot: "rmdir-studio",
+        hosts: [{ host: "rmdir.example.com", rootPath: "/" }],
+      });
+      const { rootFolderId, folderId, entryId } = await t.run(async (ctx) => {
+        const gallery = await ctx.db.get("galleries", galleryId);
+        const rootFolderId = gallery!.rootFolderId!;
+        const folderId = await ctx.db.insert("folders", {
+          galleryId,
+          parentId: rootFolderId,
+          ancestorIds: [rootFolderId],
+          name: "Shoots",
+          slug: "shoots",
+          privacy: "public",
+          filesystemIdentity: "3:30",
+        });
+        await ctx.db.patch("galleries", galleryId, {
+          itemCount: 1,
+          totalBytes: 20,
+        });
+        const entryId = await ctx.db.insert("entries", {
+          galleryId,
+          folderId,
+          ownerProfileId: owner.profileId,
+          name: "portrait.jpg",
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image",
+          size: 20,
+          sha256: "c".repeat(64),
+          storageKind: "user",
+          storageKey: "public/users/rmdir-studio/Shoots/portrait.jpg",
+          thumbnailKey: "thumbnails/rmdir/cc.jpg",
+          state: "ready",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        return { rootFolderId, folderId, entryId };
+      });
+
+      const result = await ownerClient.mutation(api.folders.removeMany, {
+        galleryId,
+        folderIds: [folderId],
+      });
+      if (result.kind !== "filesystem") {
+        throw new Error("Expected a filesystem operation");
+      }
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].folderId).toBe(folderId);
+      const stillListed = await ownerClient.query(api.folders.list, {
+        galleryId,
+        folderId: rootFolderId,
+      });
+      expect(stillListed.folders).toHaveLength(1);
+
+      const claim = await t.mutation(
+        internal.filesystemSync.claimFilesystemOperation,
+        {
+          operationId: result.operations[0].operationId,
+          token: result.operations[0].token,
+        },
+      );
+      expect(claim).toMatchObject({
+        kind: "rmdir",
+        destinationSegments: ["Shoots"],
+      });
+      await t.mutation(internal.filesystemSync.completeFilesystemOperation, {
+        operationId: result.operations[0].operationId,
+      });
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const cleaned = await t.run(async (ctx) => ({
+        folder: await ctx.db.get("folders", folderId),
+        entry: await ctx.db.get("entries", entryId),
+        gallery: await ctx.db.get("galleries", galleryId),
+        deleteJobs: await ctx.db
+          .query("storageDeleteJobs")
+          .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
+          .take(10),
+      }));
+      expect(cleaned.folder).toBeNull();
+      expect(cleaned.entry).toBeNull();
+      expect(cleaned.gallery).toMatchObject({ itemCount: 0, totalBytes: 0 });
+      expect(cleaned.deleteJobs).toMatchObject([
+        {
+          thumbnailKey: "thumbnails/rmdir/cc.jpg",
+          deleteOriginal: false,
+          deleteEntry: false,
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("gallery editors can rename files and viewers cannot", async () => {

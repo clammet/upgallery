@@ -169,6 +169,7 @@ export default defineSchema({
     kind: v.union(
       v.literal("mkdir"),
       v.literal("rename"),
+      v.literal("rmdir"),
       v.literal("fileRename"),
     ),
     name: v.string(),

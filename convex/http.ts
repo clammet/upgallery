@@ -740,7 +740,7 @@ http.route({
     if (
       !isRecord(body) ||
       typeof body.operationId !== "string" ||
-      typeof body.identity !== "string" ||
+      (body.identity !== undefined && typeof body.identity !== "string") ||
       (body.modifiedAt !== undefined && typeof body.modifiedAt !== "number")
     ) {
       return json({ error: "Invalid request body" }, 400);

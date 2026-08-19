@@ -29,6 +29,9 @@
 .selectCircleChecked { background: var(--gallery-accent); box-shadow: 0 0 0 1px var(--gallery-accent); }
 .selectedCard { border-color: var(--gallery-accent); box-shadow: 0 0 0 1px var(--gallery-accent); }
 .selectedCard .fileCardContent { background: color-mix(in srgb, var(--gallery-accent) 8%, transparent); }
+.folderCardSelectable { color: inherit; cursor: pointer; font: inherit; margin: 0; position: relative; text-align: inherit; }
+.folderCardSelectable:hover { background: color-mix(in srgb, var(--gallery-accent) 4%, var(--gallery-surface)); }
+.folderCardSelectable.selectedCard { background: color-mix(in srgb, var(--gallery-accent) 8%, var(--gallery-surface)); }
 .fileCard[draggable="true"] { cursor: grab; }
 .fileCard[draggable="true"]:active { cursor: grabbing; }
 .folderDropTarget { border-style: dashed; }

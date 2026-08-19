@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { folderPreviewMode, privacy } from "./lib/validators";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -19,6 +20,8 @@ import {
 } from "./lib/permissions";
 
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+
+const MAX_BULK_FOLDERS = 128;
 
 function randomPreviewThreshold(
   seed: number,
@@ -249,6 +252,7 @@ export const create = mutation({
     name: v.string(),
     privacy,
     previewMode: v.optional(folderPreviewMode),
+    existingOk: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const [gallery, parent] = await Promise.all([
@@ -281,7 +285,11 @@ export const create = mutation({
         q.eq("galleryId", gallery._id).eq("parentId", parent._id),
       )
       .take(256);
-    if (siblings.some((sibling) => sibling.slug === slug)) {
+    const existing = siblings.find((sibling) => sibling.slug === slug);
+    if (existing !== undefined) {
+      if (args.existingOk === true) {
+        return { kind: "complete" as const, folderId: existing._id };
+      }
       throw new Error("A folder with that name already exists here");
     }
     if (gallery.storageKind === "user") {
@@ -323,6 +331,97 @@ export const create = mutation({
       createdAt: Date.now(),
     });
     return { kind: "complete" as const, folderId };
+  },
+});
+
+export const removeMany = mutation({
+  args: {
+    galleryId: v.id("galleries"),
+    folderIds: v.array(v.id("folders")),
+  },
+  handler: async (ctx, args) => {
+    const folderIds = [...new Set(args.folderIds)];
+    if (folderIds.length < 1 || folderIds.length > MAX_BULK_FOLDERS) {
+      throw new Error(
+        `Select between 1 and ${MAX_BULK_FOLDERS} folders to delete`,
+      );
+    }
+    const gallery = await ctx.db.get("galleries", args.galleryId);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image"
+    ) {
+      throw new Error("Gallery not found");
+    }
+    if (gallery.pendingMigrationId !== undefined) {
+      throw new Error("Folders cannot be deleted during storage migration");
+    }
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    const folders = [];
+    for (const folderId of folderIds) {
+      const folder = await ctx.db.get("folders", folderId);
+      if (
+        folder === null ||
+        folder.galleryId !== gallery._id ||
+        folder.filesystemMissingAt !== undefined
+      ) {
+        throw new Error("A selected folder is no longer available");
+      }
+      if (gallery.rootFolderId === folder._id || folder.parentId === undefined) {
+        throw new Error("The root folder cannot be deleted");
+      }
+      folders.push(folder);
+    }
+
+    const now = Date.now();
+    if (gallery.storageKind === "user") {
+      const operations = [];
+      for (const folder of folders) {
+        const token = createToken();
+        const operationId = await ctx.db.insert("filesystemOperations", {
+          galleryId: gallery._id,
+          parentId: folder.parentId!,
+          folderId: folder._id,
+          actorProfileId: actor._id,
+          kind: "rmdir",
+          name: cleanFilesystemSegment(folder.name),
+          privacy: folder.privacy,
+          previewMode: folder.previewMode,
+          tokenHash: await sha256(token),
+          expiresAt: now + 15 * 60 * 1000,
+          state: "pending",
+          attempts: 0,
+        });
+        operations.push({ folderId: folder._id, operationId, token });
+      }
+      return { kind: "filesystem" as const, operations };
+    }
+    for (const folder of folders) {
+      // filesystemMissingAt doubles as the tombstone for app-initiated
+      // deletes: every listing and destination check already excludes it,
+      // and cleanupMissingFolder removes the subtree behind it.
+      await ctx.db.patch("folders", folder._id, {
+        filesystemMissingAt: now,
+      });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.filesystemSync.cleanupMissingFolder,
+        { folderId: folder._id },
+      );
+    }
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "folders.deleted",
+      galleryId: gallery._id,
+      detail: `${folders.length} folder${folders.length === 1 ? "" : "s"}`,
+      createdAt: now,
+    });
+    return { kind: "complete" as const };
   },
 });
 

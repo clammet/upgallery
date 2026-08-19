@@ -49,6 +49,8 @@ healthServer.listen(config.workerHealthPort, "0.0.0.0", () => {
 
 installShutdownHandlers();
 
+await waitForConvex(shutdown.signal);
+
 const loops = [
   ...Array.from(
     { length: config.mediaWorkerConcurrency },
@@ -74,6 +76,25 @@ const loops = [
 ];
 
 await Promise.all(loops);
+
+async function waitForConvex(signal: AbortSignal): Promise<void> {
+  let waiting = false;
+  while (!signal.aborted) {
+    try {
+      await trackedCall("/internal/storage/health");
+      if (waiting) {
+        console.log("Convex is ready; starting storage worker loops");
+      }
+      return;
+    } catch {
+      if (!waiting) {
+        waiting = true;
+        console.log(`Waiting for Convex at ${config.convexSiteUrl}...`);
+      }
+    }
+    await delay(config.pollIntervalMs, signal).catch(() => undefined);
+  }
+}
 
 async function trackedCall<T>(
   path: string,

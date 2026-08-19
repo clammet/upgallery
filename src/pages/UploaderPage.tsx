@@ -21,7 +21,9 @@ import {
 import { TrashIcon } from "../components/ActionIcons";
 import { MarkdownToggle } from "../components/MarkdownToggle";
 import { formatBytes, storageApi } from "../lib/files";
+import { dropContainsDirectory } from "../lib/dropUpload";
 import { useUpload } from "../hooks/useUpload";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { anonymousClaim } from "../lib/authClient";
 import {
   fileHasLocationMetadata,
@@ -53,6 +55,7 @@ export function UploaderPage(props: {
     folderId: props.rootFolder._id,
   });
   const [file, setFile] = useState<File | null>(null);
+  const [dropError, setDropError] = useState<string | null>(null);
   const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
   const [removeLocationData, setRemoveLocationData] = useState(false);
@@ -113,8 +116,13 @@ export function UploaderPage(props: {
     const onDragOver = (event: DragEvent) => event.preventDefault();
     const onDrop = (event: DragEvent) => {
       event.preventDefault();
+      if (event.dataTransfer && dropContainsDirectory(event.dataTransfer)) {
+        setDropError("Folders cannot be uploaded here.");
+        return;
+      }
       const dropped = event.dataTransfer?.files[0];
       if (dropped) {
+        setDropError(null);
         setFile(dropped);
         setTextPreview(null);
       }
@@ -130,6 +138,7 @@ export function UploaderPage(props: {
       if (pastedFile) {
         event.preventDefault();
         setFile(pastedFile);
+        setDropError(null);
         setTextPreview(null);
         return;
       }
@@ -138,6 +147,7 @@ export function UploaderPage(props: {
         event.preventDefault();
         const name = `clipboard-${new Date().toISOString().replaceAll(":", "-")}.txt`;
         setFile(new File([text], name, { type: "text/plain" }));
+        setDropError(null);
         setTextPreview(text.slice(0, 500));
       }
     };
@@ -188,6 +198,12 @@ export function UploaderPage(props: {
     viewerEntryId === null
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
+  const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
+  useDocumentTitle(
+    viewerItem !== undefined
+      ? `${props.gallery.name} - ${viewerItem.title}`
+      : props.gallery.name,
+  );
   const resolveViewerSource = useCallback(
     async (item: MediaViewerItem, suppliedPassword?: string) => {
       if (
@@ -320,6 +336,7 @@ export function UploaderPage(props: {
               type="file"
               onChange={(event) => {
                 setFile(event.target.files?.[0] ?? null);
+                setDropError(null);
                 setTextPreview(null);
               }}
             />
@@ -383,7 +400,9 @@ export function UploaderPage(props: {
               <span>remove location data</span>
             </label>
           ) : null}
-          {error ? <p className={layout.formError}>{error}</p> : null}
+          {error ?? dropError ? (
+            <p className={layout.formError}>{error ?? dropError}</p>
+          ) : null}
           <button type="submit" disabled={!file || uploading}>
             {uploading ? "Uploading…" : "Submit"}
           </button>
@@ -426,6 +445,7 @@ export function UploaderPage(props: {
           items={viewerItems}
           initialIndex={viewerIndex}
           themeMode={props.gallery.theme.mode ?? "light"}
+          onActiveItemChange={(item) => setViewerEntryId(item.id)}
           onMarkdownModeChange={changeViewerMarkdownMode}
           resolveSource={resolveViewerSource}
           onClose={() => setViewerEntryId(null)}
