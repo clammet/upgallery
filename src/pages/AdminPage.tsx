@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, Plus } from "lucide-react";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { formatBytes } from "../lib/files";
 import { friendlyError } from "../lib/errors";
@@ -19,6 +19,14 @@ import {
   nextPrefixAttempt,
   type PrefixAttempt,
 } from "../lib/galleryDraft";
+import {
+  buildTheme,
+  diffGallerySettings,
+  initialThemeJson,
+  mibValue,
+  type SettingsSnapshot,
+  type UploaderAccess,
+} from "../lib/gallerySettings";
 import styles from "../styles/admin.module.css";
 import layout from "../styles/layout.module.css";
 
@@ -331,81 +339,16 @@ function GalleryAdmin(props: {
   const details = useQuery(api.galleries.adminDetails, {
     galleryId: props.galleryId,
   });
-  const update = useMutation(api.galleries.update);
   const remove = useMutation(api.galleries.remove);
   const upsertRole = useMutation(api.roles.upsert);
   const revokeRole = useMutation(api.roles.revoke);
   const requestMigration = useMutation(api.migrations.request);
   const [message, setMessage] = useState<string | null>(null);
-  const [settingsDirty, setSettingsDirty] = useState(false);
-
-  useEffect(() => {
-    setSettingsDirty(false);
-  }, [props.galleryId]);
 
   if (details === undefined) return <p>Loading gallery…</p>;
   if (details === null) return <p>Gallery no longer exists.</p>;
   const gallery = details.gallery;
   const publicUrl = publicGalleryUrl(details.hosts);
-  const maxFileSizeLimit = gallery.maxFileSizeLimit ?? gallery.maxFileSize;
-  const limitMib = Math.round((maxFileSizeLimit / (1024 * 1024)) * 10) / 10;
-
-  const updateSettings = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    // Host routes and the size limit are system-level settings; owners never
-    // render the fields and must not send the arguments.
-    const systemFields = props.isSystemAdmin
-      ? {
-          maxFileSizeLimit: Math.round(
-            Number(data.get("maxFileSizeLimitMib")) * 1024 * 1024,
-          ),
-          hosts: String(data.get("hosts"))
-            .split("\n")
-            .filter(Boolean)
-            .map((line) => {
-              const [host, rootPath = "/"] = line.split("|");
-              return { host: host.trim(), rootPath: rootPath.trim() };
-            }),
-        }
-      : {};
-    void update({
-      galleryId: gallery._id,
-      name: String(data.get("name")),
-      maxFileSize: Math.round(Number(data.get("maxFileSizeMib")) * 1024 * 1024),
-      uploaderAccess: data.get("uploaderAccess") as
-        | "anonymous"
-        | "sso"
-        | "restricted",
-      folderPreviewMode:
-        gallery.kind === "image"
-          ? (data.get("folderPreviewMode") as FolderPreviewMode)
-          : gallery.folderPreviewMode ?? "first",
-      quickMove:
-        gallery.kind === "image"
-          ? data.get("quickMove") === "on"
-          : gallery.quickMove,
-      ...systemFields,
-      theme: {
-        accent: String(data.get("accent") || "") || undefined,
-        secondary: String(data.get("secondary") || "") || undefined,
-        background: String(data.get("background") || "") || undefined,
-        foreground: String(data.get("foreground") || "") || undefined,
-        surface: String(data.get("surface") || "") || undefined,
-        muted: String(data.get("muted") || "") || undefined,
-        mode: data.get("mode") as ThemeMode,
-        radius: Number(data.get("radius") || 4),
-        density: data.get("density") as "compact" | "comfortable",
-        thumbnailFrameSize: Number(data.get("thumbnailFrameSize") || 218),
-        customCss: String(data.get("customCss") || "") || undefined,
-      },
-    })
-      .then(() => {
-        setSettingsDirty(false);
-        setMessage("Settings saved");
-      })
-      .catch(showError(setMessage));
-  };
 
   return (
     <>
@@ -432,51 +375,13 @@ function GalleryAdmin(props: {
       {message ? <p className={message.startsWith("Error") ? layout.errorNotice : layout.notice}>{message}</p> : null}
 
       <Section title="Settings">
-        <form
+        <GallerySettingsForm
           key={gallery._id}
-          className={`${layout.form} ${styles.twoColumns}`}
-          onChange={() => setSettingsDirty(true)}
-          onSubmit={updateSettings}
-        >
-          <label>Name<input name="name" defaultValue={gallery.name} /></label>
-          <label>Maximum file size <small>{props.isSystemAdmin ? "(MiB)" : `(MiB · limit ${limitMib} MiB)`}</small><input name="maxFileSizeMib" type="number" min="0.1" max={props.isSystemAdmin ? 10240 : limitMib} step="0.1" required defaultValue={Math.round((gallery.maxFileSize / (1024 * 1024)) * 10) / 10} /></label>
-          {props.isSystemAdmin ? (
-            <label>Max size limit <small>(MiB)</small><input name="maxFileSizeLimitMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={limitMib} /></label>
-          ) : null}
-          <label>Uploader access<select name="uploaderAccess" defaultValue={gallery.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
-          <label>Density<select name="density" defaultValue={gallery.theme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
-          <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={gallery.theme.thumbnailFrameSize ?? 218} /></label>
-          {gallery.kind === "image" ? (
-            <label>Folder preview default
-              <select name="folderPreviewMode" defaultValue={gallery.folderPreviewMode ?? "first"}>
-                <option value="first">First image</option>
-                <option value="random">Random</option>
-                <option value="first3">First 3</option>
-                <option value="random3">Random 3</option>
-              </select>
-            </label>
-          ) : null}
-          {gallery.kind === "image" ? (
-            <label>Quick move <small>(drag items into folders without select mode)</small>
-              <select name="quickMove" defaultValue={gallery.quickMove === true ? "on" : "off"}>
-                <option value="off">Off</option>
-                <option value="on">On</option>
-              </select>
-            </label>
-          ) : null}
-          <ThemeControls key={gallery._id} theme={gallery.theme} />
-          <label>Corner radius<input name="radius" type="number" min="0" max="40" defaultValue={gallery.theme.radius ?? 4} /></label>
-          {props.isSystemAdmin ? (
-            <label className={styles.spanTwo}>Host routes <small>(one per line: host|/public-path)</small><textarea name="hosts" rows={3} defaultValue={details.hosts.map((host) => `${host.host}|${host.rootPath}`).join("\n")} /></label>
-          ) : null}
-          <label className={styles.spanTwo}>Scoped custom CSS<textarea name="customCss" rows={5} defaultValue={gallery.theme.customCss ?? ""} /></label>
-          <button
-            className={settingsDirty ? styles.saveSettingsDirty : undefined}
-            type="submit"
-          >
-            Save settings
-          </button>
-        </form>
+          gallery={gallery}
+          hosts={details.hosts}
+          isSystemAdmin={props.isSystemAdmin}
+          setMessage={setMessage}
+        />
       </Section>
 
       <FileIconAdmin galleryId={gallery._id} setMessage={setMessage} />
@@ -565,6 +470,137 @@ function GalleryAdmin(props: {
         </button>
       </Section>
     </>
+  );
+}
+
+type GalleryTheme = Doc<"galleries">["theme"];
+
+function GallerySettingsForm(props: {
+  gallery: Doc<"galleries">;
+  hosts: Array<Doc<"galleryHosts">>;
+  isSystemAdmin: boolean;
+  setMessage: (message: string | null) => void;
+}) {
+  const update = useMutation(api.galleries.update);
+  const gallery = props.gallery;
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  // Snapshot of the values this form was mounted with (the gallery from the
+  // reactive query keeps updating; the form inputs do not). Saving diffs the
+  // submitted values against the snapshot and sends only the fields changed
+  // in this tab, so a long-open form cannot overwrite settings that were
+  // changed elsewhere in the meantime.
+  const [initialTheme] = useState<GalleryTheme>(gallery.theme);
+  const [initial, setInitial] = useState<SettingsSnapshot>(() => ({
+    name: gallery.name,
+    maxFileSizeMib: mibValue(gallery.maxFileSize),
+    maxFileSizeLimitMib: mibValue(
+      gallery.maxFileSizeLimit ?? gallery.maxFileSize,
+    ),
+    uploaderAccess: gallery.uploaderAccess,
+    folderPreviewMode: gallery.folderPreviewMode ?? "first",
+    quickMove: gallery.quickMove === true,
+    hosts: props.hosts
+      .map((host) => `${host.host}|${host.rootPath}`)
+      .join("\n"),
+    themeJson: initialThemeJson(gallery.theme),
+  }));
+
+  const updateSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const theme = buildTheme({
+      accent: String(data.get("accent") || ""),
+      secondary: String(data.get("secondary") || ""),
+      background: String(data.get("background") || ""),
+      foreground: String(data.get("foreground") || ""),
+      surface: String(data.get("surface") || ""),
+      muted: String(data.get("muted") || ""),
+      mode: data.get("mode") as ThemeMode,
+      radius: Number(data.get("radius") || 4),
+      density: data.get("density") as "compact" | "comfortable",
+      thumbnailFrameSize: Number(data.get("thumbnailFrameSize") || 218),
+      customCss: String(data.get("customCss") || ""),
+    });
+    // Fields whose controls are not rendered for this gallery or role fall
+    // back to the snapshot, which marks them unchanged.
+    const current: SettingsSnapshot = {
+      name: String(data.get("name")),
+      maxFileSizeMib: Number(data.get("maxFileSizeMib")),
+      maxFileSizeLimitMib: props.isSystemAdmin
+        ? Number(data.get("maxFileSizeLimitMib"))
+        : initial.maxFileSizeLimitMib,
+      uploaderAccess: data.get("uploaderAccess") as UploaderAccess,
+      folderPreviewMode:
+        gallery.kind === "image"
+          ? (data.get("folderPreviewMode") as FolderPreviewMode)
+          : initial.folderPreviewMode,
+      quickMove:
+        gallery.kind === "image"
+          ? data.get("quickMove") === "on"
+          : initial.quickMove,
+      hosts: props.isSystemAdmin ? String(data.get("hosts")) : initial.hosts,
+      themeJson: JSON.stringify(theme),
+    };
+    const changed = diffGallerySettings(initial, current, theme);
+    if (Object.keys(changed).length === 0) {
+      setSettingsDirty(false);
+      props.setMessage("No changes to save");
+      return;
+    }
+    void update({ galleryId: gallery._id, ...changed })
+      .then(() => {
+        setInitial(current);
+        setSettingsDirty(false);
+        props.setMessage("Settings saved");
+      })
+      .catch(showError(props.setMessage));
+  };
+
+  return (
+    <form
+      className={`${layout.form} ${styles.twoColumns}`}
+      onChange={() => setSettingsDirty(true)}
+      onSubmit={updateSettings}
+    >
+      <label>Name<input name="name" defaultValue={initial.name} /></label>
+      <label>Maximum file size <small>{props.isSystemAdmin ? "(MiB)" : `(MiB · limit ${initial.maxFileSizeLimitMib} MiB)`}</small><input name="maxFileSizeMib" type="number" min="0.1" max={props.isSystemAdmin ? 10240 : initial.maxFileSizeLimitMib} step="0.1" required defaultValue={initial.maxFileSizeMib} /></label>
+      {props.isSystemAdmin ? (
+        <label>Max size limit <small>(MiB)</small><input name="maxFileSizeLimitMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={initial.maxFileSizeLimitMib} /></label>
+      ) : null}
+      <label>Uploader access<select name="uploaderAccess" defaultValue={initial.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
+      <label>Density<select name="density" defaultValue={initialTheme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
+      <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={initialTheme.thumbnailFrameSize ?? 218} /></label>
+      {gallery.kind === "image" ? (
+        <label>Folder preview default
+          <select name="folderPreviewMode" defaultValue={initial.folderPreviewMode}>
+            <option value="first">First image</option>
+            <option value="random">Random</option>
+            <option value="first3">First 3</option>
+            <option value="random3">Random 3</option>
+          </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Quick move <small>(drag items into folders without select mode)</small>
+          <select name="quickMove" defaultValue={initial.quickMove ? "on" : "off"}>
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
+        </label>
+      ) : null}
+      <ThemeControls theme={initialTheme} />
+      <label>Corner radius<input name="radius" type="number" min="0" max="40" defaultValue={initialTheme.radius ?? 4} /></label>
+      {props.isSystemAdmin ? (
+        <label className={styles.spanTwo}>Host routes <small>(one per line: host|/public-path)</small><textarea name="hosts" rows={3} defaultValue={initial.hosts} /></label>
+      ) : null}
+      <label className={styles.spanTwo}>Scoped custom CSS<textarea name="customCss" rows={5} defaultValue={initialTheme.customCss ?? ""} /></label>
+      <button
+        className={settingsDirty ? styles.saveSettingsDirty : undefined}
+        type="submit"
+      >
+        Save settings
+      </button>
+    </form>
   );
 }
 

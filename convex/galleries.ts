@@ -440,14 +440,17 @@ export const adminDetails = query({
 export const update = mutation({
   args: {
     galleryId: v.id("galleries"),
-    name: v.string(),
-    maxFileSize: v.number(),
+    // Every setting is optional with patch semantics: omitted fields keep
+    // their stored value. Clients send only what the user changed, so a
+    // stale tab or an older build cannot reset settings it never touched.
+    name: v.optional(v.string()),
+    maxFileSize: v.optional(v.number()),
     maxFileSizeLimit: v.optional(v.number()),
-    uploaderAccess,
+    uploaderAccess: v.optional(uploaderAccess),
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
-    theme: themeValidator,
+    theme: v.optional(themeValidator),
   },
   handler: async (ctx, args) => {
     const gallery = await ctx.db.get("galleries", args.galleryId);
@@ -459,11 +462,14 @@ export const update = mutation({
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
     const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
-    validateThumbnailFrameSize(args.theme);
+    if (args.theme !== undefined) {
+      validateThumbnailFrameSize(args.theme);
+    }
     if (
-      !Number.isSafeInteger(args.maxFileSize) ||
-      args.maxFileSize < 1024 ||
-      args.maxFileSize > 10 * 1024 * 1024 * 1024
+      args.maxFileSize !== undefined &&
+      (!Number.isSafeInteger(args.maxFileSize) ||
+        args.maxFileSize < 1024 ||
+        args.maxFileSize > 10 * 1024 * 1024 * 1024)
     ) {
       throw new Error("Maximum file size must be between 1 KiB and 10 GiB");
     }
@@ -485,7 +491,7 @@ export const update = mutation({
       }
       maxFileSizeLimit = args.maxFileSizeLimit;
     }
-    if (args.maxFileSize > maxFileSizeLimit) {
+    if ((args.maxFileSize ?? gallery.maxFileSize) > maxFileSizeLimit) {
       throw new Error(
         `Maximum file size cannot exceed the ${formatBytes(maxFileSizeLimit)} limit set by a system administrator`,
       );
@@ -513,23 +519,37 @@ export const update = mutation({
         });
       }
     }
+    const name = args.name?.trim();
+    // The limit is written when set explicitly, and pinned on legacy
+    // galleries (which have none) whenever the size changes so owners
+    // cannot raise the size afterwards.
+    const writeLimit =
+      args.maxFileSizeLimit !== undefined ||
+      (args.maxFileSize !== undefined &&
+        gallery.maxFileSizeLimit === undefined);
     await ctx.db.patch("galleries", gallery._id, {
-      name: args.name.trim(),
-      maxFileSize: args.maxFileSize,
-      maxFileSizeLimit,
-      uploaderAccess: args.uploaderAccess,
-      folderPreviewMode:
-        args.folderPreviewMode ?? gallery.folderPreviewMode ?? "first",
-      quickMove: args.quickMove === true ? true : undefined,
-      theme: args.theme,
+      ...(name === undefined ? {} : { name }),
+      ...(args.maxFileSize === undefined
+        ? {}
+        : { maxFileSize: args.maxFileSize }),
+      ...(writeLimit ? { maxFileSizeLimit } : {}),
+      ...(args.uploaderAccess === undefined
+        ? {}
+        : { uploaderAccess: args.uploaderAccess }),
+      ...(args.folderPreviewMode === undefined
+        ? {}
+        : { folderPreviewMode: args.folderPreviewMode }),
+      ...(args.quickMove === undefined
+        ? {}
+        : { quickMove: args.quickMove ? true : undefined }),
+      ...(args.theme === undefined ? {} : { theme: args.theme }),
     });
-    if (rootFolder !== null) {
-      await ctx.db.patch("folders", rootFolder._id, {
-        name: args.name.trim(),
-      });
+    if (name !== undefined && rootFolder !== null) {
+      await ctx.db.patch("folders", rootFolder._id, { name });
     }
     if (
       gallery.storageKind === "user" &&
+      args.maxFileSize !== undefined &&
       gallery.maxFileSize !== args.maxFileSize
     ) {
       const syncStates = await ctx.db

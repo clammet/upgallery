@@ -228,15 +228,33 @@ describe("upgallery backend", () => {
       ctx.db.get("galleries", galleryId),
     );
     expect(quickMoveOn?.quickMove).toBe(true);
+
+    // Updates are patches: fields a save omits keep their stored value, so
+    // a stale tab or an older client build cannot reset settings it never
+    // rendered.
+    await ownerAuthed.mutation(api.galleries.update, {
+      galleryId,
+      name: "Renamed gallery",
+    });
+    const patched = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    expect(patched).toMatchObject({
+      name: "Renamed gallery",
+      maxFileSize: 32 * 1024 * 1024,
+      uploaderAccess: "sso",
+      quickMove: true,
+    });
+
     await ownerAuthed.mutation(api.galleries.update, {
       ...base,
-      maxFileSize: 32 * 1024 * 1024,
       quickMove: false,
     });
     const quickMoveOff = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
     expect(quickMoveOff?.quickMove).toBeUndefined();
+    expect(quickMoveOff?.maxFileSize).toBe(32 * 1024 * 1024);
   });
 
   test("gallery admin access requires a gallery-wide owner grant", async () => {
