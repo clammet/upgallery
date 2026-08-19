@@ -43,11 +43,13 @@ import {
   clearFinishedTransfers,
   completeTransfer,
   failTransfer,
+  getTransfers,
+  markTransferClientWork,
   parseTransferConcurrency,
   reportTransferProgress,
   runWithConcurrency,
+  subscribeTransfers,
 } from "../lib/transfers";
-import { TransferStatus } from "../components/TransferStatus";
 import { useUpload } from "../hooks/useUpload";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError } from "../lib/errors";
@@ -112,6 +114,21 @@ export function GalleryPage(props: {
   const renameEntry = useMutation(api.entries.rename);
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
+  // Listing-based proof that a transfer's work landed despite a reported
+  // failure, keyed by transfer id. Only checked against the folder the
+  // transfer started in.
+  const transferResolutions = useRef(
+    new Map<
+      number,
+      {
+        folderId: Id<"folders">;
+        condition:
+          | { kind: "entryGone"; entryId: Id<"entries"> }
+          | { kind: "folderGone"; folderId: Id<"folders"> }
+          | { kind: "entryAppeared"; name: string };
+      }
+    >(),
+  );
   const { upload } = useUpload();
   const [folderDialog, setFolderDialog] = useState<"create" | "settings" | null>(
     null,
@@ -293,6 +310,9 @@ export function GalleryPage(props: {
         if (pending === undefined) {
           pending = ensureFolder(parentId, segment);
           folderIds.set(path, pending);
+          // Evict failures so a retried upload re-attempts the create.
+          const memoizedPath = path;
+          pending.catch(() => folderIds.delete(memoizedPath));
         }
         parentId = await pending;
       }
@@ -302,7 +322,21 @@ export function GalleryPage(props: {
       ...item,
       transferId: beginTransfer(item.file.name, "upload"),
     }));
-    await runWithConcurrency(tasks, uploadConcurrency, async (task) => {
+    // A lost success response is only provable for same-folder uploads of
+    // names the listing doesn't already have.
+    const existingNames = new Set(listing.entries.map((entry) => entry.name));
+    for (const task of tasks) {
+      if (
+        task.pathSegments.length === 0 &&
+        !existingNames.has(task.file.name)
+      ) {
+        transferResolutions.current.set(task.transferId, {
+          folderId,
+          condition: { kind: "entryAppeared", name: task.file.name },
+        });
+      }
+    }
+    const runTask = async (task: (typeof tasks)[number]): Promise<void> => {
       try {
         const targetFolderId = await resolveTargetFolder(task.pathSegments);
         await upload({
@@ -314,9 +348,14 @@ export function GalleryPage(props: {
         });
         completeTransfer(task.transferId);
       } catch (reason) {
-        failTransfer(task.transferId, friendlyError(reason, "Upload failed"));
+        failTransfer(
+          task.transferId,
+          friendlyError(reason, "Upload failed"),
+          () => void runTask(task),
+        );
       }
-    });
+    };
+    await runWithConcurrency(tasks, uploadConcurrency, runTask);
   };
 
   useEffect(() => {
@@ -383,12 +422,60 @@ export function GalleryPage(props: {
   useEffect(() => {
     setNotice(null);
     setActionError(null);
-    clearFinishedTransfers();
+    // Keep the whole status list intact while bulk work is still running.
+    if (!getTransfers().some((item) => item.status === "active")) {
+      clearFinishedTransfers();
+    }
     setSelectedEntryIds(new Set());
     setSelectedFolderIds(new Set());
     setDeleteDialog(false);
     setMoveDialog(false);
   }, [folderId]);
+
+  // A failed row can be resolved out-of-band: the storage worker retries
+  // folder deletes on its own, and a success response can be lost while the
+  // operation still landed. When the live listing proves the work happened,
+  // flip the stale error row to success so its retry button goes away.
+  useEffect(() => {
+    if (listing === undefined) return;
+    const evaluate = () => {
+      const rows = new Map(getTransfers().map((item) => [item.id, item]));
+      const listedEntryIds = new Set(listing.entries.map((entry) => entry._id));
+      const listedEntryNames = new Set(
+        listing.entries.map((entry) => entry.name),
+      );
+      const listedFolderIds = new Set(
+        listing.folders.map((folder) => folder._id),
+      );
+      const provenIds: number[] = [];
+      for (const [transferId, resolution] of transferResolutions.current) {
+        const row = rows.get(transferId);
+        if (row === undefined || row.status === "success") {
+          transferResolutions.current.delete(transferId);
+          continue;
+        }
+        if (row.status !== "error" || resolution.folderId !== folderId) {
+          continue;
+        }
+        const condition = resolution.condition;
+        const proven =
+          condition.kind === "entryGone"
+            ? !listedEntryIds.has(condition.entryId)
+            : condition.kind === "folderGone"
+              ? !listedFolderIds.has(condition.folderId)
+              : listedEntryNames.has(condition.name);
+        if (proven) {
+          transferResolutions.current.delete(transferId);
+          provenIds.push(transferId);
+        }
+      }
+      for (const transferId of provenIds) {
+        completeTransfer(transferId);
+      }
+    };
+    evaluate();
+    return subscribeTransfers(evaluate);
+  }, [listing, folderId]);
 
   useEffect(() => {
     if (listing === undefined) return;
@@ -452,6 +539,39 @@ export function GalleryPage(props: {
     if (entryIds.length === 0) return;
     setActionPending(true);
     setActionError(null);
+    const entryNames = new Map(
+      listing.entries.map((entry) => [entry._id, entry.name]),
+    );
+    const transfers = entryIds.map((entryId) => ({
+      entryId,
+      transferId: beginTransfer(
+        entryNames.get(entryId) ?? "File",
+        "move",
+        null,
+      ),
+    }));
+    for (const transfer of transfers) {
+      transferResolutions.current.set(transfer.transferId, {
+        folderId,
+        condition: { kind: "entryGone", entryId: transfer.entryId },
+      });
+    }
+    const retryMove = (entryId: Id<"entries">, transferId: number) => {
+      moveEntries({
+        sourceGalleryId: props.gallery._id,
+        destinationGalleryId,
+        destinationFolderId,
+        entryIds: [entryId],
+      })
+        .then(() => completeTransfer(transferId))
+        .catch((reason: unknown) => {
+          failTransfer(
+            transferId,
+            friendlyError(reason, "Could not move the file"),
+            () => retryMove(entryId, transferId),
+          );
+        });
+    };
     try {
       const result = await moveEntries({
         sourceGalleryId: props.gallery._id,
@@ -459,6 +579,9 @@ export function GalleryPage(props: {
         destinationFolderId,
         entryIds,
       });
+      for (const transfer of transfers) {
+        completeTransfer(transfer.transferId);
+      }
       setSelectedEntryIds(new Set());
       setMoveDialog(false);
       setNotice(
@@ -467,11 +590,79 @@ export function GalleryPage(props: {
           : `${result.queued} file${result.queued === 1 ? "" : "s"} queued to move.`,
       );
     } catch (reason) {
-      setActionError(friendlyError(reason, "Could not move the selected files"));
+      const message = friendlyError(
+        reason,
+        "Could not move the selected files",
+      );
+      for (const transfer of transfers) {
+        failTransfer(transfer.transferId, message, () =>
+          retryMove(transfer.entryId, transfer.transferId),
+        );
+      }
+      setActionError(message);
       throw reason;
     } finally {
       setActionPending(false);
     }
+  };
+
+  const retryFilesystemOperation = (
+    transferId: number,
+    operationId: Id<"filesystemOperations">,
+    token: string,
+  ) => {
+    markTransferClientWork(transferId);
+    completeFilesystemOperation({ kind: "filesystem", operationId, token })
+      .then(() => completeTransfer(transferId))
+      .catch((reason: unknown) => {
+        failTransfer(
+          transferId,
+          friendlyError(reason, "Could not delete the folder"),
+          () => retryFilesystemOperation(transferId, operationId, token),
+        );
+      });
+  };
+
+  const retryFolderDelete = (
+    deletedFolderId: Id<"folders">,
+    transferId: number,
+  ) => {
+    removeFolders({
+      galleryId: props.gallery._id,
+      folderIds: [deletedFolderId],
+    })
+      .then(async (result) => {
+        if (result.kind === "filesystem") {
+          markTransferClientWork(transferId);
+          for (const operation of result.operations) {
+            await completeFilesystemOperation({
+              kind: "filesystem",
+              operationId: operation.operationId,
+              token: operation.token,
+            });
+          }
+        }
+        completeTransfer(transferId);
+      })
+      .catch((reason: unknown) => {
+        failTransfer(
+          transferId,
+          friendlyError(reason, "Could not delete the folder"),
+          () => retryFolderDelete(deletedFolderId, transferId),
+        );
+      });
+  };
+
+  const retryEntryDelete = (entryId: Id<"entries">, transferId: number) => {
+    removeEntries({ galleryId: props.gallery._id, entryIds: [entryId] })
+      .then(() => completeTransfer(transferId))
+      .catch((reason: unknown) => {
+        failTransfer(
+          transferId,
+          friendlyError(reason, "Could not delete the file"),
+          () => retryEntryDelete(entryId, transferId),
+        );
+      });
   };
 
   const dropSelectedEntries = (
@@ -609,8 +800,6 @@ export function GalleryPage(props: {
         </>
       }
     >
-      {/* Keyed on the folder so its detail panel closes on navigation. */}
-      <TransferStatus key={folderId} />
       {(actionError || notice) && (
         <div
           className={`${actionError ? layout.errorNotice : layout.notice} ${layout.noticeBar}`}
@@ -831,12 +1020,28 @@ export function GalleryPage(props: {
                       ),
                     ]),
                   );
+                  for (const [
+                    deletedFolderId,
+                    transferId,
+                  ] of folderTransfers) {
+                    transferResolutions.current.set(transferId, {
+                      folderId,
+                      condition: {
+                        kind: "folderGone",
+                        folderId: deletedFolderId,
+                      },
+                    });
+                  }
                   try {
                     const result = await removeFolders({
                       galleryId: props.gallery._id,
                       folderIds: selectedFolderIdList,
                     });
                     if (result.kind === "filesystem") {
+                      // From here the rmdirs are driven by this tab.
+                      for (const transferId of folderTransfers.values()) {
+                        markTransferClientWork(transferId);
+                      }
                       for (const operation of result.operations) {
                         const transferId = folderTransfers.get(
                           operation.folderId,
@@ -857,7 +1062,13 @@ export function GalleryPage(props: {
                             "Could not delete the folder",
                           );
                           if (transferId !== undefined) {
-                            failTransfer(transferId, message);
+                            failTransfer(transferId, message, () =>
+                              retryFilesystemOperation(
+                                transferId,
+                                operation.operationId,
+                                operation.token,
+                              ),
+                            );
                           }
                           errors.push(message);
                         }
@@ -871,8 +1082,13 @@ export function GalleryPage(props: {
                       reason,
                       "Could not delete the selected folders",
                     );
-                    for (const transferId of folderTransfers.values()) {
-                      failTransfer(transferId, message);
+                    for (const [
+                      deletedFolderId,
+                      transferId,
+                    ] of folderTransfers) {
+                      failTransfer(transferId, message, () =>
+                        retryFolderDelete(deletedFolderId, transferId),
+                      );
                     }
                     errors.push(message);
                   }
@@ -881,28 +1097,40 @@ export function GalleryPage(props: {
                   const entryNames = new Map(
                     listing.entries.map((entry) => [entry._id, entry.name]),
                   );
-                  const transferIds = selectedIds.map((entryId) =>
-                    beginTransfer(
+                  const entryTransfers = selectedIds.map((entryId) => ({
+                    entryId,
+                    transferId: beginTransfer(
                       entryNames.get(entryId) ?? "File",
                       "delete",
                       null,
                     ),
-                  );
+                  }));
+                  for (const transfer of entryTransfers) {
+                    transferResolutions.current.set(transfer.transferId, {
+                      folderId,
+                      condition: {
+                        kind: "entryGone",
+                        entryId: transfer.entryId,
+                      },
+                    });
+                  }
                   try {
                     await removeEntries({
                       galleryId: props.gallery._id,
                       entryIds: selectedIds,
                     });
-                    for (const transferId of transferIds) {
-                      completeTransfer(transferId);
+                    for (const transfer of entryTransfers) {
+                      completeTransfer(transfer.transferId);
                     }
                   } catch (reason) {
                     const message = friendlyError(
                       reason,
                       "Could not delete the selected files",
                     );
-                    for (const transferId of transferIds) {
-                      failTransfer(transferId, message);
+                    for (const transfer of entryTransfers) {
+                      failTransfer(transfer.transferId, message, () =>
+                        retryEntryDelete(transfer.entryId, transfer.transferId),
+                      );
                     }
                     errors.push(message);
                   }

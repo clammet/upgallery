@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { AuthControls } from "./AuthControls";
+import { TransferStatus } from "./TransferStatus";
 import { THEME_MODE_DEFAULTS } from "../lib/theme";
 import styles from "../styles/layout.module.css";
 
@@ -48,7 +49,10 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
         <div className={styles.breadcrumb}>{breadcrumb}</div>
         <div className={styles.headerActions}>{actions}<AuthControls /></div>
       </header>
-      <main className={styles.main}>{children}</main>
+      <main className={styles.main}>
+        <TransferStatus />
+        {children}
+      </main>
       <footer className={styles.footer}>upgallery</footer>
     </div>
   );

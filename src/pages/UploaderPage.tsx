@@ -23,6 +23,7 @@ import { MarkdownToggle } from "../components/MarkdownToggle";
 import { formatBytes, storageApi } from "../lib/files";
 import { dropContainsDirectory } from "../lib/dropUpload";
 import { useUpload } from "../hooks/useUpload";
+import { useBeforeUnloadGuard } from "../hooks/useBeforeUnloadGuard";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { anonymousClaim } from "../lib/authClient";
 import {
@@ -80,6 +81,7 @@ export function UploaderPage(props: {
   );
   const refreshStoredMetadata = useMutation(api.entries.refreshMetadata);
   const { upload, uploading, error } = useUpload();
+  useBeforeUnloadGuard(uploading);
   const previewUrl = useMemo(
     () => (file?.type.startsWith("image/") ? URL.createObjectURL(file) : null),
     [file],

@@ -1,29 +1,46 @@
 import { useState, useSyncExternalStore } from "react";
-import { ArrowUpDown, Check, LoaderCircle, X } from "lucide-react";
+import { ArrowUpDown, Check, LoaderCircle, RotateCw, X } from "lucide-react";
 import {
   clearFinishedTransfers,
   getTransfers,
+  retryTransfer,
   subscribeTransfers,
   type TransferItem,
+  type TransferKind,
 } from "../lib/transfers";
+import { useBeforeUnloadGuard } from "../hooks/useBeforeUnloadGuard";
 import styles from "../styles/transfers.module.css";
 import layout from "../styles/layout.module.css";
 
 export function TransferStatus() {
   const items = useSyncExternalStore(subscribeTransfers, getTransfers);
   const [open, setOpen] = useState(false);
+  // Uploads and client-driven filesystem steps die with the tab; queued
+  // server-side work (moves, plain deletes) finishes without us.
+  useBeforeUnloadGuard(
+    items.some(
+      (item) =>
+        item.status === "active" &&
+        (item.kind === "upload" || item.clientWork === true),
+    ),
+  );
   if (items.length === 0) return null;
   const activeItems = items.filter((item) => item.status === "active");
   const active = activeItems.length;
   const failed = items.filter((item) => item.status === "error").length;
-  const verbFor = (subset: TransferItem[], tense: "active" | "done") =>
-    subset.every((item) => item.kind === "delete")
-      ? tense === "active"
-        ? "deleting"
-        : "deleted"
-      : tense === "active"
-        ? "transferring"
-        : "transferred";
+  const verbFor = (subset: TransferItem[], tense: "active" | "done") => {
+    const verbs: Record<TransferKind, [active: string, done: string]> = {
+      upload: ["uploading", "uploaded"],
+      delete: ["deleting", "deleted"],
+      move: ["moving", "moved"],
+    };
+    const kind = subset[0]?.kind;
+    const uniform =
+      kind !== undefined && subset.every((item) => item.kind === kind)
+        ? verbs[kind]
+        : (["transferring", "transferred"] as const);
+    return uniform[tense === "active" ? 0 : 1];
+  };
   const summary =
     active > 0
       ? `${active} item${active === 1 ? "" : "s"} ${verbFor(activeItems, "active")}`
@@ -54,7 +71,7 @@ export function TransferStatus() {
               clearFinishedTransfers();
               setOpen(false);
             }}
-            disabled={active === items.length}
+            disabled={active > 0}
             aria-label="Clear finished transfers"
             title="Clear finished transfers"
           >
@@ -70,7 +87,7 @@ export function TransferStatus() {
               <button
                 type="button"
                 onClick={clearFinishedTransfers}
-                disabled={active === items.length}
+                disabled={active > 0}
               >
                 Clear
               </button>
@@ -119,12 +136,25 @@ function TransferRow(props: { item: TransferItem }) {
             strokeWidth={3}
           />
         ) : (
-          <X
-            className={styles.cross}
-            aria-label="Failed"
-            size={15}
-            strokeWidth={3}
-          />
+          <>
+            {item.retry !== undefined ? (
+              <button
+                className={`${layout.iconButton} ${styles.retryButton}`}
+                type="button"
+                onClick={() => retryTransfer(item.id)}
+                aria-label={`Retry ${item.name}`}
+                title="Retry"
+              >
+                <RotateCw aria-hidden="true" size={14} />
+              </button>
+            ) : null}
+            <X
+              className={styles.cross}
+              aria-label="Failed"
+              size={15}
+              strokeWidth={3}
+            />
+          </>
         )}
       </div>
       {item.status === "error" ? (

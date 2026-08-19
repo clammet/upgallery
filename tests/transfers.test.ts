@@ -5,8 +5,10 @@ import {
   completeTransfer,
   failTransfer,
   getTransfers,
+  markTransferClientWork,
   parseTransferConcurrency,
   reportTransferProgress,
+  retryTransfer,
   runWithConcurrency,
   subscribeTransfers,
 } from "../src/lib/transfers";
@@ -54,6 +56,49 @@ describe("transfers store", () => {
     expect(
       remaining.find((candidate) => candidate.id === activeId),
     ).toMatchObject({ status: "active", progress: null });
+  });
+
+  it("reactivates a failed transfer and invokes its retry callback", () => {
+    const id = beginTransfer("flaky.jpg", "upload");
+    reportTransferProgress(id, 0.6);
+    let attempts = 0;
+    failTransfer(id, "Network error", () => {
+      attempts += 1;
+    });
+    retryTransfer(id);
+    expect(attempts).toBe(1);
+    const item = getTransfers().find((candidate) => candidate.id === id);
+    expect(item).toMatchObject({ status: "active", progress: 0 });
+    expect(item?.error).toBeUndefined();
+  });
+
+  it("ignores retries for non-retryable or finished transfers", () => {
+    const plainId = beginTransfer("plain.jpg", "upload");
+    failTransfer(plainId, "boom");
+    retryTransfer(plainId);
+    expect(
+      getTransfers().find((candidate) => candidate.id === plainId)?.status,
+    ).toBe("error");
+
+    const doneId = beginTransfer("done.jpg", "upload");
+    completeTransfer(doneId);
+    retryTransfer(doneId);
+    expect(
+      getTransfers().find((candidate) => candidate.id === doneId)?.status,
+    ).toBe("success");
+  });
+
+  it("marks client-driven work and keeps the flag through a retry", () => {
+    const id = beginTransfer("folder", "delete", null);
+    markTransferClientWork(id);
+    expect(
+      getTransfers().find((candidate) => candidate.id === id)?.clientWork,
+    ).toBe(true);
+    failTransfer(id, "rmdir failed", () => undefined);
+    retryTransfer(id);
+    expect(
+      getTransfers().find((candidate) => candidate.id === id),
+    ).toMatchObject({ status: "active", clientWork: true });
   });
 
   it("notifies subscribers and stops after unsubscribe", () => {

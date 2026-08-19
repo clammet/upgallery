@@ -1,4 +1,4 @@
-export type TransferKind = "upload" | "delete";
+export type TransferKind = "upload" | "delete" | "move";
 export type TransferItem = {
   id: number;
   name: string;
@@ -7,6 +7,13 @@ export type TransferItem = {
   /** 0..1 fraction, or null for operations without measurable progress. */
   progress: number | null;
   error?: string;
+  /** Re-attempts the failed operation; present when the failure is retryable. */
+  retry?: () => void;
+  /**
+   * True once the operation needs this tab's JavaScript to finish (beyond a
+   * fire-and-forget server mutation), so closing the page would strand it.
+   */
+  clientWork?: boolean;
 };
 
 let nextId = 1;
@@ -60,12 +67,36 @@ export function reportTransferProgress(id: number, progress: number): void {
   update(id, { progress: next });
 }
 
+export function markTransferClientWork(id: number): void {
+  const current = items.find((item) => item.id === id);
+  if (current === undefined || current.clientWork === true) return;
+  update(id, { clientWork: true });
+}
+
 export function completeTransfer(id: number): void {
   update(id, { status: "success", progress: 1 });
 }
 
-export function failTransfer(id: number, error: string): void {
-  update(id, { status: "error", error });
+export function failTransfer(
+  id: number,
+  error: string,
+  retry?: () => void,
+): void {
+  update(id, { status: "error", error, retry });
+}
+
+export function retryTransfer(id: number): void {
+  const current = items.find((item) => item.id === id);
+  if (current === undefined || current.status !== "error") return;
+  const retry = current.retry;
+  if (retry === undefined) return;
+  update(id, {
+    status: "active",
+    error: undefined,
+    retry: undefined,
+    progress: current.progress === null ? null : 0,
+  });
+  retry();
 }
 
 export function clearFinishedTransfers(): void {

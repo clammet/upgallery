@@ -13,6 +13,7 @@
 .spinner { animation: transfer-spin .9s linear infinite; color: var(--gallery-muted); flex: none; }
 .tick { color: var(--gallery-accent); flex: none; }
 .cross { color: #bd2c31; flex: none; }
+.retryButton { color: var(--gallery-muted); flex: none; height: 22px; width: 22px; }
 .rowError { color: #bd2c31; font-size: .72rem; margin: 0; overflow-wrap: anywhere; }
 .progressTrack { background: color-mix(in srgb, var(--gallery-fg) 12%, transparent); border-radius: 99px; height: 4px; overflow: hidden; }
 .progressFill { background: var(--gallery-accent); border-radius: inherit; height: 100%; transition: width .2s ease; width: 0; }
