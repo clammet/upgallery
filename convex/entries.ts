@@ -21,6 +21,7 @@ import {
   sha256,
   verifyPassword,
 } from "./lib/crypto";
+import { formatBytes } from "./lib/format";
 import { disposition } from "./lib/validators";
 import {
   MEDIA_METADATA_VERSION,
@@ -135,7 +136,7 @@ export const createUploadIntent = mutation({
       args.size > gallery.maxFileSize
     ) {
       throw new Error(
-        `File exceeds this gallery's ${gallery.maxFileSize}-byte limit`,
+        `File exceeds this gallery's ${formatBytes(gallery.maxFileSize)} limit`,
       );
     }
     if (args.mimeType.length > 200) {

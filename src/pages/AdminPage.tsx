@@ -329,7 +329,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
     void update({
       galleryId: gallery._id,
       name: String(data.get("name")),
-      maxFileSize: Number(data.get("maxFileSize")),
+      maxFileSize: Math.round(Number(data.get("maxFileSizeMib")) * 1024 * 1024),
       uploaderAccess: data.get("uploaderAccess") as
         | "anonymous"
         | "sso"
@@ -385,7 +385,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           onSubmit={updateSettings}
         >
           <label>Name<input name="name" defaultValue={gallery.name} /></label>
-          <label>Maximum bytes<input name="maxFileSize" type="number" defaultValue={gallery.maxFileSize} /></label>
+          <label>Maximum file size <small>(MiB)</small><input name="maxFileSizeMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={Math.round((gallery.maxFileSize / (1024 * 1024)) * 10) / 10} /></label>
           <label>Uploader access<select name="uploaderAccess" defaultValue={gallery.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
           <label>Density<select name="density" defaultValue={gallery.theme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
           <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={gallery.theme.thumbnailFrameSize ?? 218} /></label>

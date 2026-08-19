@@ -19,6 +19,7 @@ import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { config } from "./config.js";
 import { callConvex, type UploadClaim } from "./convex.js";
+import { formatBytes } from "./format.js";
 import { runWithHeartbeat } from "./heartbeat.js";
 import {
   absoluteStoragePath,
@@ -96,12 +97,13 @@ export async function handleUpload(
           );
           await rename(strippedPath, parsed.temporaryPath);
           const stripped = await stat(parsed.temporaryPath);
-          if (
-            stripped.size >
-            Math.min(claim!.maxFileSize, config.absoluteUploadLimit)
-          ) {
+          const effectiveLimit = Math.min(
+            claim!.maxFileSize,
+            config.absoluteUploadLimit,
+          );
+          if (stripped.size > effectiveLimit) {
             throw new Error(
-              `File exceeds the ${claim!.maxFileSize}-byte limit after removing location data`,
+              `File exceeds the ${formatBytes(effectiveLimit)} limit after removing location data`,
             );
           }
           parsed = {
@@ -242,7 +244,7 @@ async function parseMultipart(
         { signal },
       ).then(() => {
         if (truncated) {
-          throw new Error(`File exceeds the ${maxBytes}-byte limit`);
+          throw new Error(`File exceeds the ${formatBytes(maxBytes)} limit`);
         }
         return {
           temporaryPath,
