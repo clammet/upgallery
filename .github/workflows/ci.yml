@@ -32,9 +32,20 @@ jobs:
           cache: pnpm
 
       # The storage tests shell out to ffmpeg (present in the production
-      # image via apk, but not on the hosted runner).
+      # image via apk, but not on the hosted runner). Apt mirrors on hosted
+      # runners occasionally hang without timing out, so bound every fetch
+      # and the step itself rather than stalling the job for hours.
       - name: Install ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        timeout-minutes: 8
+        run: |
+          APT_OPTS='-o Acquire::http::Timeout=30 -o Acquire::Retries=3'
+          for attempt in 1 2 3; do
+            sudo apt-get update -qq $APT_OPTS \
+              && sudo apt-get install -y -qq $APT_OPTS --no-install-recommends ffmpeg \
+              && break
+            echo "apt attempt $attempt failed; retrying" && sleep 10
+          done
+          ffmpeg -version | head -1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
