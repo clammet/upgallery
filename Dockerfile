@@ -4,8 +4,8 @@ FROM ${NODE_ALPINE_IMAGE} AS libvips-build
 # VIPS_TAG holds the upstream git tag (v-prefixed) rather than the bare
 # version: Renovate's release lookup resolves the tag literally, so this is
 # what lets it bump the version and refresh VIPS_SHA256 in one PR.
-ARG VIPS_TAG=v8.18.4
-ARG VIPS_SHA256=2677bad6c422617fd1172d359c16af34e736965d042c214203a87187d26ff037
+ARG VIPS_TAG=v8.18.5
+ARG VIPS_SHA256=8c4e6332d818249ed05ce98e36e6ed8a08e3249ac70f69680842ab2e5fee8510
 RUN apk add --no-cache \
   build-base \
   cairo-dev \
