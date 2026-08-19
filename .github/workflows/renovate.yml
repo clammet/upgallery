@@ -12,6 +12,12 @@ on:
   schedule:
     - cron: "37 */6 * * *"
   workflow_dispatch:
+    inputs:
+      log_level:
+        description: Renovate log level
+        default: info
+        type: choice
+        options: [info, debug]
 
 concurrency:
   group: renovate
@@ -36,3 +42,4 @@ jobs:
         env:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_PLATFORM: github
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
