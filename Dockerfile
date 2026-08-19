@@ -1,7 +1,10 @@
 ARG NODE_ALPINE_IMAGE=node:24-alpine3.24
 
 FROM ${NODE_ALPINE_IMAGE} AS libvips-build
-ARG VIPS_VERSION=8.18.4
+# VIPS_TAG holds the upstream git tag (v-prefixed) rather than the bare
+# version: Renovate's release lookup resolves the tag literally, so this is
+# what lets it bump the version and refresh VIPS_SHA256 in one PR.
+ARG VIPS_TAG=v8.18.4
 ARG VIPS_SHA256=2677bad6c422617fd1172d359c16af34e736965d042c214203a87187d26ff037
 RUN apk add --no-cache \
   build-base \
@@ -24,11 +27,11 @@ RUN apk add --no-cache \
   tiff-dev \
   wget
 RUN wget -q \
-  "https://github.com/libvips/libvips/releases/download/v${VIPS_VERSION}/vips-${VIPS_VERSION}.tar.xz" \
+  "https://github.com/libvips/libvips/releases/download/${VIPS_TAG}/vips-${VIPS_TAG#v}.tar.xz" \
   -O /tmp/libvips.tar.xz \
   && echo "${VIPS_SHA256}  /tmp/libvips.tar.xz" | sha256sum -c - \
   && tar -xJf /tmp/libvips.tar.xz -C /tmp
-RUN meson setup /tmp/libvips-build "/tmp/vips-${VIPS_VERSION}" \
+RUN meson setup /tmp/libvips-build "/tmp/vips-${VIPS_TAG#v}" \
   --prefix=/opt/vips \
   --libdir=lib \
   --buildtype=release \

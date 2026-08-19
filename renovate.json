@@ -27,12 +27,11 @@
       "description": "Track the source-built libvips in the Dockerfile: bumps VIPS_VERSION and refreshes VIPS_SHA256 from the release tarball",
       "managerFilePatterns": ["/^Dockerfile$/"],
       "matchStrings": [
-        "ARG VIPS_VERSION=(?<currentValue>[\\d.]+)\\nARG VIPS_SHA256=(?<currentDigest>[a-f0-9]{64})"
+        "ARG VIPS_TAG=(?<currentValue>v[\\d.]+)\\nARG VIPS_SHA256=(?<currentDigest>[a-f0-9]{64})"
       ],
       "depNameTemplate": "libvips/libvips",
       "datasourceTemplate": "github-release-attachments",
-      "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.+)$"
+      "versioningTemplate": "semver"
     }
   ]
 }
