@@ -9,6 +9,7 @@
   "platformAutomerge": false,
   "prHourlyLimit": 0,
   "minimumReleaseAge": "1 day",
+  "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true
