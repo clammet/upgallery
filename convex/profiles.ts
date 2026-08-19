@@ -3,7 +3,12 @@ import { env, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { googlyAuth } from "./lib/auth";
 import { normalizeEmail } from "./lib/normalize";
-import { profileByIdentityId, publicProfile } from "./lib/profiles";
+import {
+  isPlaceholderProfile,
+  placeholderIdentityId,
+  profileByIdentityId,
+  publicProfile,
+} from "./lib/profiles";
 import { requireSystemAdmin } from "./lib/permissions";
 
 const roleRank = { viewer: 1, editor: 2, owner: 3 } as const;
@@ -143,6 +148,16 @@ export const ensureCurrent = mutation({
     if (result.mergedFromId !== null) {
       await absorbProfile(ctx, result.mergedFromId, profileId);
     }
+    // Claim any pending invite for this email: grants made before the user's
+    // first sign-in live on a placeholder profile keyed by the email itself.
+    // Skipped when the provider explicitly marks the email unverified.
+    if (
+      result.identity !== null &&
+      email !== undefined &&
+      result.identity.emailVerified !== false
+    ) {
+      await absorbProfile(ctx, placeholderIdentityId(email), profileId);
+    }
     return profileId;
   },
 });
@@ -176,7 +191,7 @@ export const setSystemAdmin = mutation({
   handler: async (ctx, args) => {
     const actor = await requireSystemAdmin(ctx);
     const target = await ctx.db.get("profiles", args.profileId);
-    if (target === null || target.isAnonymous) {
+    if (target === null || target.isAnonymous || isPlaceholderProfile(target)) {
       throw new Error("Only signed-in SSO profiles can be system admins");
     }
     if (actor._id === target._id && !args.enabled) {

@@ -415,6 +415,11 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
       <FileIconAdmin galleryId={gallery._id} setMessage={setMessage} />
 
       <Section title="Permissions">
+        <p>
+          Granting access to an email that has never signed in creates an
+          invite; it takes effect the first time that user signs in with
+          Google.
+        </p>
         <form
           className={styles.inlineForm}
           onSubmit={(event) => {
@@ -436,7 +441,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
               .catch(showError(setMessage));
           }}
         >
-          <input name="email" type="email" placeholder="Existing SSO user email" required />
+          <input name="email" type="email" placeholder="User email" required />
           <select name="role"><option value="viewer">Viewer</option><option value="editor">Editor</option><option value="owner">Owner</option></select>
           <input name="folderId" placeholder="Folder ID (blank = whole gallery)" />
           <button type="submit">Grant</button>
@@ -444,7 +449,10 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         <div className={styles.rows}>
           {details.grants.map((grant) => (
             <div className={styles.row} key={grant._id}>
-              <span>{grant.profile?.email ?? grant.profile?.displayName ?? "Unknown user"}</span>
+              <span>
+                {grant.profile?.email ?? grant.profile?.displayName ?? "Unknown user"}
+                {grant.profile?.isPlaceholder ? <InvitedBadge invitedAt={grant.profile.invitedAt} /> : null}
+              </span>
               <span>{grant.role}{grant.folderId ? " · folder scope" : " · gallery scope"}</span>
               <button type="button" onClick={() => void revokeRole({ grantId: grant._id }).catch(showError(setMessage))}>Revoke</button>
             </div>
@@ -577,9 +585,14 @@ function SystemUsers() {
       <div className={styles.rows}>
         {users.filter((user) => !user.isAnonymous).map((user) => (
           <div className={styles.row} key={user._id}>
-            <span>{user.email ?? user.displayName}</span>
-            <span>{user.isSystemAdmin ? "Administrator" : "User"}</span>
-            <button type="button" onClick={() => void setAdmin({ profileId: user._id, enabled: !user.isSystemAdmin })}>{user.isSystemAdmin ? "Remove admin" : "Make admin"}</button>
+            <span>
+              {user.email ?? user.displayName}
+              {user.isPlaceholder ? <InvitedBadge invitedAt={user.invitedAt} /> : null}
+            </span>
+            <span>{user.isSystemAdmin ? "Administrator" : user.isPlaceholder ? "Awaiting first sign-in" : "User"}</span>
+            {user.isPlaceholder ? <span /> : (
+              <button type="button" onClick={() => void setAdmin({ profileId: user._id, enabled: !user.isSystemAdmin })}>{user.isSystemAdmin ? "Remove admin" : "Make admin"}</button>
+            )}
           </div>
         ))}
       </div>
@@ -663,6 +676,21 @@ function Section(props: { title: string; children: ReactNode }) {
 
 function Stat(props: { label: string; value: string }) {
   return <div><small>{props.label}</small><strong>{props.value}</strong></div>;
+}
+
+function InvitedBadge(props: { invitedAt?: number }) {
+  return (
+    <em
+      className={styles.pendingBadge}
+      title={
+        props.invitedAt === undefined
+          ? undefined
+          : `Invited ${new Date(props.invitedAt).toLocaleString()}`
+      }
+    >
+      invited
+    </em>
+  );
 }
 
 function showError(setter: (value: string) => void) {

@@ -607,6 +607,117 @@ describe("upgallery backend", () => {
     ).resolves.toBeNull();
   });
 
+  test("granting a never-seen email creates an invite claimed on first sign-in", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Invite gallery",
+      slug: "invite-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "invite",
+      hosts: [{ host: "invite.example.com", rootPath: "/" }],
+    });
+
+    await authed.mutation(api.roles.upsert, {
+      galleryId,
+      email: " Invitee@Example.COM ",
+      role: "editor",
+    });
+
+    const pending = await authed.query(api.galleries.adminDetails, {
+      galleryId,
+    });
+    const pendingGrant = pending?.grants.find(
+      (grant) => grant.profile?.email === "invitee@example.com",
+    );
+    expect(pendingGrant).toMatchObject({
+      role: "editor",
+      profile: {
+        isPlaceholder: true,
+        isAnonymous: false,
+        invitedAt: expect.any(Number),
+      },
+    });
+
+    const inviteeSubject = "https://accounts.google.com|invitee-user";
+    const invitee = asUser(t, inviteeSubject, "invitee@example.com");
+    const profileId = await invitee.mutation(api.profiles.ensureCurrent, {});
+
+    const claimed = await t.run(async (ctx) => ({
+      placeholder: await ctx.db.get("profiles", pendingGrant!.profileId),
+      grant: await ctx.db.get("galleryRoles", pendingGrant!._id),
+    }));
+    expect(claimed.placeholder).toBeNull();
+    expect(claimed.grant?.profileId).toBe(profileId);
+    await expect(
+      invitee.query(api.roles.mine, { galleryId }),
+    ).resolves.toEqual({ profileId });
+  });
+
+  test("pending invites reuse one placeholder and cannot be system admins", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Reinvite gallery",
+      slug: "reinvite-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "reinvite",
+      hosts: [{ host: "reinvite.example.com", rootPath: "/" }],
+    });
+
+    await authed.mutation(api.roles.upsert, {
+      galleryId,
+      email: "pending@example.com",
+      role: "viewer",
+    });
+    await authed.mutation(api.roles.upsert, {
+      galleryId,
+      email: "pending@example.com",
+      role: "owner",
+    });
+
+    const placeholders = await t.run(async (ctx) =>
+      ctx.db
+        .query("profiles")
+        .withIndex("by_email", (q) => q.eq("email", "pending@example.com"))
+        .take(8),
+    );
+    expect(placeholders).toHaveLength(1);
+
+    const details = await authed.query(api.galleries.adminDetails, {
+      galleryId,
+    });
+    const grants = details?.grants.filter(
+      (grant) => grant.profileId === placeholders[0]!._id,
+    );
+    expect(grants).toHaveLength(1);
+    expect(grants?.[0]).toMatchObject({ role: "owner" });
+
+    await expect(
+      authed.mutation(api.roles.upsert, {
+        galleryId,
+        email: "not-an-email",
+        role: "viewer",
+      }),
+    ).rejects.toThrow("Enter the email address");
+    await expect(
+      authed.mutation(api.profiles.setSystemAdmin, {
+        profileId: placeholders[0]!._id,
+        enabled: true,
+      }),
+    ).rejects.toThrow("Only signed-in SSO profiles");
+  });
+
   test("a private folder is hidden from an unrelated anonymous profile", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {

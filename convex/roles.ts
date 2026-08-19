@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { galleryRole } from "./lib/validators";
 import { normalizeEmail } from "./lib/normalize";
 import { requireGalleryRole } from "./lib/permissions";
+import { placeholderIdentityId } from "./lib/profiles";
 
 export const upsert = mutation({
   args: {
@@ -39,10 +40,25 @@ export const upsert = mutation({
         .withIndex("by_email", (q) => q.eq("email", normalizeEmail(args.email!)))
         .unique();
     }
-    if (profile === null || profile.isAnonymous) {
-      throw new Error(
-        "Choose an existing Google SSO user before granting access",
-      );
+    if (profile !== null && profile.isAnonymous) {
+      throw new Error("Anonymous visitors cannot be granted access");
+    }
+    if (profile === null) {
+      const email = args.email === undefined ? "" : normalizeEmail(args.email);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error("Enter the email address of the user to invite");
+      }
+      const placeholderId = await ctx.db.insert("profiles", {
+        identityId: placeholderIdentityId(email),
+        email,
+        isAnonymous: false,
+        isSystemAdmin: false,
+        lastSeenAt: 0,
+      });
+      profile = await ctx.db.get("profiles", placeholderId);
+    }
+    if (profile === null) {
+      throw new Error("Profile not found");
     }
     const grants = await ctx.db
       .query("galleryRoles")
