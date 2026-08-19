@@ -8,6 +8,7 @@ import {
   themeValidator,
   uploaderAccess,
 } from "./lib/validators";
+import { formatBytes } from "./lib/format";
 import {
   DEFAULT_MAX_FILE_SIZE,
   MAX_HOSTS_PER_GALLERY,
@@ -173,6 +174,7 @@ export const create = mutation({
       storageKind: args.storageKind,
       storageRoot,
       maxFileSize,
+      maxFileSizeLimit: maxFileSize,
       uploaderAccess:
         args.uploaderAccess ?? (args.kind === "uploader" ? "anonymous" : "sso"),
       folderPreviewMode: args.folderPreviewMode ?? "first",
@@ -323,17 +325,23 @@ export const listManaged = query({
       .query("galleryRoles")
       .withIndex("by_profileId", (q) => q.eq("profileId", profile._id))
       .take(256);
-    const ids = [
-      ...new Set(
-        grants
-          .filter((grant) => grant.role === "owner")
-          .map((grant) => grant.galleryId),
-      ),
-    ];
+    const ownerGrants = grants.filter((grant) => grant.role === "owner");
+    const ids = [...new Set(ownerGrants.map((grant) => grant.galleryId))];
     const galleries: Array<Doc<"galleries">> = [];
     for (const galleryId of ids.slice(0, 100)) {
       const gallery = await ctx.db.get("galleries", galleryId);
-      if (gallery !== null && gallery.deletedAt === undefined) {
+      // Only gallery-wide owner grants confer admin access; a grant scoped to
+      // a subfolder does not.
+      if (
+        gallery !== null &&
+        gallery.deletedAt === undefined &&
+        ownerGrants.some(
+          (grant) =>
+            grant.galleryId === galleryId &&
+            (grant.folderId === undefined ||
+              grant.folderId === gallery.rootFolderId),
+        )
+      ) {
         galleries.push(gallery);
       }
     }
@@ -434,8 +442,9 @@ export const update = mutation({
     galleryId: v.id("galleries"),
     name: v.string(),
     maxFileSize: v.number(),
+    maxFileSizeLimit: v.optional(v.number()),
     uploaderAccess,
-    hosts: v.array(hostInput),
+    hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     theme: themeValidator,
   },
@@ -449,12 +458,7 @@ export const update = mutation({
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
     const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
-    const hosts = args.hosts.map((route) => ({
-      host: normalizeHost(route.host),
-      rootPath: normalizeRootPath(route.rootPath),
-    }));
     validateThumbnailFrameSize(args.theme);
-    await assertHostsAvailable(ctx, hosts, gallery._id);
     if (
       !Number.isSafeInteger(args.maxFileSize) ||
       args.maxFileSize < 1024 ||
@@ -462,22 +466,56 @@ export const update = mutation({
     ) {
       throw new Error("Maximum file size must be between 1 KiB and 10 GiB");
     }
-    const oldHosts = await ctx.db
-      .query("galleryHosts")
-      .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))
-      .take(32);
-    for (const host of oldHosts) {
-      await ctx.db.delete("galleryHosts", host._id);
+    let maxFileSizeLimit = gallery.maxFileSizeLimit ?? gallery.maxFileSize;
+    if (args.maxFileSizeLimit !== undefined) {
+      if (!actor.isSystemAdmin) {
+        throw new Error(
+          "Only system administrators can change the maximum file size limit",
+        );
+      }
+      if (
+        !Number.isSafeInteger(args.maxFileSizeLimit) ||
+        args.maxFileSizeLimit < 1024 ||
+        args.maxFileSizeLimit > 10 * 1024 * 1024 * 1024
+      ) {
+        throw new Error(
+          "Maximum file size limit must be between 1 KiB and 10 GiB",
+        );
+      }
+      maxFileSizeLimit = args.maxFileSizeLimit;
     }
-    for (const host of hosts) {
-      await ctx.db.insert("galleryHosts", {
-        galleryId: gallery._id,
-        ...host,
-      });
+    if (args.maxFileSize > maxFileSizeLimit) {
+      throw new Error(
+        `Maximum file size cannot exceed the ${formatBytes(maxFileSizeLimit)} limit set by a system administrator`,
+      );
+    }
+    if (args.hosts !== undefined) {
+      if (!actor.isSystemAdmin) {
+        throw new Error("Only system administrators can change host routes");
+      }
+      const hosts = args.hosts.map((route) => ({
+        host: normalizeHost(route.host),
+        rootPath: normalizeRootPath(route.rootPath),
+      }));
+      await assertHostsAvailable(ctx, hosts, gallery._id);
+      const oldHosts = await ctx.db
+        .query("galleryHosts")
+        .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))
+        .take(32);
+      for (const host of oldHosts) {
+        await ctx.db.delete("galleryHosts", host._id);
+      }
+      for (const host of hosts) {
+        await ctx.db.insert("galleryHosts", {
+          galleryId: gallery._id,
+          ...host,
+        });
+      }
     }
     await ctx.db.patch("galleries", gallery._id, {
       name: args.name.trim(),
       maxFileSize: args.maxFileSize,
+      maxFileSizeLimit,
       uploaderAccess: args.uploaderAccess,
       folderPreviewMode:
         args.folderPreviewMode ?? gallery.folderPreviewMode ?? "first",

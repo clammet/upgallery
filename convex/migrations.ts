@@ -2,7 +2,7 @@ import { mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { storageKind } from "./lib/validators";
 import { normalizeStorageRoot } from "./lib/normalize";
-import { requireGalleryRole } from "./lib/permissions";
+import { requireSystemAdmin } from "./lib/permissions";
 
 export const request = mutation({
   args: {
@@ -18,11 +18,7 @@ export const request = mutation({
     if (gallery.kind !== "image") {
       throw new Error("Uploader galleries always use shared protected storage");
     }
-    const rootFolder =
-      gallery.rootFolderId === undefined
-        ? null
-        : await ctx.db.get("folders", gallery.rootFolderId);
-    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    const actor = await requireSystemAdmin(ctx);
     if (gallery.pendingMigrationId !== undefined) {
       throw new Error("This gallery already has a pending migration");
     }

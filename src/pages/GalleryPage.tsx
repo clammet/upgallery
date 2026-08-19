@@ -6,11 +6,13 @@ import {
   useState,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
   Check,
+  ExternalLink,
   Folder,
   FolderPlus,
   Info,
@@ -749,6 +751,17 @@ export function GalleryPage(props: {
       {folderDialog === "settings" ? (
         <FolderForm
           title="Folder settings"
+          headerExtra={
+            listing.access.canAdminGallery ? (
+              <Link
+                className={layout.dialogHeaderLink}
+                to={`/admin?gallery=${props.gallery._id}`}
+                title="Open gallery admin settings"
+              >
+                Gallery admin <ExternalLink aria-hidden="true" size={14} />
+              </Link>
+            ) : undefined
+          }
           initialName={listing.folder.name}
           initialPrivacy={listing.folder.privacy}
           initialPreviewMode={listing.folder.previewMode}
@@ -1566,6 +1579,7 @@ async function copyTextToClipboard(value: string) {
 
 function FolderForm(props: {
   title: string;
+  headerExtra?: ReactNode;
   initialName: string;
   initialPrivacy: "public" | "unlisted" | "private";
   initialPreviewMode?: FolderPreviewMode;
@@ -1583,7 +1597,7 @@ function FolderForm(props: {
   >(props.initialPreviewMode ?? "inherit");
   const [error, setError] = useState<string | null>(null);
   return (
-    <Dialog title={props.title} onClose={props.onClose}>
+    <Dialog title={props.title} headerExtra={props.headerExtra} onClose={props.onClose}>
       <form
         className={layout.form}
         onSubmit={(event) => {

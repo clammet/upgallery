@@ -211,6 +211,23 @@ export const list = query({
       });
     }
 
+    // Admin access is granted by owner role at the gallery root, matching
+    // galleries.adminDetails — a folder-scoped owner grant is not enough.
+    let galleryRole = role;
+    if (
+      profile !== null &&
+      gallery.rootFolderId !== undefined &&
+      gallery.rootFolderId !== folder._id
+    ) {
+      const galleryRoot = await ctx.db.get("folders", gallery.rootFolderId);
+      galleryRole = await getEffectiveRole(
+        ctx,
+        gallery._id,
+        galleryRoot,
+        profile,
+      );
+    }
+
     const breadcrumbs = [];
     for (const ancestorId of folder.ancestorIds) {
       const ancestor = await ctx.db.get("folders", ancestorId);
@@ -240,6 +257,7 @@ export const list = query({
         canUpload,
         canEditFolder: roleAtLeast(role, "editor"),
         canManage: roleAtLeast(role, "owner"),
+        canAdminGallery: roleAtLeast(galleryRole, "owner"),
       },
     };
   },

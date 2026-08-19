@@ -35,6 +35,10 @@ export default defineSchema({
     storageKind,
     storageRoot: v.string(),
     maxFileSize: v.number(),
+    // Ceiling for maxFileSize set by system admins; gallery owners can only
+    // lower maxFileSize below it. Absent on legacy galleries, where the
+    // effective limit is the current maxFileSize.
+    maxFileSizeLimit: v.optional(v.number()),
     uploaderAccess,
     rootFolderId: v.optional(v.id("folders")),
     folderPreviewMode: v.optional(folderPreviewMode),

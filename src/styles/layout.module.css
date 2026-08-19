@@ -29,6 +29,8 @@
 .dialog { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); box-shadow: var(--shadow); max-height: calc(100vh - 2rem); max-width: 520px; overflow: auto; padding: 1rem; width: 100%; }
 .dialogHeader { align-items: center; background: var(--gallery-surface); display: flex; justify-content: space-between; margin: -1rem -1rem 0; padding: 1rem 1rem 0; position: sticky; top: -1rem; z-index: 1; }
 .dialogHeader h2 { font-size: 1.1rem; margin-bottom: .75rem; }
+.dialogHeaderActions { align-items: center; display: inline-flex; gap: .5rem; }
+.dialogHeaderLink { align-items: center; color: var(--gallery-accent); display: inline-flex; font-size: .8rem; gap: .3rem; white-space: nowrap; }
 .form { display: grid; gap: .7rem; }
 .form label { display: grid; font-size: .78rem; gap: .25rem; }
 .formError { font-size: .8rem; margin: 0; }

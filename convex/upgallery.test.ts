@@ -140,6 +140,150 @@ describe("upgallery backend", () => {
     ]);
   });
 
+  test("gallery owners can lower the max file size but not raise it or edit system settings", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const adminAuthed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await adminAuthed.mutation(api.galleries.create, {
+      name: "Owned gallery",
+      slug: "owned-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "owned-gallery",
+      maxFileSize: 8 * 1024 * 1024,
+      hosts: [{ host: "owned.example.com", rootPath: "/" }],
+    });
+    const owner = await seedProfile(t, { email: "owner@example.com" });
+    await adminAuthed.mutation(api.roles.upsert, {
+      galleryId,
+      profileId: owner.profileId,
+      role: "owner",
+    });
+    const ownerAuthed = asUser(t, owner.googleSubject, "owner@example.com");
+    const base = {
+      galleryId,
+      name: "Owned gallery",
+      uploaderAccess: "sso" as const,
+      theme: {},
+    };
+
+    await ownerAuthed.mutation(api.galleries.update, {
+      ...base,
+      maxFileSize: 4 * 1024 * 1024,
+    });
+    await expect(
+      ownerAuthed.mutation(api.galleries.update, {
+        ...base,
+        maxFileSize: 16 * 1024 * 1024,
+      }),
+    ).rejects.toThrow(/cannot exceed/);
+    await expect(
+      ownerAuthed.mutation(api.galleries.update, {
+        ...base,
+        maxFileSize: 4 * 1024 * 1024,
+        maxFileSizeLimit: 16 * 1024 * 1024,
+      }),
+    ).rejects.toThrow(/system administrators/);
+    await expect(
+      ownerAuthed.mutation(api.galleries.update, {
+        ...base,
+        maxFileSize: 4 * 1024 * 1024,
+        hosts: [{ host: "hijacked.example.com", rootPath: "/" }],
+      }),
+    ).rejects.toThrow(/system administrators/);
+    await expect(
+      ownerAuthed.mutation(api.migrations.request, {
+        galleryId,
+        targetStorageKind: "user",
+        targetStorageRoot: "elsewhere",
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+
+    await adminAuthed.mutation(api.galleries.update, {
+      ...base,
+      maxFileSize: 8 * 1024 * 1024,
+      maxFileSizeLimit: 32 * 1024 * 1024,
+    });
+    await ownerAuthed.mutation(api.galleries.update, {
+      ...base,
+      maxFileSize: 32 * 1024 * 1024,
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    expect(gallery?.maxFileSize).toBe(32 * 1024 * 1024);
+    expect(gallery?.maxFileSizeLimit).toBe(32 * 1024 * 1024);
+  });
+
+  test("gallery admin access requires a gallery-wide owner grant", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const adminAuthed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await adminAuthed.mutation(api.galleries.create, {
+      name: "Scoped gallery",
+      slug: "scoped-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "scoped-gallery",
+      hosts: [{ host: "scoped.example.com", rootPath: "/" }],
+    });
+    const rootFolderId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      return gallery!.rootFolderId!;
+    });
+    const subFolderId = await t.run(async (ctx) =>
+      ctx.db.insert("folders", {
+        galleryId,
+        parentId: rootFolderId,
+        ancestorIds: [rootFolderId],
+        name: "Sub",
+        slug: "sub",
+        privacy: "public",
+      }),
+    );
+    const owner = await seedProfile(t, { email: "owner@example.com" });
+    const scoped = await seedProfile(t, { email: "scoped@example.com" });
+    await adminAuthed.mutation(api.roles.upsert, {
+      galleryId,
+      profileId: owner.profileId,
+      role: "owner",
+    });
+    await adminAuthed.mutation(api.roles.upsert, {
+      galleryId,
+      profileId: scoped.profileId,
+      folderId: subFolderId,
+      role: "owner",
+    });
+    const ownerAuthed = asUser(t, owner.googleSubject, "owner@example.com");
+    const scopedAuthed = asUser(t, scoped.googleSubject, "scoped@example.com");
+
+    const ownerListing = await ownerAuthed.query(api.folders.list, {
+      galleryId,
+      folderId: subFolderId,
+    });
+    expect(ownerListing.access.canAdminGallery).toBe(true);
+    const scopedListing = await scopedAuthed.query(api.folders.list, {
+      galleryId,
+      folderId: subFolderId,
+    });
+    expect(scopedListing.access.canManage).toBe(true);
+    expect(scopedListing.access.canAdminGallery).toBe(false);
+
+    const ownerManaged = await ownerAuthed.query(api.galleries.listManaged);
+    expect(ownerManaged.map((gallery) => gallery._id)).toContain(galleryId);
+    const scopedManaged = await scopedAuthed.query(api.galleries.listManaged);
+    expect(scopedManaged).toHaveLength(0);
+    await expect(
+      scopedAuthed.query(api.galleries.adminDetails, { galleryId }),
+    ).rejects.toThrow(/Unauthorized/);
+  });
+
   test("gallery availability and creation reserve internal storage paths globally", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {

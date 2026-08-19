@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, Plus } from "lucide-react";
 import { api } from "../../convex/_generated/api";
@@ -40,6 +40,7 @@ export function AdminPage() {
     anonymousClaim: anonymousClaim(),
   });
   const galleries = useQuery(api.galleries.listManaged);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<Id<"galleries"> | null>(null);
 
   useEffect(() => {
@@ -47,9 +48,19 @@ export function AdminPage() {
       galleries !== undefined &&
       (selected === null || !galleries.some((gallery) => gallery._id === selected))
     ) {
-      setSelected(galleries[0]?._id ?? null);
+      const requested = searchParams.get("gallery");
+      setSelected(
+        galleries.find((gallery) => gallery._id === requested)?._id ??
+          galleries[0]?._id ??
+          null,
+      );
     }
-  }, [galleries, selected]);
+  }, [galleries, searchParams, selected]);
+
+  const selectGallery = (id: Id<"galleries">) => {
+    setSelected(id);
+    setSearchParams({ gallery: id }, { replace: true });
+  };
 
   if (profile === undefined || galleries === undefined) {
     return <PageFrame><p>Loading administration…</p></PageFrame>;
@@ -76,9 +87,7 @@ export function AdminPage() {
   }
 
   return (
-    <PageFrame
-      actions={<Link className={layout.quietButton} to="/">Public view</Link>}
-    >
+    <PageFrame>
       <div className={styles.adminLayout}>
         <aside className={styles.sidebar}>
           <h1>Administration</h1>
@@ -88,22 +97,25 @@ export function AdminPage() {
                 type="button"
                 key={gallery._id}
                 className={selected === gallery._id ? styles.selected : ""}
-                onClick={() => setSelected(gallery._id)}
+                onClick={() => selectGallery(gallery._id)}
               >
                 <span>{gallery.name}</span>
                 <small>{gallery.kind}</small>
               </button>
             ))}
           </nav>
-          {profile.isSystemAdmin ? <CreateGallery onCreated={setSelected} /> : null}
+          {profile.isSystemAdmin ? <CreateGallery onCreated={selectGallery} /> : null}
         </aside>
         <section className={styles.content}>
           {selected ? (
-            <GalleryAdmin galleryId={selected} />
+            <GalleryAdmin
+              galleryId={selected}
+              isSystemAdmin={profile.isSystemAdmin}
+            />
           ) : (
             <p>Create a gallery to get started.</p>
           )}
-          {profile.isSystemAdmin ? <SystemUsers /> : null}
+          {profile.isSystemAdmin ? <SystemSection /> : null}
         </section>
       </div>
     </PageFrame>
@@ -246,7 +258,7 @@ function CreateGallery(props: {
   };
   return open ? (
     <form className={`${layout.form} ${styles.createForm}`} onSubmit={submit}>
-      <h2>New gallery</h2>
+      <h2>New upgallery</h2>
       <label>Name<input name="name" required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label>
         Internal slug
@@ -291,12 +303,31 @@ function CreateGallery(props: {
     </form>
   ) : (
     <button type="button" className={styles.newButton} onClick={() => { reset(); setOpen(true); }}>
-      <Plus aria-hidden="true" size={16} /> New gallery
+      <Plus aria-hidden="true" size={16} /> New upgallery
     </button>
   );
 }
 
-function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
+function publicGalleryUrl(
+  hosts: Array<{ host: string; rootPath: string }>,
+): string | null {
+  const route = hosts.find((entry) => entry.rootPath === "/") ?? hosts[0];
+  if (route === undefined) {
+    return null;
+  }
+  // Stored hosts are normalized without a port; keep the current port when the
+  // route points at the host the admin panel is already served from.
+  const currentHost = window.location.host
+    .toLocaleLowerCase()
+    .replace(/:\d+$/, "");
+  const host = route.host === currentHost ? window.location.host : route.host;
+  return `${window.location.protocol}//${host}${route.rootPath}`;
+}
+
+function GalleryAdmin(props: {
+  galleryId: Id<"galleries">;
+  isSystemAdmin: boolean;
+}) {
   const details = useQuery(api.galleries.adminDetails, {
     galleryId: props.galleryId,
   });
@@ -315,17 +346,29 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
   if (details === undefined) return <p>Loading gallery…</p>;
   if (details === null) return <p>Gallery no longer exists.</p>;
   const gallery = details.gallery;
+  const publicUrl = publicGalleryUrl(details.hosts);
+  const maxFileSizeLimit = gallery.maxFileSizeLimit ?? gallery.maxFileSize;
+  const limitMib = Math.round((maxFileSizeLimit / (1024 * 1024)) * 10) / 10;
 
   const updateSettings = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const hosts = String(data.get("hosts"))
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [host, rootPath = "/"] = line.split("|");
-        return { host: host.trim(), rootPath: rootPath.trim() };
-      });
+    // Host routes and the size limit are system-level settings; owners never
+    // render the fields and must not send the arguments.
+    const systemFields = props.isSystemAdmin
+      ? {
+          maxFileSizeLimit: Math.round(
+            Number(data.get("maxFileSizeLimitMib")) * 1024 * 1024,
+          ),
+          hosts: String(data.get("hosts"))
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => {
+              const [host, rootPath = "/"] = line.split("|");
+              return { host: host.trim(), rootPath: rootPath.trim() };
+            }),
+        }
+      : {};
     void update({
       galleryId: gallery._id,
       name: String(data.get("name")),
@@ -338,7 +381,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         gallery.kind === "image"
           ? (data.get("folderPreviewMode") as FolderPreviewMode)
           : gallery.folderPreviewMode ?? "first",
-      hosts,
+      ...systemFields,
       theme: {
         accent: String(data.get("accent") || "") || undefined,
         secondary: String(data.get("secondary") || "") || undefined,
@@ -367,9 +410,15 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           <span className={styles.eyebrow}>{gallery.kind}</span>
           <h2>{gallery.name}</h2>
         </div>
-        <Link to={`/${gallery.kind === "image" ? "g" : "up"}/${gallery.slug}`}>
-          Open <ExternalLink aria-hidden="true" size={15} />
-        </Link>
+        {publicUrl === null ? (
+          <Link to={`/${gallery.kind === "image" ? "g" : "up"}/${gallery.slug}`}>
+            Open <ExternalLink aria-hidden="true" size={15} />
+          </Link>
+        ) : (
+          <a href={publicUrl}>
+            Open <ExternalLink aria-hidden="true" size={15} />
+          </a>
+        )}
       </div>
       <div className={styles.stats}>
         <Stat label="Items" value={gallery.itemCount.toLocaleString()} />
@@ -380,12 +429,16 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
 
       <Section title="Settings">
         <form
+          key={gallery._id}
           className={`${layout.form} ${styles.twoColumns}`}
           onChange={() => setSettingsDirty(true)}
           onSubmit={updateSettings}
         >
           <label>Name<input name="name" defaultValue={gallery.name} /></label>
-          <label>Maximum file size <small>(MiB)</small><input name="maxFileSizeMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={Math.round((gallery.maxFileSize / (1024 * 1024)) * 10) / 10} /></label>
+          <label>Maximum file size <small>{props.isSystemAdmin ? "(MiB)" : `(MiB · limit ${limitMib} MiB)`}</small><input name="maxFileSizeMib" type="number" min="0.1" max={props.isSystemAdmin ? 10240 : limitMib} step="0.1" required defaultValue={Math.round((gallery.maxFileSize / (1024 * 1024)) * 10) / 10} /></label>
+          {props.isSystemAdmin ? (
+            <label>Max size limit <small>(MiB)</small><input name="maxFileSizeLimitMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={limitMib} /></label>
+          ) : null}
           <label>Uploader access<select name="uploaderAccess" defaultValue={gallery.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
           <label>Density<select name="density" defaultValue={gallery.theme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
           <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={gallery.theme.thumbnailFrameSize ?? 218} /></label>
@@ -401,7 +454,9 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
           ) : null}
           <ThemeControls key={gallery._id} theme={gallery.theme} />
           <label>Corner radius<input name="radius" type="number" min="0" max="40" defaultValue={gallery.theme.radius ?? 4} /></label>
-          <label className={styles.spanTwo}>Host routes <small>(one per line: host|/public-path)</small><textarea name="hosts" rows={3} defaultValue={details.hosts.map((host) => `${host.host}|${host.rootPath}`).join("\n")} /></label>
+          {props.isSystemAdmin ? (
+            <label className={styles.spanTwo}>Host routes <small>(one per line: host|/public-path)</small><textarea name="hosts" rows={3} defaultValue={details.hosts.map((host) => `${host.host}|${host.rootPath}`).join("\n")} /></label>
+          ) : null}
           <label className={styles.spanTwo}>Scoped custom CSS<textarea name="customCss" rows={5} defaultValue={gallery.theme.customCss ?? ""} /></label>
           <button
             className={settingsDirty ? styles.saveSettingsDirty : undefined}
@@ -460,7 +515,7 @@ function GalleryAdmin(props: { galleryId: Id<"galleries"> }) {
         </div>
       </Section>
 
-      {gallery.kind === "image" ? (
+      {gallery.kind === "image" && props.isSystemAdmin ? (
         <Section title="Storage migration">
           <form
             className={styles.inlineForm}
@@ -576,12 +631,24 @@ function ThemeControls(props: {
   );
 }
 
+// System-level administration, only rendered for system admins. Everything
+// above this divider is per-gallery ("user admin") configuration that gallery
+// owners can also see; new system-wide options belong inside this section.
+function SystemSection() {
+  return (
+    <div className={styles.systemSection}>
+      <h2 className={styles.systemHeading}>System</h2>
+      <SystemUsers />
+    </div>
+  );
+}
+
 function SystemUsers() {
   const users = useQuery(api.profiles.listForAdmin);
   const setAdmin = useMutation(api.profiles.setSystemAdmin);
   if (users === undefined) return null;
   return (
-    <Section title="System users">
+    <Section title="Users">
       <div className={styles.rows}>
         {users.filter((user) => !user.isAnonymous).map((user) => (
           <div className={styles.row} key={user._id}>

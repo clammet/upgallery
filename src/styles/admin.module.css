@@ -29,6 +29,8 @@
 .iconSummary img, .iconText { align-items: center; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: 3px; display: flex; flex: 0 0 40px; height: 40px; justify-content: center; object-fit: cover; width: 40px; }
 .iconText { color: var(--gallery-accent); font-size: .7rem; font-weight: 800; overflow: hidden; }
 .danger { border-color: #b72d33; color: #b72d33; }
+.systemSection { border-top: 3px solid var(--border); margin-top: 2.5rem; padding-top: 1rem; }
+.systemHeading { color: var(--gallery-muted); font-size: .8rem; font-weight: 700; letter-spacing: .14em; margin: 0; text-transform: uppercase; }
 .centered { margin: 15vh auto; max-width: 500px; text-align: center; }
 @media (max-width: 800px) {
   .adminLayout { grid-template-columns: 1fr; }

@@ -5,6 +5,7 @@ import styles from "../styles/layout.module.css";
 export function Dialog(props: {
   title: string;
   children: ReactNode;
+  headerExtra?: ReactNode;
   onClose: () => void;
 }) {
   return (
@@ -18,9 +19,12 @@ export function Dialog(props: {
       >
         <div className={styles.dialogHeader}>
           <h2>{props.title}</h2>
-          <button type="button" className={styles.iconButton} onClick={props.onClose} aria-label="Close">
-            <X aria-hidden="true" size={18} />
-          </button>
+          <div className={styles.dialogHeaderActions}>
+            {props.headerExtra}
+            <button type="button" className={styles.iconButton} onClick={props.onClose} aria-label="Close">
+              <X aria-hidden="true" size={18} />
+            </button>
+          </div>
         </div>
         {props.children}
       </section>
