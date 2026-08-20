@@ -10,13 +10,13 @@ importers:
     dependencies:
       '@clammet/convex-googly-auth':
         specifier: ^0.1.0
-        version: 0.1.0(convex@1.43.0(react@19.2.8))(react@19.2.8)
+        version: 0.1.0(convex@1.44.0(react@19.2.8))(react@19.2.8)
       busboy:
         specifier: ^1.6.0
         version: 1.6.0
       convex:
         specifier: ^1.43.0
-        version: 1.43.0(react@19.2.8)
+        version: 1.44.0(react@19.2.8)
       exifr:
         specifier: ^7.1.3
         version: 7.1.3
@@ -83,7 +83,7 @@ importers:
         version: 10.0.5
       convex-test:
         specifier: ^0.0.55
-        version: 0.0.55(convex@1.43.0(react@19.2.8))
+        version: 0.0.55(convex@1.44.0(react@19.2.8))
       node-addon-api:
         specifier: ^8.9.0
         version: 8.9.2
@@ -1221,8 +1221,8 @@ packages:
     peerDependencies:
       convex: ^1.43.0
 
-  convex@1.43.0:
-    resolution: {integrity: sha512-huZWEUZQYxIRG104o22ZI99HkviSEVltwezZRDi+pQDPrQbc5EoCPa4Y7pJDqUBQw9dc/iEEXj2/rLZg1j7Dww==}
+  convex@1.44.0:
+    resolution: {integrity: sha512-84bBa1ufSX4qohXdycXuQl2c2kAmfVpTCpypcmIgxpS5rUBgv5qjhArYugTkJVbljMs5SH2mW30bjJo+SQwe1w==}
     engines: {node: '>=18.0.0', npm: '>=7.0.0'}
     hasBin: true
     peerDependencies:
@@ -2484,9 +2484,9 @@ snapshots:
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@clammet/convex-googly-auth@0.1.0(convex@1.43.0(react@19.2.8))(react@19.2.8)':
+  '@clammet/convex-googly-auth@0.1.0(convex@1.44.0(react@19.2.8))(react@19.2.8)':
     dependencies:
-      convex: 1.43.0(react@19.2.8)
+      convex: 1.44.0(react@19.2.8)
       react: 19.2.8
 
   '@edge-runtime/primitives@6.0.0': {}
@@ -3299,11 +3299,11 @@ snapshots:
 
   convert-source-map@2.0.0: {}
 
-  convex-test@0.0.55(convex@1.43.0(react@19.2.8)):
+  convex-test@0.0.55(convex@1.44.0(react@19.2.8)):
     dependencies:
-      convex: 1.43.0(react@19.2.8)
+      convex: 1.44.0(react@19.2.8)
 
-  convex@1.43.0(react@19.2.8):
+  convex@1.44.0(react@19.2.8):
     dependencies:
       esbuild: 0.27.0
       prettier: 3.9.6
