@@ -35,7 +35,7 @@
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
     "react-router-dom": "7.18.2",
-    "sharp": "^0.35.3"
+    "sharp": "0.35.3"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
