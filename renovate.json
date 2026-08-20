@@ -6,8 +6,9 @@
     "helpers:pinGitHubActionDigests"
   ],
   "osvVulnerabilityAlerts": true,
-  "platformAutomerge": false,
+  "platformAutomerge": true,
   "prHourlyLimit": 0,
+  "rangeStrategy": "pin",
   "minimumReleaseAge": "1 day",
   "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
@@ -18,6 +19,17 @@
     {
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
       "automerge": true
+    },
+    {
+      "description": "Pins and digest refreshes point at code that already shipped - no soak needed",
+      "matchUpdateTypes": ["pin", "pinDigest", "digest"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "0.x minors are breaking by semver convention - hold them for a human",
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
     },
     {
       "description": "sharp is compiled against the libvips built in the Dockerfile; update them together so compatibility is proven by a single Docker build",
