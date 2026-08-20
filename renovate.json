@@ -1,15 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    "docker:pinDigests",
-    "helpers:pinGitHubActionDigests"
-  ],
+  "extends": ["config:best-practices", "customManagers:githubActionsVersions"],
   "osvVulnerabilityAlerts": true,
   "platformAutomerge": true,
   "prHourlyLimit": 0,
   "rangeStrategy": "pin",
-  "minimumReleaseAge": "1 day",
+  "minimumReleaseAge": "3 days",
   "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
     "enabled": true,
@@ -19,6 +15,11 @@
     {
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
       "automerge": true
+    },
+    {
+      "description": "Majors wait for a human",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     },
     {
       "description": "Pins and digest refreshes point at code that already shipped - no soak needed",
@@ -35,6 +36,12 @@
       "description": "sharp is compiled against the libvips built in the Dockerfile; update them together so compatibility is proven by a single Docker build",
       "groupName": "sharp + libvips",
       "matchPackageNames": ["sharp", "libvips/libvips"]
+    },
+    {
+      "description": "Renovate engine: several releases a day, so take the weekly one; no digest pin because the annotated RENOVATE_VERSION env var holds a plain tag",
+      "matchDepNames": ["ghcr.io/renovatebot/renovate"],
+      "schedule": ["before 6am on monday"],
+      "pinDigests": false
     }
   ],
   "customManagers": [
