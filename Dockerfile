@@ -1,4 +1,4 @@
-ARG NODE_ALPINE_IMAGE=node:24-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+ARG NODE_ALPINE_IMAGE=node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
 
 FROM ${NODE_ALPINE_IMAGE} AS libvips-build
 # VIPS_TAG holds the upstream git tag (v-prefixed) rather than the bare
