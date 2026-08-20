@@ -3,6 +3,7 @@ import {
   beginTransfer,
   clearFinishedTransfers,
   completeTransfer,
+  discardTransfers,
   failTransfer,
   getTransfers,
   markTransferClientWork,
@@ -56,6 +57,20 @@ describe("transfers store", () => {
     expect(
       remaining.find((candidate) => candidate.id === activeId),
     ).toMatchObject({ status: "active", progress: null });
+  });
+
+  it("discards only the specified transfer rows", () => {
+    const discardedId = beginTransfer("no-op.jpg", "move", null);
+    const remainingId = beginTransfer("moving.jpg", "move", null);
+
+    discardTransfers([discardedId]);
+
+    expect(
+      getTransfers().find((candidate) => candidate.id === discardedId),
+    ).toBeUndefined();
+    expect(
+      getTransfers().find((candidate) => candidate.id === remainingId),
+    ).toBeDefined();
   });
 
   it("reactivates a failed transfer and invokes its retry callback", () => {

@@ -106,6 +106,15 @@ export function clearFinishedTransfers(): void {
   emit();
 }
 
+export function discardTransfers(ids: readonly number[]): void {
+  if (ids.length === 0) return;
+  const discardedIds = new Set(ids);
+  const remaining = items.filter((item) => !discardedIds.has(item.id));
+  if (remaining.length === items.length) return;
+  items = remaining;
+  emit();
+}
+
 const DEFAULT_TRANSFER_CONCURRENCY = 2;
 const MAX_TRANSFER_CONCURRENCY = 8;
 

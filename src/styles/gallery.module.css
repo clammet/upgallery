@@ -34,10 +34,12 @@
 .folderCardSelectable.selectedCard { background: color-mix(in srgb, var(--gallery-accent) 8%, var(--gallery-surface)); }
 .fileCard[draggable="true"] { cursor: grab; }
 .fileCard[draggable="true"]:active { cursor: grabbing; }
+.gridDragging > .fileCard, .gridDragging > .folderCard:not(.folderDropTarget) { opacity: .32; }
+.gridDragging > .fileCard, .gridDragging > .folderCard { transition: opacity 120ms ease; }
 .folderDropTarget { border-style: dashed; }
-.folderDropTarget:hover { background: color-mix(in srgb, var(--gallery-accent) 12%, var(--gallery-surface)); border-style: solid; }
-.breadcrumbDropTarget { border-radius: var(--gallery-radius); padding: .15rem; }
-.breadcrumbDropTarget:hover { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); outline: 1px dashed var(--gallery-accent); }
+.folderDropTargetActive { background: color-mix(in srgb, var(--gallery-accent) 12%, var(--gallery-surface)); border-color: var(--gallery-accent); border-style: solid; outline: 2px solid var(--gallery-accent); outline-offset: 2px; }
+.breadcrumbDropTarget { border-radius: var(--gallery-radius); display: inline-flex; outline: 2px solid transparent; outline-offset: 2px; padding: .15rem; }
+.breadcrumbDropTargetActive { background: color-mix(in srgb, var(--gallery-accent) 14%, transparent); outline-color: var(--gallery-accent); }
 .deletePrompt { margin: 0; }
 .confirmDeleteButton { background: #bd2c31; border-color: #bd2c31; color: white; }
 .metadataContent { display: grid; gap: .75rem; }

@@ -42,6 +42,7 @@ import {
   beginTransfer,
   clearFinishedTransfers,
   completeTransfer,
+  discardTransfers,
   failTransfer,
   getTransfers,
   markTransferClientWork,
@@ -173,6 +174,8 @@ export function GalleryPage(props: {
   const [moveDialog, setMoveDialog] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [draggingItems, setDraggingItems] = useState(false);
+  const [dragOverFolderId, setDragOverFolderId] =
+    useState<Id<"folders"> | null>(null);
   const [metadataEntryId, setMetadataEntryId] =
     useState<Id<"entries"> | null>(null);
 
@@ -407,6 +410,7 @@ export function GalleryPage(props: {
         draggedEntryIds.current = [];
         draggedFolderIds.current = [];
         setDraggingItems(false);
+        setDragOverFolderId(null);
         return;
       }
       if (!canUpload) return;
@@ -573,6 +577,7 @@ export function GalleryPage(props: {
     if (entryIds.length === 0) return;
     setActionPending(true);
     setActionError(null);
+    setNotice(null);
     const entryNames = new Map(
       listing.entries.map((entry) => [entry._id, entry.name]),
     );
@@ -613,16 +618,22 @@ export function GalleryPage(props: {
         destinationFolderId,
         entryIds,
       });
+      if (result.queued === 0) {
+        const transferIds = transfers.map((transfer) => transfer.transferId);
+        for (const transferId of transferIds) {
+          transferResolutions.current.delete(transferId);
+        }
+        discardTransfers(transferIds);
+        setSelectedEntryIds(new Set());
+        setMoveDialog(false);
+        setNotice("The selected files are already in that folder.");
+        return;
+      }
       for (const transfer of transfers) {
         completeTransfer(transfer.transferId);
       }
       setSelectedEntryIds(new Set());
       setMoveDialog(false);
-      setNotice(
-        result.queued === 0
-          ? "The selected files are already in that folder."
-          : `${result.queued} file${result.queued === 1 ? "" : "s"} queued to move.`,
-      );
     } catch (reason) {
       const message = friendlyError(
         reason,
@@ -647,6 +658,7 @@ export function GalleryPage(props: {
     if (folderIds.length === 0) return;
     setActionPending(true);
     setActionError(null);
+    setNotice(null);
     const folderNames = new Map(
       listing.folders.map((folder) => [folder._id, folder.name]),
     );
@@ -668,6 +680,18 @@ export function GalleryPage(props: {
         destinationFolderId,
         folderIds,
       });
+      if (result.moved === 0) {
+        const transferIds = [...transfers.values()];
+        for (const transferId of transferIds) {
+          transferResolutions.current.delete(transferId);
+        }
+        discardTransfers(transferIds);
+        transfers.clear();
+        setSelectedFolderIds(new Set());
+        setMoveDialog(false);
+        setNotice("The selected folders are already in that folder.");
+        return;
+      }
       const errors: string[] = [];
       if (result.kind === "filesystem") {
         // From here the directory renames are driven by this tab.
@@ -715,11 +739,6 @@ export function GalleryPage(props: {
       }
       setSelectedFolderIds(new Set());
       setMoveDialog(false);
-      setNotice(
-        result.moved === 0
-          ? "The selected folders are already in that folder."
-          : `${result.moved} folder${result.moved === 1 ? "" : "s"} moved.`,
-      );
     } catch (reason) {
       const message = friendlyError(
         reason,
@@ -851,6 +870,7 @@ export function GalleryPage(props: {
     draggedEntryIds.current = [];
     draggedFolderIds.current = [];
     setDraggingItems(false);
+    setDragOverFolderId(null);
   };
 
   const beginEntryDrag = (
@@ -932,15 +952,46 @@ export function GalleryPage(props: {
     }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    setDragOverFolderId(targetFolderId);
+  };
+
+  const leaveFolderTarget = (
+    event: ReactDragEvent<HTMLElement>,
+    targetFolderId: Id<"folders">,
+  ) => {
+    const relatedTarget = event.relatedTarget;
+    if (
+      relatedTarget instanceof Node &&
+      event.currentTarget.contains(relatedTarget)
+    ) {
+      return;
+    }
+    setDragOverFolderId((current) =>
+      current === targetFolderId ? null : current,
+    );
   };
 
   const breadcrumbs = listing.breadcrumbs.map((crumb, index) => (
     <span
-      className={draggingItems ? styles.breadcrumbDropTarget : undefined}
+      className={
+        draggingItems
+          ? `${styles.breadcrumbDropTarget} ${dragOverFolderId === crumb._id ? styles.breadcrumbDropTargetActive : ""}`
+          : undefined
+      }
       key={crumb._id}
+      onDragEnter={
+        canDragMove
+          ? (event) => dragOverFolderTarget(event, crumb._id)
+          : undefined
+      }
       onDragOver={
         canDragMove
           ? (event) => dragOverFolderTarget(event, crumb._id)
+          : undefined
+      }
+      onDragLeave={
+        canDragMove
+          ? (event) => leaveFolderTarget(event, crumb._id)
           : undefined
       }
       onDrop={
@@ -1062,7 +1113,9 @@ export function GalleryPage(props: {
             : `${selectionSummary} selected`}
         </p>
       ) : null}
-      <div className={styles.grid}>
+      <div
+        className={`${styles.grid} ${draggingItems ? styles.gridDragging : ""}`}
+      >
         {listing.folders.map((folder) => (
           <GalleryFolderCard
             key={folder._id}
@@ -1073,6 +1126,7 @@ export function GalleryPage(props: {
             dropTarget={
               draggingItems && !draggedFolderIds.current.includes(folder._id)
             }
+            dragOver={dragOverFolderId === folder._id}
             draggable={canDragMove}
             onToggle={() => {
               setSelectedFolderIds((current) => {
@@ -1088,9 +1142,19 @@ export function GalleryPage(props: {
                 : undefined
             }
             onDragEnd={canDragMove ? endItemDrag : undefined}
+            onDragEnter={
+              canDragMove
+                ? (event) => dragOverFolderTarget(event, folder._id)
+                : undefined
+            }
             onDragOver={
               canDragMove
                 ? (event) => dragOverFolderTarget(event, folder._id)
+                : undefined
+            }
+            onDragLeave={
+              canDragMove
+                ? (event) => leaveFolderTarget(event, folder._id)
                 : undefined
             }
             onDrop={
@@ -1498,11 +1562,14 @@ function GalleryFolderCard(props: {
   selectMode: boolean;
   selected: boolean;
   dropTarget: boolean;
+  dragOver: boolean;
   draggable: boolean;
   onToggle: () => void;
   onDragStart?: (event: ReactDragEvent<HTMLElement>) => void;
   onDragEnd?: () => void;
+  onDragEnter?: (event: ReactDragEvent<HTMLElement>) => void;
   onDragOver?: (event: ReactDragEvent<HTMLElement>) => void;
+  onDragLeave?: (event: ReactDragEvent<HTMLElement>) => void;
   onDrop?: (event: ReactDragEvent<HTMLElement>) => void;
 }) {
   const content = (
@@ -1515,15 +1582,20 @@ function GalleryFolderCard(props: {
     </>
   );
   const dropTargetClass = props.dropTarget ? styles.folderDropTarget : "";
+  const dragOverClass = props.dragOver
+    ? styles.folderDropTargetActive
+    : "";
   if (!props.selectMode) {
     return (
       <Link
-        className={`${styles.folderCard} ${dropTargetClass}`}
+        className={`${styles.folderCard} ${dropTargetClass} ${dragOverClass}`}
         to={`?folder=${props.folder._id}`}
         draggable={props.draggable}
         onDragStart={props.onDragStart}
         onDragEnd={props.onDragEnd}
+        onDragEnter={props.onDragEnter}
         onDragOver={props.onDragOver}
+        onDragLeave={props.onDragLeave}
         onDrop={props.onDrop}
       >
         {content}
@@ -1532,7 +1604,7 @@ function GalleryFolderCard(props: {
   }
   return (
     <button
-      className={`${styles.folderCard} ${styles.folderCardSelectable} ${props.selected ? styles.selectedCard : ""} ${dropTargetClass}`}
+      className={`${styles.folderCard} ${styles.folderCardSelectable} ${props.selected ? styles.selectedCard : ""} ${dropTargetClass} ${dragOverClass}`}
       type="button"
       onClick={props.onToggle}
       aria-label={`${props.selected ? "Deselect" : "Select"} folder ${props.folder.name}`}
@@ -1540,7 +1612,9 @@ function GalleryFolderCard(props: {
       draggable={props.draggable}
       onDragStart={props.onDragStart}
       onDragEnd={props.onDragEnd}
+      onDragEnter={props.onDragEnter}
       onDragOver={props.onDragOver}
+      onDragLeave={props.onDragLeave}
       onDrop={props.onDrop}
     >
       {content}
