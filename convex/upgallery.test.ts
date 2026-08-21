@@ -2670,7 +2670,7 @@ describe("upgallery backend", () => {
     });
 
     await expect(
-      authed.query(api.galleries.listOwnedImageGalleries),
+      authed.query(api.galleries.listOwnedImageGalleries, {}),
     ).resolves.toEqual(
         expect.arrayContaining([
           expect.objectContaining({ _id: sourceGalleryId }),

@@ -12,7 +12,7 @@
     "dev:storage-worker": "tsx watch --env-file=.env.storage.local storage/worker.ts",
     "profile:upload": "node scripts/profile-upload.mjs",
     "build": "tsc -b && vite build && tsc -p storage/tsconfig.json",
-    "check": "tsc -b && tsc -p storage/tsconfig.json --noEmit",
+    "check": "tsc -b && tsc -p convex/tsconfig.json --noEmit && tsc -p storage/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start:storage": "node storage-dist/server.js",
