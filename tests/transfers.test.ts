@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   beginTransfer,
   clearFinishedTransfers,
@@ -8,10 +8,13 @@ import {
   getTransfers,
   markTransferClientWork,
   parseTransferConcurrency,
+  queueTransfer,
   reportTransferProgress,
   retryTransfer,
   runWithConcurrency,
+  startTransfer,
   subscribeTransfers,
+  transferPending,
 } from "../src/lib/transfers";
 
 describe("transfers store", () => {
@@ -126,6 +129,66 @@ describe("transfers store", () => {
     unsubscribe();
     completeTransfer(id);
     expect(notified).toBe(1);
+  });
+
+  it("keeps queued transfers pending until they start", () => {
+    const id = queueTransfer("later.jpg", "upload");
+    const find = () => getTransfers().find((candidate) => candidate.id === id);
+    expect(find()).toMatchObject({ status: "queued", progress: 0 });
+    expect(transferPending(find()!)).toBe(true);
+
+    clearFinishedTransfers();
+    expect(find()).toBeDefined();
+
+    // Progress before start is ignored: nothing is running yet.
+    reportTransferProgress(id, 0.5);
+    expect(find()?.progress).toBe(0);
+
+    startTransfer(id);
+    expect(find()?.status).toBe("active");
+    startTransfer(id);
+    reportTransferProgress(id, 0.5);
+    expect(find()?.progress).toBe(0.5);
+    completeTransfer(id);
+    expect(transferPending(find()!)).toBe(false);
+  });
+
+  it("coalesces progress notifications into one per frame", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(0), 16) as unknown as number,
+    );
+    try {
+      let notified = 0;
+      const unsubscribe = subscribeTransfers(() => {
+        notified += 1;
+      });
+      const id = beginTransfer("big.bin", "upload");
+      expect(notified).toBe(1);
+
+      reportTransferProgress(id, 0.2);
+      reportTransferProgress(id, 0.4);
+      // The store is current immediately; only the notification waits.
+      expect(
+        getTransfers().find((candidate) => candidate.id === id)?.progress,
+      ).toBe(0.4);
+      expect(notified).toBe(1);
+      vi.runAllTimers();
+      expect(notified).toBe(2);
+
+      // A status change notifies at once and supersedes the pending frame.
+      reportTransferProgress(id, 0.6);
+      completeTransfer(id);
+      expect(notified).toBe(3);
+      vi.runAllTimers();
+      expect(notified).toBe(3);
+      unsubscribe();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 
   it("ignores progress reports for finished transfers", () => {

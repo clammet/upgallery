@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowUpDown, Check, LoaderCircle, X } from "lucide-react";
 import { api } from "../../convex/_generated/api";
@@ -6,7 +6,8 @@ import { anonymousClaim } from "../lib/authClient";
 import styles from "../styles/transfers.module.css";
 import layout from "../styles/layout.module.css";
 
-export function BulkOperationStatus() {
+// Memoized with no props so the hosting page's re-renders do not reach it.
+export const BulkOperationStatus = memo(function BulkOperationStatus() {
   const operations = useQuery(api.bulkOperations.listMine, {
     anonymousClaim: anonymousClaim(),
   });
@@ -153,4 +154,4 @@ export function BulkOperationStatus() {
       ) : null}
     </>
   );
-}
+});

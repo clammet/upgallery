@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { adjustGalleryStats } from "./lib/galleryStats";
 import {
   MEDIA_METADATA_VERSION,
   MEDIA_PROCESSOR_VERSION,
@@ -433,11 +434,8 @@ export const completeMediaProcessing = internalMutation({
       if (replacement !== null) {
         const gallery = await ctx.db.get("galleries", entry.galleryId);
         if (gallery !== null) {
-          await ctx.db.patch("galleries", gallery._id, {
-            totalBytes: Math.max(
-              0,
-              gallery.totalBytes + replacement.size - entry.size,
-            ),
+          await adjustGalleryStats(ctx, gallery, {
+            bytes: replacement.size - entry.size,
           });
         }
         if (replacement.storageKey !== entry.storageKey) {

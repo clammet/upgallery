@@ -56,13 +56,24 @@ export default defineSchema({
     // Optional so galleries created before this setting default to disabled.
     anonymousEdit: v.optional(v.boolean()),
     theme: themeValidator,
-    itemCount: v.number(),
-    totalBytes: v.number(),
+    // Legacy counters. Live counts are in galleryStats (see
+    // lib/galleryStats.ts); these only seed that row for galleries created
+    // before it existed and are never updated.
+    itemCount: v.optional(v.number()),
+    totalBytes: v.optional(v.number()),
     pendingMigrationId: v.optional(v.id("storageMigrations")),
     deletedAt: v.optional(v.number()),
   })
     .index("by_slug", ["slug"])
     .index("by_storageRoot", ["storageRoot"]),
+
+  // Item and byte totals per gallery, kept apart from the gallery document so
+  // uploads and deletes do not invalidate every query that reads the gallery.
+  galleryStats: defineTable({
+    galleryId: v.id("galleries"),
+    itemCount: v.number(),
+    totalBytes: v.number(),
+  }).index("by_galleryId", ["galleryId"]),
 
   galleryHosts: defineTable({
     galleryId: v.id("galleries"),

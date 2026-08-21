@@ -408,8 +408,8 @@ function GalleryAdmin(props: {
         )}
       </div>
       <div className={styles.stats}>
-        <Stat label="Items" value={gallery.itemCount.toLocaleString()} />
-        <Stat label="Storage" value={formatBytes(gallery.totalBytes)} />
+        <Stat label="Items" value={details.stats.itemCount.toLocaleString()} />
+        <Stat label="Storage" value={formatBytes(details.stats.totalBytes)} />
         <Stat label="Backend" value={`${gallery.storageKind}/${gallery.storageRoot}`} />
       </div>
       {message ? <p className={message.startsWith("Error") ? layout.errorNotice : layout.notice}>{message}</p> : null}

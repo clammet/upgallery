@@ -3,7 +3,8 @@ export type TransferItem = {
   id: number;
   name: string;
   kind: TransferKind;
-  status: "active" | "success" | "error";
+  /** Queued items wait for a free slot; they are pending but not yet running. */
+  status: "queued" | "active" | "success" | "error";
   /** 0..1 fraction, or null for operations without measurable progress. */
   progress: number | null;
   error?: string;
@@ -20,13 +21,44 @@ let nextId = 1;
 let items: TransferItem[] = [];
 const listeners = new Set<() => void>();
 
+let emitScheduled = false;
+
 function emit() {
+  emitScheduled = false;
   for (const listener of listeners) listener();
 }
 
-function update(id: number, patch: Partial<TransferItem>) {
+/**
+ * Notifies at most once per animation frame. Upload progress events arrive
+ * many times per second per request; the store updates synchronously so
+ * readers never see stale data, only the React re-render is coalesced.
+ */
+function scheduleEmit() {
+  if (emitScheduled) return;
+  emitScheduled = true;
+  const run = () => {
+    if (emitScheduled) emit();
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
+}
+
+function update(
+  id: number,
+  patch: Partial<TransferItem>,
+  options: { coalesce?: boolean } = {},
+) {
   items = items.map((item) => (item.id === id ? { ...item, ...patch } : item));
-  emit();
+  if (options.coalesce === true) scheduleEmit();
+  else emit();
+}
+
+/** True while the item still has work ahead of it (queued or running). */
+export function transferPending(item: TransferItem): boolean {
+  return item.status === "queued" || item.status === "active";
 }
 
 export function subscribeTransfers(listener: () => void): () => void {
@@ -45,9 +77,36 @@ export function beginTransfer(
   kind: TransferKind,
   progress: number | null = 0,
 ): number {
+  return addTransfer(name, kind, "active", progress);
+}
+
+/**
+ * Registers a transfer that is waiting for a concurrency slot. Call
+ * `startTransfer` when it begins running.
+ */
+export function queueTransfer(
+  name: string,
+  kind: TransferKind,
+  progress: number | null = 0,
+): number {
+  return addTransfer(name, kind, "queued", progress);
+}
+
+export function startTransfer(id: number): void {
+  const current = items.find((item) => item.id === id);
+  if (current === undefined || current.status !== "queued") return;
+  update(id, { status: "active" });
+}
+
+function addTransfer(
+  name: string,
+  kind: TransferKind,
+  status: "queued" | "active",
+  progress: number | null,
+): number {
   const id = nextId;
   nextId += 1;
-  items = [...items, { id, name, kind, status: "active", progress }];
+  items = [...items, { id, name, kind, status, progress }];
   emit();
   return id;
 }
@@ -64,7 +123,7 @@ export function reportTransferProgress(id: number, progress: number): void {
   ) {
     return;
   }
-  update(id, { progress: next });
+  update(id, { progress: next }, { coalesce: true });
 }
 
 export function markTransferClientWork(id: number): void {
@@ -100,7 +159,7 @@ export function retryTransfer(id: number): void {
 }
 
 export function clearFinishedTransfers(): void {
-  const remaining = items.filter((item) => item.status === "active");
+  const remaining = items.filter(transferPending);
   if (remaining.length === items.length) return;
   items = remaining;
   emit();

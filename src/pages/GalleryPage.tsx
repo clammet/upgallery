@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -49,11 +50,14 @@ import {
   getTransfers,
   markTransferClientWork,
   parseTransferConcurrency,
+  queueTransfer,
   reportTransferProgress,
   runWithConcurrency,
+  startTransfer,
   subscribeTransfers,
 } from "../lib/transfers";
-import { useUpload } from "../hooks/useUpload";
+import { useUploader } from "../hooks/useUpload";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
@@ -202,7 +206,7 @@ export function GalleryPage(props: {
       }
     >(),
   );
-  const { upload } = useUpload();
+  const upload = useUploader();
   const [folderDialog, setFolderDialog] = useState<"create" | "settings" | null>(
     null,
   );
@@ -442,7 +446,7 @@ export function GalleryPage(props: {
     };
     const tasks = dropped.map((item) => ({
       ...item,
-      transferId: beginTransfer(item.file.name, "upload"),
+      transferId: queueTransfer(item.file.name, "upload"),
     }));
     // A lost success response is only provable for same-folder uploads of
     // names the listing doesn't already have.
@@ -460,6 +464,7 @@ export function GalleryPage(props: {
     }
     const runTask = async (task: (typeof tasks)[number]): Promise<void> => {
       try {
+        startTransfer(task.transferId);
         const targetFolderId = await resolveTargetFolder(task.pathSegments);
         await upload({
           file: task.file,
@@ -720,6 +725,39 @@ export function GalleryPage(props: {
       }
     }
   }, [entries, listing, props.gallery._id, refreshMetadata]);
+
+  // Stable handlers for the memoized entry cards, so a listing update only
+  // re-renders the cards whose entry changed. Declared before the loading
+  // return below so the hook order is the same on every render; the drag
+  // helpers they call are defined further down and only run after render.
+  const openEntry = useStableCallback((entryId: Id<"entries">) =>
+    setViewerEntry(entryId, false),
+  );
+  const openEntryMetadata = useStableCallback((entryId: Id<"entries">) =>
+    setMetadataEntryId(entryId),
+  );
+  const toggleEntrySelection = useStableCallback((entryId: Id<"entries">) => {
+    if (allEntriesSelected) {
+      setExcludedEntryIds((current) => {
+        const next = new Set(current);
+        if (next.has(entryId)) next.delete(entryId);
+        else next.add(entryId);
+        return next;
+      });
+      return;
+    }
+    setSelectedEntryIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) next.delete(entryId);
+      else next.add(entryId);
+      return next;
+    });
+  });
+  const cardDragStart = useStableCallback(
+    (event: ReactDragEvent<HTMLElement>, entryId: Id<"entries">) =>
+      beginEntryDrag(event, entryId),
+  );
+  const cardDragEnd = useStableCallback(() => endItemDrag());
 
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
@@ -1431,27 +1469,11 @@ export function GalleryPage(props: {
                 : selectedEntryIds.has(entry._id)
             }
             draggable={canDragMove}
-            onOpen={() => setViewerEntry(entry._id, false)}
-            onMetadata={() => setMetadataEntryId(entry._id)}
-            onToggle={() => {
-              if (allEntriesSelected) {
-                setExcludedEntryIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(entry._id)) next.delete(entry._id);
-                  else next.add(entry._id);
-                  return next;
-                });
-                return;
-              }
-              setSelectedEntryIds((current) => {
-                const next = new Set(current);
-                if (next.has(entry._id)) next.delete(entry._id);
-                else next.add(entry._id);
-                return next;
-              });
-            }}
-            onDragStart={(event) => beginEntryDrag(event, entry._id)}
-            onDragEnd={endItemDrag}
+            onOpen={openEntry}
+            onMetadata={openEntryMetadata}
+            onToggle={toggleEntrySelection}
+            onDragStart={cardDragStart}
+            onDragEnd={cardDragEnd}
           />
         ))}
       </div>
@@ -1955,17 +1977,24 @@ function GalleryFolderCard(props: {
   );
 }
 
-function GalleryEntryCard(props: {
+// Memoized: the grid can hold hundreds of cards and the listing updates on
+// every upload. Handlers take the entry id so the parent can pass stable
+// functions and a card re-renders only when its own entry or flags change.
+const GalleryEntryCard = memo(function GalleryEntryCard(props: {
   entry: Doc<"entries">;
   selectMode: boolean;
   selected: boolean;
   draggable: boolean;
-  onOpen: () => void;
-  onMetadata: () => void;
-  onToggle: () => void;
-  onDragStart: (event: ReactDragEvent<HTMLElement>) => void;
+  onOpen: (entryId: Id<"entries">) => void;
+  onMetadata: (entryId: Id<"entries">) => void;
+  onToggle: (entryId: Id<"entries">) => void;
+  onDragStart: (
+    event: ReactDragEvent<HTMLElement>,
+    entryId: Id<"entries">,
+  ) => void;
   onDragEnd: () => void;
 }) {
+  const entryId = props.entry._id;
   const content = (
     <>
       <span className={styles.thumbnailFrame}>
@@ -2005,14 +2034,18 @@ function GalleryEntryCard(props: {
     <article
       className={`${styles.fileCard} ${props.selected ? styles.selectedCard : ""}`}
       draggable={props.draggable}
-      onDragStart={props.draggable ? props.onDragStart : undefined}
+      onDragStart={
+        props.draggable
+          ? (event) => props.onDragStart(event, entryId)
+          : undefined
+      }
       onDragEnd={props.draggable ? props.onDragEnd : undefined}
     >
       {props.selectMode ? (
         <button
           className={styles.fileCardContent}
           type="button"
-          onClick={props.onToggle}
+          onClick={() => props.onToggle(entryId)}
           aria-label={`${props.selected ? "Deselect" : "Select"} ${props.entry.name}`}
           aria-pressed={props.selected}
         >
@@ -2030,7 +2063,7 @@ function GalleryEntryCard(props: {
           onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
             if (!shouldOpenMediaViewer(event)) return;
             event.preventDefault();
-            props.onOpen();
+            props.onOpen(entryId);
           }}
         >
           {content}
@@ -2040,7 +2073,7 @@ function GalleryEntryCard(props: {
         <button
           className={styles.cardMetadataButton}
           type="button"
-          onClick={props.onMetadata}
+          onClick={() => props.onMetadata(entryId)}
           title="View metadata"
           aria-label={`View metadata for ${props.entry.name}`}
         >
@@ -2049,7 +2082,7 @@ function GalleryEntryCard(props: {
       ) : null}
     </article>
   );
-}
+});
 
 function GalleryMetadataDialog(props: {
   entryName: string;

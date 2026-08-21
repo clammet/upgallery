@@ -9,6 +9,7 @@ import {
   uploaderAccess,
 } from "./lib/validators";
 import { formatBytes } from "./lib/format";
+import { createGalleryStats, readGalleryStats } from "./lib/galleryStats";
 import {
   DEFAULT_MAX_FILE_SIZE,
   MAX_HOSTS_PER_GALLERY,
@@ -199,9 +200,8 @@ export const create = mutation({
       infiniteScroll: true,
       paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
       theme: args.theme ?? {},
-      itemCount: 0,
-      totalBytes: 0,
     });
+    await createGalleryStats(ctx, galleryId);
     const rootFolderId = await ctx.db.insert("folders", {
       galleryId,
       ancestorIds: [],
@@ -475,7 +475,14 @@ export const adminDetails = query({
       .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))
       .order("desc")
       .take(20);
-    return { gallery, rootFolder, hosts, grants: enrichedGrants, migrations };
+    return {
+      gallery,
+      stats: await readGalleryStats(ctx, gallery),
+      rootFolder,
+      hosts,
+      grants: enrichedGrants,
+      migrations,
+    };
   },
 });
 

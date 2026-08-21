@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { adjustGalleryStats } from "./lib/galleryStats";
 import { cleanFilesystemSegment } from "./lib/normalize";
 import {
   getCurrentProfile,
@@ -519,9 +520,9 @@ export const process = internalMutation({
     }
 
     if (removedItems > 0) {
-      await ctx.db.patch("galleries", sourceGallery._id, {
-        itemCount: Math.max(0, sourceGallery.itemCount - removedItems),
-        totalBytes: Math.max(0, sourceGallery.totalBytes - removedBytes),
+      await adjustGalleryStats(ctx, sourceGallery, {
+        items: -removedItems,
+        bytes: -removedBytes,
       });
     }
     const settledItems = completedItems + failedItems;

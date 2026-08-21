@@ -11,15 +11,18 @@
 .rowName { flex: 1; font-size: .8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rowKind { color: var(--gallery-muted); flex: none; font-size: .68rem; text-transform: capitalize; }
 .spinner { animation: transfer-spin .9s linear infinite; color: var(--gallery-muted); flex: none; }
+.queued { color: var(--gallery-muted); flex: none; }
 .tick { color: var(--gallery-accent); flex: none; }
 .cross { color: #bd2c31; flex: none; }
 .retryButton { color: var(--gallery-muted); flex: none; height: 22px; width: 22px; }
 .rowError { color: #bd2c31; font-size: .72rem; margin: 0; overflow-wrap: anywhere; }
 .progressTrack { background: color-mix(in srgb, var(--gallery-fg) 12%, transparent); border-radius: 99px; height: 4px; overflow: hidden; }
-.progressFill { background: var(--gallery-accent); border-radius: inherit; height: 100%; transition: width .2s ease; width: 0; }
-.progressIndeterminate { animation: transfer-slide 1.1s ease-in-out infinite; width: 40%; }
+/* Animate transform rather than width/margin so progress updates and the
+   indeterminate slide run on the compositor instead of forcing layout. */
+.progressFill { background: var(--gallery-accent); border-radius: inherit; height: 100%; transform: scaleX(0); transform-origin: left; transition: transform .2s ease; width: 100%; }
+.progressIndeterminate { animation: transfer-slide 1.1s ease-in-out infinite; transform: none; transition: none; width: 40%; }
 @keyframes transfer-spin { to { transform: rotate(360deg); } }
-@keyframes transfer-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+@keyframes transfer-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 1.8s; }
   .progressIndeterminate { animation-duration: 2.2s; }

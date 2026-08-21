@@ -2,6 +2,7 @@ import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { sha256 } from "./lib/crypto";
+import { adjustGalleryStats } from "./lib/galleryStats";
 import { getFilesystemFolderSegments } from "./lib/filesystem";
 import {
   replaceMediaProcessingJob,
@@ -196,12 +197,9 @@ export const completeUpload = internalMutation({
           downloads: 0,
         });
       }
-      await ctx.db.patch("galleries", gallery._id, {
-        itemCount: gallery.itemCount + (wasReady ? 0 : 1),
-        totalBytes: Math.max(
-          0,
-          gallery.totalBytes + args.size - (wasReady ? existing.size : 0),
-        ),
+      await adjustGalleryStats(ctx, gallery, {
+        items: wasReady ? 0 : 1,
+        bytes: args.size - (wasReady ? existing.size : 0),
       });
       await ctx.db.patch("uploadIntents", intent._id, {
         state: "complete",
@@ -250,10 +248,7 @@ export const completeUpload = internalMutation({
       views: 0,
       downloads: 0,
     });
-    await ctx.db.patch("galleries", gallery._id, {
-      itemCount: gallery.itemCount + 1,
-      totalBytes: gallery.totalBytes + args.size,
-    });
+    await adjustGalleryStats(ctx, gallery, { items: 1, bytes: args.size });
     await ctx.db.patch("uploadIntents", intent._id, {
       state: "complete",
       claimedAt: undefined,
@@ -979,13 +974,13 @@ export const completeEntryMove = internalMutation({
       });
     }
     if (sourceGallery._id !== destinationGallery._id) {
-      await ctx.db.patch("galleries", sourceGallery._id, {
-        itemCount: Math.max(0, sourceGallery.itemCount - 1),
-        totalBytes: Math.max(0, sourceGallery.totalBytes - entry.size),
+      await adjustGalleryStats(ctx, sourceGallery, {
+        items: -1,
+        bytes: -entry.size,
       });
-      await ctx.db.patch("galleries", destinationGallery._id, {
-        itemCount: destinationGallery.itemCount + 1,
-        totalBytes: destinationGallery.totalBytes + entry.size,
+      await adjustGalleryStats(ctx, destinationGallery, {
+        items: 1,
+        bytes: entry.size,
       });
     }
     if (sourceStorageKey !== args.storageKey) {

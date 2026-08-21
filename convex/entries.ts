@@ -27,6 +27,7 @@ import {
   verifyPassword,
 } from "./lib/crypto";
 import { formatBytes } from "./lib/format";
+import { adjustGalleryStats } from "./lib/galleryStats";
 import { disposition } from "./lib/validators";
 import {
   markThumbnailPendingIfNeeded,
@@ -983,10 +984,7 @@ export const remove = mutation({
       state: "deleted",
       deletedAt: Date.now(),
     });
-    await ctx.db.patch("galleries", gallery._id, {
-      itemCount: Math.max(0, gallery.itemCount - 1),
-      totalBytes: Math.max(0, gallery.totalBytes - entry.size),
-    });
+    await adjustGalleryStats(ctx, gallery, { items: -1, bytes: -entry.size });
     await ctx.db.insert("storageDeleteJobs", {
       entryId: entry._id,
       storageKey: entry.storageKey,
@@ -1067,9 +1065,9 @@ export const removeMany = mutation({
         availableAt: 0,
       });
     }
-    await ctx.db.patch("galleries", gallery._id, {
-      itemCount: Math.max(0, gallery.itemCount - entries.length),
-      totalBytes: Math.max(0, gallery.totalBytes - removedBytes),
+    await adjustGalleryStats(ctx, gallery, {
+      items: -entries.length,
+      bytes: -removedBytes,
     });
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,

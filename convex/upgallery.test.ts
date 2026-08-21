@@ -3,6 +3,8 @@ import { convexTest, type TestConvex } from "convex-test";
 import authComponent from "@clammet/convex-googly-auth/test";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -12,6 +14,28 @@ function setupTest() {
   const t = convexTest(schema, modules);
   authComponent.register(t);
   return t;
+}
+
+// Seeds the live counters the way a gallery with existing content would
+// have them, whether or not galleries.create already made the stats row.
+async function seedGalleryStats(
+  ctx: Pick<MutationCtx, "db">,
+  galleryId: Id<"galleries">,
+  stats: { itemCount: number; totalBytes: number },
+) {
+  const existing = await galleryStatsOf(ctx, galleryId);
+  if (existing === null) {
+    await ctx.db.insert("galleryStats", { galleryId, ...stats });
+  } else {
+    await ctx.db.patch("galleryStats", existing._id, stats);
+  }
+}
+
+function galleryStatsOf(ctx: Pick<QueryCtx, "db">, galleryId: Id<"galleries">) {
+  return ctx.db
+    .query("galleryStats")
+    .withIndex("by_galleryId", (q) => q.eq("galleryId", galleryId))
+    .unique();
 }
 
 async function seedProfile(
@@ -1251,7 +1275,9 @@ describe("upgallery backend", () => {
         "delta.jpg",
         "bravo.jpg",
       ].entries()) {
-        const hash = (index + 1).toString(16).repeat(64);
+        // Spread the hashes across the hex range so seeded random previews
+        // pick different entries regardless of how the folder id hashes.
+        const hash = ["0", "4", "8", "c"][index]!.repeat(64);
         await ctx.db.insert("entries", {
           galleryId,
           folderId: created.folderId,
@@ -1585,7 +1611,7 @@ describe("upgallery backend", () => {
         throw new Error("Shared gallery unexpectedly required filesystem I/O");
       }
       const entryId = await t.run(async (ctx) => {
-        await ctx.db.patch("galleries", galleryId, {
+        await seedGalleryStats(ctx, galleryId, {
           itemCount: 1,
           totalBytes: 12,
         });
@@ -1637,7 +1663,7 @@ describe("upgallery backend", () => {
         trips: await ctx.db.get("folders", trips.folderId),
         japan: await ctx.db.get("folders", japan.folderId),
         entry: await ctx.db.get("entries", entryId),
-        gallery: await ctx.db.get("galleries", galleryId),
+        stats: await galleryStatsOf(ctx, galleryId),
         deleteJobs: await ctx.db
           .query("storageDeleteJobs")
           .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
@@ -1646,7 +1672,7 @@ describe("upgallery backend", () => {
       expect(cleaned.trips).toBeNull();
       expect(cleaned.japan).toBeNull();
       expect(cleaned.entry).toBeNull();
-      expect(cleaned.gallery).toMatchObject({ itemCount: 0, totalBytes: 0 });
+      expect(cleaned.stats).toMatchObject({ itemCount: 0, totalBytes: 0 });
       expect(cleaned.deleteJobs).toMatchObject([
         {
           storageKey: "public/shared/folder-delete/bb/bb/shrine.jpg",
@@ -1688,7 +1714,7 @@ describe("upgallery backend", () => {
           privacy: "public",
           filesystemIdentity: "3:30",
         });
-        await ctx.db.patch("galleries", galleryId, {
+        await seedGalleryStats(ctx, galleryId, {
           itemCount: 1,
           totalBytes: 20,
         });
@@ -1746,7 +1772,7 @@ describe("upgallery backend", () => {
       const cleaned = await t.run(async (ctx) => ({
         folder: await ctx.db.get("folders", folderId),
         entry: await ctx.db.get("entries", entryId),
-        gallery: await ctx.db.get("galleries", galleryId),
+        stats: await galleryStatsOf(ctx, galleryId),
         deleteJobs: await ctx.db
           .query("storageDeleteJobs")
           .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
@@ -1754,7 +1780,7 @@ describe("upgallery backend", () => {
       }));
       expect(cleaned.folder).toBeNull();
       expect(cleaned.entry).toBeNull();
-      expect(cleaned.gallery).toMatchObject({ itemCount: 0, totalBytes: 0 });
+      expect(cleaned.stats).toMatchObject({ itemCount: 0, totalBytes: 0 });
       expect(cleaned.deleteJobs).toMatchObject([
         {
           thumbnailKey: "thumbnails/rmdir/cc.jpg",
@@ -2302,7 +2328,7 @@ describe("upgallery backend", () => {
 
     const completed = await t.run(async (ctx) => ({
       entry: await ctx.db.get("entries", entryId),
-      gallery: await ctx.db.get("galleries", galleryId),
+      stats: await galleryStatsOf(ctx, galleryId),
       deleteJobs: await ctx.db
         .query("storageDeleteJobs")
         .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
@@ -2314,7 +2340,7 @@ describe("upgallery backend", () => {
       size: 480,
       metadataJson: '{"Make":"Acme"}',
     });
-    expect(completed.gallery?.totalBytes).toBe(480);
+    expect(completed.stats?.totalBytes).toBe(480);
     expect(completed.deleteJobs).toMatchObject([
       {
         storageKey: oldStorageKey,
@@ -2575,7 +2601,7 @@ describe("upgallery backend", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      await ctx.db.patch("galleries", galleryId, {
+      await seedGalleryStats(ctx, galleryId, {
         itemCount: 1,
         totalBytes: 12,
       });
@@ -2685,7 +2711,7 @@ describe("upgallery backend", () => {
             updatedAt: index + 1,
           });
         }
-        await ctx.db.patch("galleries", galleryId, {
+        await seedGalleryStats(ctx, galleryId, {
           itemCount: 175,
           totalBytes: 1_750,
         });
@@ -2734,7 +2760,7 @@ describe("upgallery backend", () => {
           )
           .collect(),
         deleteJobs: await ctx.db.query("storageDeleteJobs").collect(),
-        gallery: await ctx.db.get("galleries", galleryId),
+        stats: await galleryStatsOf(ctx, galleryId),
       }));
       expect(result.operation).toMatchObject({
         status: "complete",
@@ -2748,7 +2774,7 @@ describe("upgallery backend", () => {
         excludedEntryId,
       ]);
       expect(result.deleteJobs).toHaveLength(174);
-      expect(result.gallery).toMatchObject({ itemCount: 1, totalBytes: 10 });
+      expect(result.stats).toMatchObject({ itemCount: 1, totalBytes: 10 });
     } finally {
       vi.useRealTimers();
     }
@@ -2854,8 +2880,8 @@ describe("upgallery backend", () => {
     });
     const completed = await t.run(async (ctx) => ({
       entry: await ctx.db.get("entries", entryId),
-      source: await ctx.db.get("galleries", sourceGalleryId),
-      destination: await ctx.db.get("galleries", destinationGalleryId),
+      source: await galleryStatsOf(ctx, sourceGalleryId),
+      destination: await galleryStatsOf(ctx, destinationGalleryId),
       operation: await ctx.db.get("bulkOperations", operationId),
       deleteJobs: await ctx.db
         .query("storageDeleteJobs")

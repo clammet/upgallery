@@ -1,10 +1,18 @@
-import { useState, useSyncExternalStore } from "react";
-import { ArrowUpDown, Check, LoaderCircle, RotateCw, X } from "lucide-react";
+import { memo, useState, useSyncExternalStore } from "react";
+import {
+  ArrowUpDown,
+  Check,
+  Clock,
+  LoaderCircle,
+  RotateCw,
+  X,
+} from "lucide-react";
 import {
   clearFinishedTransfers,
   getTransfers,
   retryTransfer,
   subscribeTransfers,
+  transferPending,
   type TransferItem,
   type TransferKind,
 } from "../lib/transfers";
@@ -12,7 +20,9 @@ import { useBeforeUnloadGuard } from "../hooks/useBeforeUnloadGuard";
 import styles from "../styles/transfers.module.css";
 import layout from "../styles/layout.module.css";
 
-export function TransferStatus() {
+// Memoized with no props: the page that hosts it re-renders on every listing
+// update, and without this every transfer row would render again each time.
+export const TransferStatus = memo(function TransferStatus() {
   const items = useSyncExternalStore(subscribeTransfers, getTransfers);
   const [open, setOpen] = useState(false);
   // Uploads and client-driven filesystem steps die with the tab; queued
@@ -20,12 +30,12 @@ export function TransferStatus() {
   useBeforeUnloadGuard(
     items.some(
       (item) =>
-        item.status === "active" &&
+        transferPending(item) &&
         (item.kind === "upload" || item.clientWork === true),
     ),
   );
   if (items.length === 0) return null;
-  const activeItems = items.filter((item) => item.status === "active");
+  const activeItems = items.filter(transferPending);
   const active = activeItems.length;
   const failed = items.filter((item) => item.status === "error").length;
   const verbFor = (subset: TransferItem[], tense: "active" | "done") => {
@@ -111,9 +121,11 @@ export function TransferStatus() {
       ) : null}
     </>
   );
-}
+});
 
-function TransferRow(props: { item: TransferItem }) {
+// Rows only change when their own item object does (progress, status), so a
+// progress tick on one upload leaves the other rows untouched.
+const TransferRow = memo(function TransferRow(props: { item: TransferItem }) {
   const item = props.item;
   return (
     <li className={styles.row}>
@@ -122,7 +134,9 @@ function TransferRow(props: { item: TransferItem }) {
           {item.name}
         </span>
         <span className={styles.rowKind}>{item.kind}</span>
-        {item.status === "active" ? (
+        {item.status === "queued" ? (
+          <Clock className={styles.queued} aria-label="Queued" size={15} />
+        ) : item.status === "active" ? (
           <LoaderCircle
             className={styles.spinner}
             aria-label="In progress"
@@ -180,11 +194,11 @@ function TransferRow(props: { item: TransferItem }) {
             style={
               item.progress === null
                 ? undefined
-                : { width: `${Math.round(item.progress * 100)}%` }
+                : { transform: `scaleX(${item.progress})` }
             }
           />
         </div>
       )}
     </li>
   );
-}
+});
