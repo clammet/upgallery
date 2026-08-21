@@ -47,6 +47,11 @@ export default defineSchema({
     quickMove: v.optional(v.boolean()),
     // Lets editors use the owner-only select, move, and delete tools.
     editorBulkActions: v.optional(v.boolean()),
+    // Undefined preserves the default-on behavior for galleries created
+    // before pagination settings were introduced.
+    infiniteScroll: v.optional(v.boolean()),
+    // Gallery entry page size. Undefined means the default of 100.
+    paginationPageSize: v.optional(v.number()),
     // Grants the editor role across this gallery to anonymous profiles.
     // Optional so galleries created before this setting default to disabled.
     anonymousEdit: v.optional(v.boolean()),
@@ -134,6 +139,18 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index("by_folderId_and_state", ["folderId", "state"])
+    .index("by_folderId_and_state_and_moveJobId_and_createdAt", [
+      "folderId",
+      "state",
+      "moveJobId",
+      "createdAt",
+    ])
+    .index("by_folderId_and_state_and_moveJobId_and_name", [
+      "folderId",
+      "state",
+      "moveJobId",
+      "name",
+    ])
     .index(
       "by_folderId_and_state_and_mediaKind_and_moveJobId_and_name",
       ["folderId", "state", "mediaKind", "moveJobId", "name"],
@@ -272,6 +289,7 @@ export default defineSchema({
     destinationGalleryId: v.id("galleries"),
     destinationFolderId: v.id("folders"),
     actorProfileId: v.id("profiles"),
+    bulkOperationId: v.optional(v.id("bulkOperations")),
     expectedSourceStorageKey: v.string(),
     status: jobState,
     attempts: v.number(),
@@ -283,7 +301,38 @@ export default defineSchema({
     .index("by_status_and_availableAt", ["status", "availableAt"])
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
     .index("by_entryId", ["entryId"])
-    .index("by_actorProfileId", ["actorProfileId"]),
+    .index("by_actorProfileId", ["actorProfileId"])
+    .index("by_destinationFolderId_and_status", [
+      "destinationFolderId",
+      "status",
+    ])
+    .index("by_bulkOperationId", ["bulkOperationId"]),
+
+  bulkOperations: defineTable({
+    actorProfileId: v.id("profiles"),
+    kind: v.union(v.literal("delete"), v.literal("move")),
+    sourceGalleryId: v.id("galleries"),
+    sourceFolderId: v.id("folders"),
+    selectionKind: v.union(v.literal("ids"), v.literal("folder")),
+    entryIds: v.optional(v.array(v.id("entries"))),
+    excludedEntryIds: v.optional(v.array(v.id("entries"))),
+    destinationGalleryId: v.optional(v.id("galleries")),
+    destinationFolderId: v.optional(v.id("folders")),
+    cutoffCreatedAt: v.number(),
+    cursor: v.optional(v.string()),
+    nextIndex: v.number(),
+    discoveryComplete: v.boolean(),
+    status: jobState,
+    totalItems: v.number(),
+    completedItems: v.number(),
+    failedItems: v.number(),
+    error: v.optional(v.string()),
+    dismissedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_actorProfileId_and_createdAt", ["actorProfileId", "createdAt"])
+    .index("by_status_and_createdAt", ["status", "createdAt"]),
 
   storageMigrations: defineTable({
     galleryId: v.id("galleries"),

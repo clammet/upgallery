@@ -47,6 +47,9 @@ export const list = query({
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
     previewSeed: v.optional(v.number()),
+    // GalleryPage loads entries through its paginated query. UploaderPage and
+    // older callers retain the embedded first page by omitting this flag.
+    includeEntries: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const [gallery, folder] = await Promise.all([
@@ -171,13 +174,16 @@ export const list = query({
       }),
     );
 
-    const entries = await ctx.db
-      .query("entries")
-      .withIndex("by_folderId_and_state", (q) =>
-        q.eq("folderId", folder._id).eq("state", "ready"),
-      )
-      .order("desc")
-      .take(128);
+    const entries =
+      args.includeEntries === false
+        ? []
+        : await ctx.db
+            .query("entries")
+            .withIndex("by_folderId_and_state", (q) =>
+              q.eq("folderId", folder._id).eq("state", "ready"),
+            )
+            .order("desc")
+            .take(128);
     const items = [];
     for (const entry of entries) {
       if (entry.moveJobId !== undefined) {

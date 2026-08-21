@@ -559,6 +559,8 @@ function GallerySettingsForm(props: {
     uploaderAccess: gallery.uploaderAccess,
     folderPreviewMode: gallery.folderPreviewMode ?? "first",
     quickMove: gallery.quickMove === true,
+    infiniteScroll: gallery.infiniteScroll !== false,
+    paginationPageSize: gallery.paginationPageSize ?? 100,
     hosts: props.hosts
       .map((host) => `${host.host}|${host.rootPath}`)
       .join("\n"),
@@ -598,6 +600,14 @@ function GallerySettingsForm(props: {
         gallery.kind === "image"
           ? data.get("quickMove") === "on"
           : initial.quickMove,
+      infiniteScroll:
+        gallery.kind === "image"
+          ? data.get("infiniteScroll") === "on"
+          : initial.infiniteScroll,
+      paginationPageSize:
+        gallery.kind === "image"
+          ? Number(data.get("paginationPageSize"))
+          : initial.paginationPageSize,
       hosts: props.isSystemAdmin ? String(data.get("hosts")) : initial.hosts,
       themeJson: JSON.stringify(theme),
     };
@@ -645,6 +655,25 @@ function GallerySettingsForm(props: {
           <select name="quickMove" defaultValue={initial.quickMove ? "on" : "off"}>
             <option value="off">Off</option>
             <option value="on">On</option>
+          </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Infinite scroll <small>(automatically load the next page)</small>
+          <select name="infiniteScroll" defaultValue={initial.infiniteScroll ? "on" : "off"}>
+            <option value="on">On</option>
+            <option value="off">Off — show a load-more button</option>
+          </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Files per page
+          <select name="paginationPageSize" defaultValue={String(initial.paginationPageSize)}>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+            <option value="200">200</option>
+            <option value="250">250</option>
           </select>
         </label>
       ) : null}

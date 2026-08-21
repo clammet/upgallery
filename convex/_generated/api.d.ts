@@ -10,6 +10,7 @@
 
 import type * as authMaintenance from "../authMaintenance.js";
 import type * as authOrigins from "../authOrigins.js";
+import type * as bulkOperations from "../bulkOperations.js";
 import type * as crons from "../crons.js";
 import type * as entries from "../entries.js";
 import type * as fileTypeIcons from "../fileTypeIcons.js";
@@ -19,6 +20,7 @@ import type * as galleries from "../galleries.js";
 import type * as galleryCleanup from "../galleryCleanup.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_bulkOperations from "../lib/bulkOperations.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
 import type * as lib_format from "../lib/format.js";
@@ -42,6 +44,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   authMaintenance: typeof authMaintenance;
   authOrigins: typeof authOrigins;
+  bulkOperations: typeof bulkOperations;
   crons: typeof crons;
   entries: typeof entries;
   fileTypeIcons: typeof fileTypeIcons;
@@ -51,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   galleryCleanup: typeof galleryCleanup;
   http: typeof http;
   "lib/auth": typeof lib_auth;
+  "lib/bulkOperations": typeof lib_bulkOperations;
   "lib/crypto": typeof lib_crypto;
   "lib/filesystem": typeof lib_filesystem;
   "lib/format": typeof lib_format;

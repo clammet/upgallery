@@ -42,6 +42,8 @@ export type SettingsSnapshot = {
   uploaderAccess: UploaderAccess;
   folderPreviewMode: FolderPreviewMode;
   quickMove: boolean;
+  infiniteScroll: boolean;
+  paginationPageSize: number;
   hosts: string;
   themeJson: string;
 };
@@ -53,6 +55,8 @@ export type GallerySettingsUpdate = {
   uploaderAccess?: UploaderAccess;
   folderPreviewMode?: FolderPreviewMode;
   quickMove?: boolean;
+  infiniteScroll?: boolean;
+  paginationPageSize?: number;
   hosts?: Array<{ host: string; rootPath: string }>;
   theme?: GalleryTheme;
 };
@@ -139,6 +143,12 @@ export function diffGallerySettings(
     ...(current.quickMove === initial.quickMove
       ? {}
       : { quickMove: current.quickMove }),
+    ...(current.infiniteScroll === initial.infiniteScroll
+      ? {}
+      : { infiniteScroll: current.infiniteScroll }),
+    ...(current.paginationPageSize === initial.paginationPageSize
+      ? {}
+      : { paginationPageSize: current.paginationPageSize }),
     ...(current.hosts === initial.hosts
       ? {}
       : { hosts: parseHostRoutes(current.hosts) }),

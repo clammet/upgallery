@@ -1,6 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
+import {
   canViewFolder,
   getCurrentProfile,
   getEffectiveRole,
@@ -34,6 +38,17 @@ const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
 const MAX_BULK_ENTRIES = 128;
 const MAX_FILESYSTEM_DIRECTORY_ITEMS = 500;
+const MAX_GALLERY_PAGE_SIZE = 250;
+
+function validateGalleryPaginationSize(numItems: number) {
+  if (
+    !Number.isSafeInteger(numItems) ||
+    numItems < 1 ||
+    numItems > MAX_GALLERY_PAGE_SIZE
+  ) {
+    throw new Error(`Gallery pages cannot exceed ${MAX_GALLERY_PAGE_SIZE} files`);
+  }
+}
 
 function isHeifEntry(entry: {
   mimeType: string;
@@ -111,6 +126,116 @@ async function assertCanUpload(
   }
   return { gallery, folder, profile };
 }
+
+export const listGalleryPage = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(v.any()),
+  handler: async (ctx, args) => {
+    validateGalleryPaginationSize(args.paginationOpts.numItems);
+    const [gallery, folder, profile] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("folders", args.folderId),
+      getCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image" ||
+      folder === null ||
+      folder.galleryId !== gallery._id ||
+      !(await canViewFolder(ctx, folder, profile))
+    ) {
+      throw new Error("Folder not found");
+    }
+    const result = await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_folderId_and_state_and_moveJobId_and_createdAt",
+        (q) =>
+          q
+            .eq("folderId", folder._id)
+            .eq("state", "ready")
+            .eq("moveJobId", undefined),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    const page = [];
+    for (const entry of result.page) {
+      const counter = await ctx.db
+        .query("entryCounters")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+        .unique();
+      const locked = entry.passwordHash !== undefined;
+      page.push({
+        ...entry,
+        description: locked ? undefined : entry.description,
+        metadataJson: locked ? undefined : entry.metadataJson,
+        passwordSalt: undefined,
+        passwordHash: undefined,
+        passwordIterations: undefined,
+        passwordProtected: locked,
+        canDelete: false,
+        views: counter?.views ?? 0,
+      });
+    }
+    return { ...result, page };
+  },
+});
+
+// Select-all uses this lightweight paginated surface to determine the exact
+// count without forcing the thumbnail grid to load every entry document.
+export const listSelectableIds = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(v.id("entries")),
+  handler: async (ctx, args) => {
+    validateGalleryPaginationSize(args.paginationOpts.numItems);
+    const [gallery, folder] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId),
+      ctx.db.get("folders", args.folderId),
+    ]);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.kind !== "image" ||
+      folder === null ||
+      folder.galleryId !== gallery._id
+    ) {
+      throw new Error("Folder not found");
+    }
+    await requireGalleryManager(
+      ctx,
+      gallery,
+      folder,
+      args.anonymousClaim,
+    );
+    const result = await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_folderId_and_state_and_moveJobId_and_createdAt",
+        (q) =>
+          q
+            .eq("folderId", folder._id)
+            .eq("state", "ready")
+            .eq("moveJobId", undefined),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    return {
+      ...result,
+      page: result.page.map((entry) => entry._id),
+    };
+  },
+});
 
 export const createUploadIntent = mutation({
   args: {

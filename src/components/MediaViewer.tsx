@@ -21,6 +21,7 @@ import {
   Link2,
   X,
 } from "lucide-react";
+import { MoveIcon, TrashIcon } from "./ActionIcons";
 import { friendlyError } from "../lib/errors";
 import {
   shouldRenderAsPlainText,
@@ -165,7 +166,7 @@ export function mediaViewerGeometry(
   };
 }
 
-function isEditableTarget(target: EventTarget | null) {
+export function isEditableTarget(target: EventTarget | null) {
   return (
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
@@ -215,6 +216,11 @@ export function MediaViewer(props: {
   onActiveItemChange?: (item: MediaViewerItem) => void;
   onTitleChange?: (item: MediaViewerItem, title: string) => Promise<void>;
   onCopyLink?: (item: MediaViewerItem) => Promise<void>;
+  onMove?: (item: MediaViewerItem) => void;
+  onDelete?: (item: MediaViewerItem) => void;
+  // True while another dialog sits on top of the viewer, so Escape and the
+  // arrow keys belong to that dialog rather than to the viewer.
+  shortcutsSuspended?: boolean;
 }) {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
@@ -371,6 +377,7 @@ export function MediaViewer(props: {
   }, []);
 
   useEffect(() => {
+    if (props.shortcutsSuspended) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -388,7 +395,7 @@ export function MediaViewer(props: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moveBy, props.onClose]);
+  }, [moveBy, props.onClose, props.shortcutsSuspended]);
 
   useEffect(() => {
     if (activeItem === undefined) return;
@@ -817,9 +824,7 @@ export function MediaViewer(props: {
         aria-modal="true"
         aria-label={activeItem.title}
       >
-        <header
-          className={`${styles.titlebar} ${canChangeMarkdown ? styles.titlebarWithMarkdownToggle : ""}`}
-        >
+        <header className={styles.titlebar}>
           <div className={styles.titleGroup}>
             {editingTitle ? (
               <form
@@ -913,6 +918,28 @@ export function MediaViewer(props: {
               error={markdownToggleError}
               onChange={(markdown) => void changeMarkdownMode(markdown)}
             />
+          ) : null}
+          {props.onMove ? (
+            <button
+              className={styles.titleButton}
+              type="button"
+              onClick={() => props.onMove?.(activeItem)}
+              aria-label={`Move ${activeItem.title}`}
+              title="Move to…"
+            >
+              <MoveIcon />
+            </button>
+          ) : null}
+          {props.onDelete ? (
+            <button
+              className={styles.titleButton}
+              type="button"
+              onClick={() => props.onDelete?.(activeItem)}
+              aria-label={`Delete ${activeItem.title}`}
+              title="Delete"
+            >
+              <TrashIcon />
+            </button>
           ) : null}
           <button
             className={`${styles.titleButton} ${infoOpen ? styles.titleButtonActive : ""}`}

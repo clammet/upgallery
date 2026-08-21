@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import {
   Check,
   ExternalLink,
@@ -28,6 +28,7 @@ import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
 import { MediaThumbnail } from "../components/MediaThumbnail";
 import {
+  isEditableTarget,
   MediaViewer,
   shouldOpenMediaViewer,
   type MediaViewerItem,
@@ -111,6 +112,16 @@ type FolderPreviewData = {
   }>;
 };
 
+type GalleryEntry = Doc<"entries"> & {
+  passwordProtected: boolean;
+  canDelete: boolean;
+  views: number;
+};
+
+type EntrySelection =
+  | { kind: "ids"; entryIds: Array<Id<"entries">> }
+  | { kind: "folder"; excludedEntryIds: Array<Id<"entries">> };
+
 export function GalleryPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
@@ -128,13 +139,45 @@ export function GalleryPage(props: {
     galleryId: props.gallery._id,
     folderId,
     previewSeed,
+    includeEntries: false,
   });
+  const pageSize = props.gallery.paginationPageSize ?? 100;
+  const infiniteScroll = props.gallery.infiniteScroll !== false;
+  const [paginationCursor, setPaginationCursor] = useState<string | null>(null);
+  const [paginationHistory, setPaginationHistory] = useState<
+    Array<string | null>
+  >([]);
+  const entryPageArgs = {
+    anonymousClaim: anonymousClaim(),
+    galleryId: props.gallery._id,
+    folderId,
+  };
+  const entryPages = usePaginatedQuery(
+    api.entries.listGalleryPage,
+    infiniteScroll ? entryPageArgs : "skip",
+    { initialNumItems: pageSize },
+  );
+  const pagedEntries = useQuery(
+    api.entries.listGalleryPage,
+    infiniteScroll
+      ? "skip"
+      : {
+          ...entryPageArgs,
+          paginationOpts: {
+            numItems: pageSize,
+            cursor: paginationCursor,
+          },
+        },
+  );
+  const entries = (infiniteScroll
+    ? entryPages.results
+    : (pagedEntries?.page ?? [])) as GalleryEntry[];
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
   const removeFolders = useMutation(api.folders.removeMany);
-  const removeEntries = useMutation(api.entries.removeMany);
-  const moveEntries = useMutation(api.entries.moveMany);
   const moveFolders = useMutation(api.folders.moveMany);
+  const startBulkDelete = useMutation(api.bulkOperations.startDelete);
+  const startBulkMove = useMutation(api.bulkOperations.startMove);
   const requestPreview = useMutation(api.entries.requestPreview);
   const removeLocationData = useMutation(api.entries.removeLocationData);
   const refreshMetadata = useMutation(api.entries.refreshMetadata);
@@ -142,6 +185,8 @@ export function GalleryPage(props: {
   const fileInput = useRef<HTMLInputElement>(null);
   const draggedEntryIds = useRef<Array<Id<"entries">>>([]);
   const draggedFolderIds = useRef<Array<Id<"folders">>>([]);
+  const draggedEntrySelection = useRef<EntrySelection | null>(null);
+  const draggedEntryCount = useRef(0);
   // Listing-based proof that a transfer's work landed despite a reported
   // failure, keyed by transfer id. Only checked against the folder the
   // transfer started in.
@@ -170,18 +215,42 @@ export function GalleryPage(props: {
   const [selectedFolderIds, setSelectedFolderIds] = useState<
     Set<Id<"folders">>
   >(new Set());
+  const [allEntriesSelected, setAllEntriesSelected] = useState(false);
+  const [excludedEntryIds, setExcludedEntryIds] = useState<
+    Set<Id<"entries">>
+  >(new Set());
+  const selectableEntries = usePaginatedQuery(
+    api.entries.listSelectableIds,
+    allEntriesSelected
+      ? {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+        }
+      : "skip",
+    { initialNumItems: 250 },
+  );
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [moveDialog, setMoveDialog] = useState(false);
+  // Set when the delete/move dialog was opened from the viewer: the dialog
+  // then acts on this one entry instead of the select-mode selection.
+  const [viewerActionEntryId, setViewerActionEntryId] =
+    useState<Id<"entries"> | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [draggingItems, setDraggingItems] = useState(false);
   const [dragOverFolderId, setDragOverFolderId] =
     useState<Id<"folders"> | null>(null);
   const [metadataEntryId, setMetadataEntryId] =
     useState<Id<"entries"> | null>(null);
+  // The entry the viewer is stepping away from after a delete or move, until
+  // that navigation lands. While it is pending the "viewed entry disappeared"
+  // effect below must not close the viewer.
+  const viewerStepFrom = useRef<string | null>(null);
+  const pageSentinel = useRef<HTMLDivElement>(null);
 
   const viewerItems = useMemo<MediaViewerItem[]>(
     () =>
-      (listing?.entries ?? []).map((entry) => {
+      entries.map((entry) => {
         const sourceUrl = publicMediaUrl(
           entry.storageKey,
           entry.filesystemModifiedAt,
@@ -209,7 +278,7 @@ export function GalleryPage(props: {
           metadataJson: entry.metadataJson,
         };
       }),
-    [listing?.entries],
+    [entries],
   );
   const resolveViewerSource = useCallback(
     async (item: MediaViewerItem) => {
@@ -280,13 +349,34 @@ export function GalleryPage(props: {
   const metadataEntry =
     metadataEntryId === null
       ? undefined
-      : listing?.entries.find((entry) => entry._id === metadataEntryId);
+      : entries.find((entry) => entry._id === metadataEntryId);
 
   useEffect(() => {
-    if (listing !== undefined && viewerEntryId !== null && viewerIndex < 0) {
+    if (viewerEntryId !== viewerStepFrom.current) viewerStepFrom.current = null;
+    if (
+      listing !== undefined &&
+      viewerEntryId !== null &&
+      viewerIndex < 0 &&
+      viewerStepFrom.current === null
+    ) {
       setViewerEntry(null, true);
     }
   }, [listing, setViewerEntry, viewerEntryId, viewerIndex]);
+
+  // A dialog opened from the viewer loses its target if that entry vanishes
+  // (deleted elsewhere, or just deleted here); drop it rather than fall back
+  // to the select-mode selection.
+  useEffect(() => {
+    if (
+      viewerActionEntryId !== null &&
+      listing !== undefined &&
+      !entries.some((entry) => entry._id === viewerActionEntryId)
+    ) {
+      setDeleteDialog(false);
+      setMoveDialog(false);
+      setViewerActionEntryId(null);
+    }
+  }, [entries, listing, viewerActionEntryId]);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -356,7 +446,7 @@ export function GalleryPage(props: {
     }));
     // A lost success response is only provable for same-folder uploads of
     // names the listing doesn't already have.
-    const existingNames = new Set(listing.entries.map((entry) => entry.name));
+    const existingNames = new Set(entries.map((entry) => entry.name));
     for (const task of tasks) {
       if (
         task.pathSegments.length === 0 &&
@@ -411,6 +501,8 @@ export function GalleryPage(props: {
         event.preventDefault();
         draggedEntryIds.current = [];
         draggedFolderIds.current = [];
+        draggedEntrySelection.current = null;
+        draggedEntryCount.current = 0;
         setDraggingItems(false);
         setDragOverFolderId(null);
         return;
@@ -463,9 +555,90 @@ export function GalleryPage(props: {
     }
     setSelectedEntryIds(new Set());
     setSelectedFolderIds(new Set());
+    setAllEntriesSelected(false);
+    setExcludedEntryIds(new Set());
     setDeleteDialog(false);
     setMoveDialog(false);
+    setViewerActionEntryId(null);
   }, [folderId]);
+
+  useEffect(() => {
+    setPaginationCursor(null);
+    setPaginationHistory([]);
+  }, [folderId, infiniteScroll, pageSize]);
+
+  useEffect(() => {
+    if (!allEntriesSelected || selectableEntries.status !== "CanLoadMore") {
+      return;
+    }
+    selectableEntries.loadMore(250);
+  }, [
+    allEntriesSelected,
+    selectableEntries.loadMore,
+    selectableEntries.status,
+  ]);
+
+  useEffect(() => {
+    if (
+      !infiniteScroll ||
+      entryPages.status !== "CanLoadMore" ||
+      pageSentinel.current === null
+    ) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (observations) => {
+        if (observations.some((observation) => observation.isIntersecting)) {
+          entryPages.loadMore(pageSize);
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(pageSentinel.current);
+    return () => observer.disconnect();
+  }, [
+    entryPages.loadMore,
+    entryPages.status,
+    infiniteScroll,
+    pageSize,
+  ]);
+
+  // Cmd/Ctrl+A selects every selectable file in the folder, not merely the
+  // pages whose thumbnails happen to be loaded.
+  useEffect(() => {
+    if (!selectMode || listing === undefined) return;
+    const dialogOpen =
+      deleteDialog || moveDialog || folderDialog !== null || viewerIndex >= 0;
+    if (dialogOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "a" ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.defaultPrevented ||
+        isEditableTarget(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setAllEntriesSelected(true);
+      setExcludedEntryIds(new Set());
+      setSelectedEntryIds(new Set());
+      setSelectedFolderIds(
+        new Set(listing.folders.map((folder) => folder._id)),
+      );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    deleteDialog,
+    folderDialog,
+    listing,
+    moveDialog,
+    selectMode,
+    viewerIndex,
+  ]);
 
   // A failed row can be resolved out-of-band: the storage worker retries
   // folder deletes on its own, and a success response can be lost while the
@@ -475,9 +648,9 @@ export function GalleryPage(props: {
     if (listing === undefined) return;
     const evaluate = () => {
       const rows = new Map(getTransfers().map((item) => [item.id, item]));
-      const listedEntryIds = new Set(listing.entries.map((entry) => entry._id));
+      const listedEntryIds = new Set(entries.map((entry) => entry._id));
       const listedEntryNames = new Set(
-        listing.entries.map((entry) => entry.name),
+        entries.map((entry) => entry.name),
       );
       const listedFolderIds = new Set(
         listing.folders.map((folder) => folder._id),
@@ -510,11 +683,11 @@ export function GalleryPage(props: {
     };
     evaluate();
     return subscribeTransfers(evaluate);
-  }, [listing, folderId]);
+  }, [entries, listing, folderId]);
 
   useEffect(() => {
     if (listing === undefined) return;
-    const availableEntries = new Set(listing.entries.map((entry) => entry._id));
+    const availableEntries = new Set(entries.map((entry) => entry._id));
     setSelectedEntryIds((current) => {
       const next = new Set(
         [...current].filter((id) => availableEntries.has(id)),
@@ -530,11 +703,11 @@ export function GalleryPage(props: {
       );
       return next.size === current.size ? current : next;
     });
-  }, [listing]);
+  }, [entries, listing]);
 
   useEffect(() => {
     if (listing === undefined || !listing.access.canEditFolder) return;
-    for (const entry of listing.entries) {
+    for (const entry of entries) {
       if (
         entry.metadataVersion === undefined &&
         isHeifImage(entry.mimeType, entry.name)
@@ -546,7 +719,7 @@ export function GalleryPage(props: {
         }).catch(() => undefined);
       }
     }
-  }, [listing, props.gallery._id, refreshMetadata]);
+  }, [entries, listing, props.gallery._id, refreshMetadata]);
 
   if (listing === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
@@ -559,95 +732,114 @@ export function GalleryPage(props: {
     canManage && (selectMode || props.gallery.quickMove === true);
   const selectedIds = [...selectedEntryIds];
   const selectedFolderIdList = [...selectedFolderIds];
-  const selectedCount = selectedIds.length + selectedFolderIdList.length;
+  const selectedAllEntryCount =
+    allEntriesSelected && selectableEntries.status === "Exhausted"
+      ? (selectableEntries.results as Array<Id<"entries">>).filter(
+          (entryId) => !excludedEntryIds.has(entryId),
+        ).length
+      : null;
+  const selectedEntryCount = allEntriesSelected
+    ? selectedAllEntryCount
+    : selectedIds.length;
+  const selectedCount =
+    selectedEntryCount === null
+      ? null
+      : selectedEntryCount + selectedFolderIdList.length;
+  const hasEntrySelection = allEntriesSelected || selectedIds.length > 0;
+  const hasSelection = hasEntrySelection || selectedFolderIdList.length > 0;
   const selectionSummary = [
     selectedFolderIdList.length > 0
       ? `${selectedFolderIdList.length} folder${selectedFolderIdList.length === 1 ? "" : "s"}`
       : null,
-    selectedIds.length > 0
-      ? `${selectedIds.length} file${selectedIds.length === 1 ? "" : "s"}`
+    selectedEntryCount === null && allEntriesSelected
+      ? "all files (counting…)"
+      : (selectedEntryCount ?? 0) > 0
+        ? `${selectedEntryCount} file${selectedEntryCount === 1 ? "" : "s"}`
       : null,
   ]
     .filter((part) => part !== null)
     .join(" and ");
+  // What the delete/move dialogs act on: the single viewer entry when they
+  // were opened from the viewer, otherwise the select-mode selection.
+  const viewerActionEntry =
+    viewerActionEntryId === null
+      ? undefined
+      : entries.find((entry) => entry._id === viewerActionEntryId);
+  const actionEntrySelection: EntrySelection | null =
+    viewerActionEntry !== undefined
+      ? { kind: "ids", entryIds: [viewerActionEntry._id] }
+      : allEntriesSelected
+        ? {
+            kind: "folder",
+            excludedEntryIds: [...excludedEntryIds],
+          }
+        : selectedIds.length > 0
+          ? { kind: "ids", entryIds: selectedIds }
+          : null;
+  const actionEntryCount =
+    viewerActionEntry !== undefined ? 1 : selectedEntryCount;
+  const actionFolderIds =
+    viewerActionEntry !== undefined ? [] : selectedFolderIdList;
+  const actionSummary =
+    viewerActionEntry !== undefined ? viewerActionEntry.name : selectionSummary;
+  const closeActionDialogs = () => {
+    setDeleteDialog(false);
+    setMoveDialog(false);
+    setViewerActionEntryId(null);
+  };
+  // Once the viewed entry is deleted or moved away, step the viewer to its
+  // neighbour instead of letting it close when the entry disappears.
+  const stepViewerPast = (entryIds: Array<Id<"entries">>) => {
+    if (viewerEntryId === null) return;
+    const removed = new Set<string>(entryIds);
+    if (!removed.has(viewerEntryId)) return;
+    const current = entries.findIndex(
+      (entry) => entry._id === viewerEntryId,
+    );
+    const after = entries
+      .slice(current + 1)
+      .find((entry) => !removed.has(entry._id));
+    const before = entries
+      .slice(0, Math.max(current, 0))
+      .reverse()
+      .find((entry) => !removed.has(entry._id));
+    const next = after ?? before;
+    viewerStepFrom.current = viewerEntryId;
+    setViewerEntry(next?._id ?? null, true);
+  };
 
   const queueMove = async (
-    entryIds: Array<Id<"entries">>,
+    selection: EntrySelection,
+    entryCount: number,
     destinationGalleryId: Id<"galleries">,
     destinationFolderId: Id<"folders">,
   ) => {
-    if (entryIds.length === 0) return;
+    if (entryCount === 0) return;
     setActionPending(true);
     setActionError(null);
     setNotice(null);
-    const entryNames = new Map(
-      listing.entries.map((entry) => [entry._id, entry.name]),
-    );
-    const transfers = entryIds.map((entryId) => ({
-      entryId,
-      transferId: beginTransfer(
-        entryNames.get(entryId) ?? "File",
-        "move",
-        null,
-      ),
-    }));
-    for (const transfer of transfers) {
-      transferResolutions.current.set(transfer.transferId, {
-        folderId,
-        condition: { kind: "entryGone", entryId: transfer.entryId },
-      });
-    }
-    const retryMove = (entryId: Id<"entries">, transferId: number) => {
-      moveEntries({
-        anonymousClaim: anonymousClaim(),
-        sourceGalleryId: props.gallery._id,
-        destinationGalleryId,
-        destinationFolderId,
-        entryIds: [entryId],
-      })
-        .then(() => completeTransfer(transferId))
-        .catch((reason: unknown) => {
-          failTransfer(
-            transferId,
-            friendlyError(reason, "Could not move the file"),
-            () => retryMove(entryId, transferId),
-          );
-        });
-    };
     try {
-      const result = await moveEntries({
+      await startBulkMove({
         anonymousClaim: anonymousClaim(),
         sourceGalleryId: props.gallery._id,
+        sourceFolderId: folderId,
         destinationGalleryId,
         destinationFolderId,
-        entryIds,
+        selection,
       });
-      if (result.queued === 0) {
-        const transferIds = transfers.map((transfer) => transfer.transferId);
-        for (const transferId of transferIds) {
-          transferResolutions.current.delete(transferId);
-        }
-        discardTransfers(transferIds);
-        setSelectedEntryIds(new Set());
-        setMoveDialog(false);
-        setNotice("The selected files are already in that folder.");
-        return;
-      }
-      for (const transfer of transfers) {
-        completeTransfer(transfer.transferId);
-      }
+      if (selection.kind === "ids") stepViewerPast(selection.entryIds);
       setSelectedEntryIds(new Set());
-      setMoveDialog(false);
+      setAllEntriesSelected(false);
+      setExcludedEntryIds(new Set());
+      closeActionDialogs();
+      setNotice(
+        `${entryCount} file${entryCount === 1 ? "" : "s"} queued to move`,
+      );
     } catch (reason) {
       const message = friendlyError(
         reason,
         "Could not move the selected files",
       );
-      for (const transfer of transfers) {
-        failTransfer(transfer.transferId, message, () =>
-          retryMove(transfer.entryId, transfer.transferId),
-        );
-      }
       setActionError(message);
       throw reason;
     } finally {
@@ -693,7 +885,7 @@ export function GalleryPage(props: {
         discardTransfers(transferIds);
         transfers.clear();
         setSelectedFolderIds(new Set());
-        setMoveDialog(false);
+        closeActionDialogs();
         setNotice("The selected folders are already in that folder.");
         return;
       }
@@ -743,7 +935,7 @@ export function GalleryPage(props: {
         throw new Error(errors[0]);
       }
       setSelectedFolderIds(new Set());
-      setMoveDialog(false);
+      closeActionDialogs();
     } catch (reason) {
       const message = friendlyError(
         reason,
@@ -842,22 +1034,6 @@ export function GalleryPage(props: {
       });
   };
 
-  const retryEntryDelete = (entryId: Id<"entries">, transferId: number) => {
-    removeEntries({
-      anonymousClaim: anonymousClaim(),
-      galleryId: props.gallery._id,
-      entryIds: [entryId],
-    })
-      .then(() => completeTransfer(transferId))
-      .catch((reason: unknown) => {
-        failTransfer(
-          transferId,
-          friendlyError(reason, "Could not delete the file"),
-          () => retryEntryDelete(entryId, transferId),
-        );
-      });
-  };
-
   const startItemDrag = (
     event: ReactDragEvent<HTMLElement>,
     entryIds: Array<Id<"entries">>,
@@ -880,6 +1056,8 @@ export function GalleryPage(props: {
   const endItemDrag = () => {
     draggedEntryIds.current = [];
     draggedFolderIds.current = [];
+    draggedEntrySelection.current = null;
+    draggedEntryCount.current = 0;
     setDraggingItems(false);
     setDragOverFolderId(null);
   };
@@ -888,16 +1066,46 @@ export function GalleryPage(props: {
     event: ReactDragEvent<HTMLElement>,
     entryId: Id<"entries">,
   ) => {
-    const dragsSelection = selectMode && selectedEntryIds.has(entryId);
+    const dragsAllSelection =
+      selectMode &&
+      allEntriesSelected &&
+      !excludedEntryIds.has(entryId) &&
+      selectedAllEntryCount !== null;
+    const dragsSelection =
+      dragsAllSelection ||
+      (selectMode && !allEntriesSelected && selectedEntryIds.has(entryId));
+    const entrySelection: EntrySelection = dragsAllSelection
+      ? {
+          kind: "folder",
+          excludedEntryIds: [...excludedEntryIds],
+        }
+      : {
+          kind: "ids",
+          entryIds: dragsSelection ? selectedIds : [entryId],
+        };
+    draggedEntrySelection.current = entrySelection;
+    draggedEntryCount.current = dragsAllSelection
+      ? selectedAllEntryCount
+      : entrySelection.kind === "ids"
+        ? entrySelection.entryIds.length
+        : 0;
     if (selectMode && !dragsSelection) {
       window.setTimeout(() => {
         setSelectedEntryIds(new Set([entryId]));
         setSelectedFolderIds(new Set());
+        setAllEntriesSelected(false);
+        setExcludedEntryIds(new Set());
       }, 0);
     }
     startItemDrag(
       event,
-      dragsSelection ? selectedIds : [entryId],
+      // Keep one ID in DataTransfer for Chromium's internal-drag detection;
+      // refs retain the full folder-wide selection.
+      dragsAllSelection
+        ? [entryId]
+        : entrySelection.kind === "ids"
+          ? entrySelection.entryIds
+          : [entryId],
       dragsSelection ? selectedFolderIdList : [],
     );
   };
@@ -907,10 +1115,28 @@ export function GalleryPage(props: {
     dragFolderId: Id<"folders">,
   ) => {
     const dragsSelection = selectMode && selectedFolderIds.has(dragFolderId);
+    if (dragsSelection && allEntriesSelected && selectedAllEntryCount !== null) {
+      draggedEntrySelection.current = {
+        kind: "folder",
+        excludedEntryIds: [...excludedEntryIds],
+      };
+      draggedEntryCount.current = selectedAllEntryCount;
+    } else if (dragsSelection && selectedIds.length > 0) {
+      draggedEntrySelection.current = {
+        kind: "ids",
+        entryIds: selectedIds,
+      };
+      draggedEntryCount.current = selectedIds.length;
+    } else {
+      draggedEntrySelection.current = null;
+      draggedEntryCount.current = 0;
+    }
     if (selectMode && !dragsSelection) {
       window.setTimeout(() => {
         setSelectedEntryIds(new Set());
         setSelectedFolderIds(new Set([dragFolderId]));
+        setAllEntriesSelected(false);
+        setExcludedEntryIds(new Set());
       }, 0);
     }
     startItemDrag(
@@ -935,11 +1161,20 @@ export function GalleryPage(props: {
       event.dataTransfer.getData(FOLDER_DRAG_TYPE),
       draggedFolderIds.current,
     );
+    const entrySelection =
+      draggedEntrySelection.current ??
+      (entryIds.length > 0
+        ? ({ kind: "ids", entryIds } satisfies EntrySelection)
+        : null);
+    const entryCount =
+      draggedEntryCount.current ||
+      (entrySelection?.kind === "ids" ? entrySelection.entryIds.length : 0);
     endItemDrag();
     if (folderIds.includes(destinationFolderId)) return;
-    if (entryIds.length > 0) {
+    if (entrySelection !== null && entryCount > 0) {
       void queueMove(
-        entryIds,
+        entrySelection,
+        entryCount,
         destinationGalleryId,
         destinationFolderId,
       ).catch(() => undefined);
@@ -1057,8 +1292,9 @@ export function GalleryPage(props: {
                   setSelectMode((current) => !current);
                   setSelectedEntryIds(new Set());
                   setSelectedFolderIds(new Set());
-                  setDeleteDialog(false);
-                  setMoveDialog(false);
+                  setAllEntriesSelected(false);
+                  setExcludedEntryIds(new Set());
+                  closeActionDialogs();
                 }}
                 aria-label={selectMode ? "Exit select mode" : "Enter select mode"}
                 aria-pressed={selectMode}
@@ -1066,12 +1302,13 @@ export function GalleryPage(props: {
               >
                 <SelectListIcon />
               </button>
-              {selectMode && selectedCount > 0 ? (
+              {selectMode && hasSelection ? (
                 <>
                   <button
                     className={layout.iconButton}
                     type="button"
                     onClick={() => setDeleteDialog(true)}
+                    disabled={selectedCount === null}
                     aria-label={`Delete ${selectionSummary}`}
                     title="Delete selected"
                   >
@@ -1081,6 +1318,7 @@ export function GalleryPage(props: {
                     className={layout.iconButton}
                     type="button"
                     onClick={() => setMoveDialog(true)}
+                    disabled={selectedCount === null}
                     aria-label={`Move ${selectionSummary}`}
                     title="Move to…"
                   >
@@ -1119,8 +1357,10 @@ export function GalleryPage(props: {
       )}
       {selectMode ? (
         <p className={styles.selectionHint}>
-          {selectedCount === 0
-            ? "Select files or folders, then delete, move, or drag them onto a folder."
+          {selectedCount === null
+            ? selectionSummary
+            : selectedCount === 0
+            ? "Select files or folders (Ctrl/⌘+A selects all), then delete, move, or drag them onto a folder."
             : `${selectionSummary} selected`}
         </p>
       ) : null}
@@ -1180,16 +1420,29 @@ export function GalleryPage(props: {
             }
           />
         ))}
-        {listing.entries.map((entry) => (
+        {entries.map((entry) => (
           <GalleryEntryCard
             key={entry._id}
             entry={entry}
             selectMode={selectMode}
-            selected={selectedEntryIds.has(entry._id)}
+            selected={
+              allEntriesSelected
+                ? !excludedEntryIds.has(entry._id)
+                : selectedEntryIds.has(entry._id)
+            }
             draggable={canDragMove}
             onOpen={() => setViewerEntry(entry._id, false)}
             onMetadata={() => setMetadataEntryId(entry._id)}
             onToggle={() => {
+              if (allEntriesSelected) {
+                setExcludedEntryIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(entry._id)) next.delete(entry._id);
+                  else next.add(entry._id);
+                  return next;
+                });
+                return;
+              }
               setSelectedEntryIds((current) => {
                 const next = new Set(current);
                 if (next.has(entry._id)) next.delete(entry._id);
@@ -1202,7 +1455,56 @@ export function GalleryPage(props: {
           />
         ))}
       </div>
-      {listing.folders.length === 0 && listing.entries.length === 0 ? (
+      <div
+        className={styles.pagination}
+        ref={infiniteScroll ? pageSentinel : undefined}
+      >
+        {infiniteScroll ? (
+          entryPages.status === "LoadingMore" ? (
+            <span role="status">Loading {pageSize} more files…</span>
+          ) : entryPages.status === "Exhausted" && entries.length > 0 ? (
+            <span>{entries.length.toLocaleString()} files loaded</span>
+          ) : null
+        ) : pagedEntries === undefined ? (
+          <span role="status">Loading page…</span>
+        ) : entries.length > 0 ? (
+          <>
+            <button
+              type="button"
+              disabled={paginationHistory.length === 0}
+              onClick={() => {
+                const previous = paginationHistory.at(-1) ?? null;
+                setPaginationHistory((current) => current.slice(0, -1));
+                setPaginationCursor(previous);
+              }}
+            >
+              Previous
+            </button>
+            <span>
+              Page {(paginationHistory.length + 1).toLocaleString()} ·{" "}
+              {entries.length.toLocaleString()} files
+            </span>
+            <button
+              type="button"
+              disabled={pagedEntries.isDone}
+              onClick={() => {
+                setPaginationHistory((current) => [
+                  ...current,
+                  paginationCursor,
+                ]);
+                setPaginationCursor(pagedEntries.continueCursor);
+              }}
+            >
+              Next
+            </button>
+          </>
+        ) : null}
+      </div>
+      {listing.folders.length === 0 &&
+      entries.length === 0 &&
+      (infiniteScroll
+        ? entryPages.status === "Exhausted"
+        : pagedEntries?.isDone === true) ? (
         <p className={styles.empty}>This folder is empty.</p>
       ) : null}
       {viewerIndex >= 0 ? (
@@ -1215,6 +1517,23 @@ export function GalleryPage(props: {
           onTitleChange={
             listing.access.canEditFolder ? changeViewerTitle : undefined
           }
+          onMove={
+            canManage
+              ? (item) => {
+                  setViewerActionEntryId(item.id as Id<"entries">);
+                  setMoveDialog(true);
+                }
+              : undefined
+          }
+          onDelete={
+            canManage
+              ? (item) => {
+                  setViewerActionEntryId(item.id as Id<"entries">);
+                  setDeleteDialog(true);
+                }
+              : undefined
+          }
+          shortcutsSuspended={deleteDialog || moveDialog}
           resolveSource={resolveViewerSource}
           onClose={() => setViewerEntry(null, true)}
         />
@@ -1293,9 +1612,13 @@ export function GalleryPage(props: {
       ) : null}
       {deleteDialog ? (
         <Dialog
-          title="Delete selected items?"
+          title={
+            viewerActionEntry !== undefined
+              ? "Delete this file?"
+              : "Delete selected items?"
+          }
           onClose={() => {
-            if (!actionPending) setDeleteDialog(false);
+            if (!actionPending) closeActionDialogs();
           }}
         >
           <form
@@ -1306,7 +1629,7 @@ export function GalleryPage(props: {
               setActionError(null);
               const deleteSelection = async () => {
                 const errors: string[] = [];
-                if (selectedFolderIdList.length > 0) {
+                if (actionFolderIds.length > 0) {
                   const folderNames = new Map(
                     listing.folders.map((folder) => [
                       folder._id,
@@ -1314,7 +1637,7 @@ export function GalleryPage(props: {
                     ]),
                   );
                   const folderTransfers = new Map(
-                    selectedFolderIdList.map((deletedFolderId) => [
+                    actionFolderIds.map((deletedFolderId) => [
                       deletedFolderId,
                       beginTransfer(
                         folderNames.get(deletedFolderId) ?? "Folder",
@@ -1339,7 +1662,7 @@ export function GalleryPage(props: {
                     const result = await removeFolders({
                       anonymousClaim: anonymousClaim(),
                       galleryId: props.gallery._id,
-                      folderIds: selectedFolderIdList,
+                      folderIds: actionFolderIds,
                     });
                     if (result.kind === "filesystem") {
                       // From here the rmdirs are driven by this tab.
@@ -1397,63 +1720,50 @@ export function GalleryPage(props: {
                     errors.push(message);
                   }
                 }
-                if (selectedIds.length > 0) {
-                  const entryNames = new Map(
-                    listing.entries.map((entry) => [entry._id, entry.name]),
-                  );
-                  const entryTransfers = selectedIds.map((entryId) => ({
-                    entryId,
-                    transferId: beginTransfer(
-                      entryNames.get(entryId) ?? "File",
-                      "delete",
-                      null,
-                    ),
-                  }));
-                  for (const transfer of entryTransfers) {
-                    transferResolutions.current.set(transfer.transferId, {
-                      folderId,
-                      condition: {
-                        kind: "entryGone",
-                        entryId: transfer.entryId,
-                      },
-                    });
-                  }
+                if (
+                  actionEntrySelection !== null &&
+                  actionEntryCount !== null &&
+                  actionEntryCount > 0
+                ) {
                   try {
-                    await removeEntries({
+                    await startBulkDelete({
                       anonymousClaim: anonymousClaim(),
                       galleryId: props.gallery._id,
-                      entryIds: selectedIds,
+                      folderId,
+                      selection: actionEntrySelection,
                     });
-                    for (const transfer of entryTransfers) {
-                      completeTransfer(transfer.transferId);
+                    if (actionEntrySelection.kind === "ids") {
+                      stepViewerPast(actionEntrySelection.entryIds);
                     }
+                    setNotice(
+                      `${actionEntryCount} file${actionEntryCount === 1 ? "" : "s"} queued to delete`,
+                    );
                   } catch (reason) {
                     const message = friendlyError(
                       reason,
                       "Could not delete the selected files",
                     );
-                    for (const transfer of entryTransfers) {
-                      failTransfer(transfer.transferId, message, () =>
-                        retryEntryDelete(transfer.entryId, transfer.transferId),
-                      );
-                    }
                     errors.push(message);
                   }
                 }
                 if (errors.length > 0) {
                   setActionError(errors[0]);
                 } else {
-                  setSelectedEntryIds(new Set());
-                  setSelectedFolderIds(new Set());
-                  setDeleteDialog(false);
+                  if (viewerActionEntry === undefined) {
+                    setSelectedEntryIds(new Set());
+                    setSelectedFolderIds(new Set());
+                    setAllEntriesSelected(false);
+                    setExcludedEntryIds(new Set());
+                  }
+                  closeActionDialogs();
                 }
               };
               void deleteSelection().finally(() => setActionPending(false));
             }}
           >
             <p className={styles.deletePrompt}>
-              Delete {selectionSummary}?{" "}
-              {selectedFolderIdList.length > 0
+              Delete {actionSummary}?{" "}
+              {actionFolderIds.length > 0
                 ? "Folders are deleted along with everything inside them. "
                 : ""}
               This cannot be undone.
@@ -1461,7 +1771,7 @@ export function GalleryPage(props: {
             <div className={layout.buttonRow}>
               <button
                 type="button"
-                onClick={() => setDeleteDialog(false)}
+                onClick={closeActionDialogs}
                 disabled={actionPending}
               >
                 Cancel
@@ -1480,26 +1790,28 @@ export function GalleryPage(props: {
       {moveDialog ? (
         <MoveDialog
           currentGalleryId={props.gallery._id}
-          selectedEntryCount={selectedIds.length}
-          selectedFolderIds={selectedFolderIdList}
-          selectionSummary={selectionSummary}
+          selectedEntryCount={actionEntryCount ?? 0}
+          selectedFolderIds={actionFolderIds}
+          selectionSummary={actionSummary}
           pending={actionPending}
           onClose={() => {
-            if (!actionPending) setMoveDialog(false);
+            if (!actionPending) closeActionDialogs();
           }}
           onMove={async (destinationGalleryId, destinationFolderId) => {
-            if (selectedIds.length > 0) {
+            if (
+              actionEntrySelection !== null &&
+              actionEntryCount !== null &&
+              actionEntryCount > 0
+            ) {
               await queueMove(
-                selectedIds,
+                actionEntrySelection,
+                actionEntryCount,
                 destinationGalleryId,
                 destinationFolderId,
               );
             }
-            if (selectedFolderIdList.length > 0) {
-              await queueFolderMove(
-                selectedFolderIdList,
-                destinationFolderId,
-              );
+            if (actionFolderIds.length > 0) {
+              await queueFolderMove(actionFolderIds, destinationFolderId);
             }
           }}
         />

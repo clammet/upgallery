@@ -10,6 +10,7 @@ import {
   storageJobRetryDelay,
 } from "./lib/storageJobs";
 import { mediaKind } from "./lib/validators";
+import { settleBulkMoveItem } from "./lib/bulkOperations";
 
 export const claimUpload = internalMutation({
   args: {
@@ -485,13 +486,14 @@ export const claimMaintenance = internalMutation({
         destinationFolder.galleryId !== destinationGallery._id ||
         destinationFolder.filesystemMissingAt !== undefined
       ) {
+        const moveError =
+          attempts > STORAGE_JOB_MAX_ATTEMPTS
+            ? moveJob.error ?? "Move exhausted its retries"
+            : "Move source or destination is no longer available";
         await ctx.db.patch("entryMoveJobs", moveJob._id, {
           status: "failed",
           leaseExpiresAt: undefined,
-          error:
-            attempts > STORAGE_JOB_MAX_ATTEMPTS
-              ? moveJob.error ?? "Move exhausted its retries"
-              : "Move source or destination is no longer available",
+          error: moveError,
         });
         if (
           entry !== null &&
@@ -505,12 +507,13 @@ export const claimMaintenance = internalMutation({
             migrationClaimedAt: undefined,
             migrationAttempts: undefined,
             migrationRetryAt: undefined,
-            migrationError:
-              attempts > STORAGE_JOB_MAX_ATTEMPTS
-                ? moveJob.error ?? "Move exhausted its retries"
-                : "Move source or destination is no longer available",
+            migrationError: moveError,
           });
         }
+        await settleBulkMoveItem(ctx, moveJob.bulkOperationId, {
+          success: false,
+          error: moveError,
+        });
         return { kind: "none" as const };
       }
       await ctx.db.patch("entryMoveJobs", moveJob._id, {
@@ -873,6 +876,10 @@ export const completeEntryMove = internalMutation({
             migrationError: error,
           });
         }
+        await settleBulkMoveItem(ctx, job.bulkOperationId, {
+          success: false,
+          error,
+        });
       } else {
         await ctx.db.patch("entryMoveJobs", job._id, {
           status: "queued",
@@ -902,11 +909,12 @@ export const completeEntryMove = internalMutation({
       entry.migrationState !== "moving" ||
       entry.moveJobId !== job._id
     ) {
+      const changedError = "Move source changed before completion";
       await ctx.db.patch("entryMoveJobs", job._id, {
         status: "failed",
         claimedAt: undefined,
         leaseExpiresAt: undefined,
-        error: "Move source changed before completion",
+        error: changedError,
       });
       if (entry !== null && entry.moveJobId === job._id) {
         await ctx.db.patch("entries", entry._id, {
@@ -915,9 +923,13 @@ export const completeEntryMove = internalMutation({
           migrationClaimedAt: undefined,
           migrationAttempts: undefined,
           migrationRetryAt: undefined,
-          migrationError: "Move source changed before completion",
+          migrationError: changedError,
         });
       }
+      await settleBulkMoveItem(ctx, job.bulkOperationId, {
+        success: false,
+        error: changedError,
+      });
       return null;
     }
     const [sourceGallery, destinationGallery, destinationFolder] =
@@ -1001,6 +1013,7 @@ export const completeEntryMove = internalMutation({
       detail: `${entry.name} from ${sourceGallery.name} to ${destinationFolder.name}`,
       createdAt: now,
     });
+    await settleBulkMoveItem(ctx, job.bulkOperationId, { success: true });
     await ctx.db.delete("entryMoveJobs", job._id);
     return null;
   },

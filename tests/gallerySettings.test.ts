@@ -18,6 +18,8 @@ function snapshot(): SettingsSnapshot {
     uploaderAccess: "sso",
     folderPreviewMode: "first",
     quickMove: false,
+    infiniteScroll: true,
+    paginationPageSize: 100,
     hosts: "photos.example.com|/",
     themeJson: initialThemeJson({}),
   };
@@ -63,6 +65,19 @@ describe("gallery settings dirty-field detection", () => {
     expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
       name: "Renamed",
       quickMove: true,
+    });
+  });
+
+  test("gallery paging preferences are sent only when changed", () => {
+    const initial = snapshot();
+    const current = {
+      ...initial,
+      infiniteScroll: false,
+      paginationPageSize: 250,
+    };
+    expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
+      infiniteScroll: false,
+      paginationPageSize: 250,
     });
   });
 

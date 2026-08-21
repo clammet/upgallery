@@ -42,6 +42,23 @@ const galleryAvailability = v.object({
 
 const MIN_THUMBNAIL_FRAME_SIZE = 96;
 const MAX_THUMBNAIL_FRAME_SIZE = 512;
+const DEFAULT_GALLERY_PAGE_SIZE = 100;
+const MIN_GALLERY_PAGE_SIZE = 50;
+const MAX_GALLERY_PAGE_SIZE = 250;
+const GALLERY_PAGE_SIZE_STEP = 50;
+
+function validatePaginationPageSize(pageSize: number) {
+  if (
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < MIN_GALLERY_PAGE_SIZE ||
+    pageSize > MAX_GALLERY_PAGE_SIZE ||
+    pageSize % GALLERY_PAGE_SIZE_STEP !== 0
+  ) {
+    throw new Error(
+      `Gallery page size must be ${MIN_GALLERY_PAGE_SIZE}-${MAX_GALLERY_PAGE_SIZE} in steps of ${GALLERY_PAGE_SIZE_STEP}`,
+    );
+  }
+}
 
 function validateThumbnailFrameSize(theme: {
   thumbnailFrameSize?: number;
@@ -179,6 +196,8 @@ export const create = mutation({
       uploaderAccess:
         args.uploaderAccess ?? (args.kind === "uploader" ? "anonymous" : "sso"),
       folderPreviewMode: args.folderPreviewMode ?? "first",
+      infiniteScroll: true,
+      paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
       theme: args.theme ?? {},
       itemCount: 0,
       totalBytes: 0,
@@ -474,6 +493,8 @@ export const update = mutation({
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
     editorBulkActions: v.optional(v.boolean()),
+    infiniteScroll: v.optional(v.boolean()),
+    paginationPageSize: v.optional(v.number()),
     anonymousEdit: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
@@ -489,6 +510,9 @@ export const update = mutation({
     const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
     if (args.theme !== undefined) {
       validateThumbnailFrameSize(args.theme);
+    }
+    if (args.paginationPageSize !== undefined) {
+      validatePaginationPageSize(args.paginationPageSize);
     }
     if (
       args.maxFileSize !== undefined &&
@@ -575,6 +599,12 @@ export const update = mutation({
       ...(args.editorBulkActions === undefined
         ? {}
         : { editorBulkActions: args.editorBulkActions ? true : undefined }),
+      ...(args.infiniteScroll === undefined
+        ? {}
+        : { infiniteScroll: args.infiniteScroll }),
+      ...(args.paginationPageSize === undefined
+        ? {}
+        : { paginationPageSize: args.paginationPageSize }),
       ...(args.anonymousEdit === undefined
         ? {}
         : { anonymousEdit: args.anonymousEdit ? true : undefined }),

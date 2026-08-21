@@ -27,14 +27,12 @@
   border-bottom: 1px solid rgb(255 255 255 / 12%);
   display: grid;
   gap: 0.4rem;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-auto-columns: max-content;
+  grid-auto-flow: column;
+  grid-template-columns: minmax(0, 1fr);
   height: 46px;
   padding: 0.4rem;
   position: relative;
-}
-
-.titlebarWithMarkdownToggle {
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
 }
 
 .titleGroup {
@@ -414,11 +412,7 @@
   }
 
   .titlebar {
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
-  }
-
-  .titlebarWithMarkdownToggle {
-    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    gap: 0.2rem;
   }
 
   .navigation {

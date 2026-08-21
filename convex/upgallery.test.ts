@@ -214,6 +214,10 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
+    expect(gallery).toMatchObject({
+      infiniteScroll: true,
+      paginationPageSize: 100,
+    });
     expect(gallery?.maxFileSize).toBe(32 * 1024 * 1024);
     expect(gallery?.maxFileSizeLimit).toBe(32 * 1024 * 1024);
 
@@ -255,6 +259,31 @@ describe("upgallery backend", () => {
     );
     expect(quickMoveOff?.quickMove).toBeUndefined();
     expect(quickMoveOff?.maxFileSize).toBe(32 * 1024 * 1024);
+
+    await ownerAuthed.mutation(api.galleries.update, {
+      galleryId,
+      infiniteScroll: false,
+      paginationPageSize: 250,
+    });
+    await expect(
+      ownerAuthed.mutation(api.galleries.update, {
+        galleryId,
+        paginationPageSize: 125,
+      }),
+    ).rejects.toThrow(/steps of 50/);
+    await expect(
+      ownerAuthed.mutation(api.galleries.update, {
+        galleryId,
+        paginationPageSize: 300,
+      }),
+    ).rejects.toThrow(/50-250/);
+    const paginationSettings = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    expect(paginationSettings).toMatchObject({
+      infiniteScroll: false,
+      paginationPageSize: 250,
+    });
   });
 
   test("only system admins can grant anonymous editor access", async () => {
@@ -2613,6 +2642,118 @@ describe("upgallery backend", () => {
     expect(deleted.jobs).toHaveLength(1);
   });
 
+  test("gallery pagination and durable select-all deletion cross the old 128 item limit", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const owner = await seedProfile(t, {
+        email: "owner@example.com",
+        admin: true,
+      });
+      const ownerClient = asUser(
+        t,
+        owner.googleSubject,
+        "owner@example.com",
+      );
+      const galleryId = await ownerClient.mutation(api.galleries.create, {
+        name: "Large gallery",
+        slug: "large-gallery",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "large-gallery",
+        hosts: [{ host: "large.example.com", rootPath: "/" }],
+      });
+      const rootFolderId = await t.run(async (ctx) => {
+        const gallery = await ctx.db.get("galleries", galleryId);
+        const folderId = gallery!.rootFolderId!;
+        for (let index = 0; index < 175; index += 1) {
+          const sha256 = index.toString(16).padStart(64, "0");
+          await ctx.db.insert("entries", {
+            galleryId,
+            folderId,
+            ownerProfileId: owner.profileId,
+            name: `photo-${index}.jpg`,
+            mimeType: "image/jpeg",
+            extension: "jpg",
+            mediaKind: "image",
+            size: 10,
+            sha256,
+            storageKind: "shared",
+            storageKey: `public/shared/large-gallery/${sha256}.jpg`,
+            state: "ready",
+            createdAt: index + 1,
+            updatedAt: index + 1,
+          });
+        }
+        await ctx.db.patch("galleries", galleryId, {
+          itemCount: 175,
+          totalBytes: 1_750,
+        });
+        return folderId;
+      });
+
+      const firstPage = await ownerClient.query(api.entries.listGalleryPage, {
+        galleryId,
+        folderId: rootFolderId,
+        paginationOpts: { numItems: 100, cursor: null },
+      });
+      expect(firstPage.page).toHaveLength(100);
+      expect(firstPage.isDone).toBe(false);
+      const secondPage = await ownerClient.query(api.entries.listGalleryPage, {
+        galleryId,
+        folderId: rootFolderId,
+        paginationOpts: {
+          numItems: 100,
+          cursor: firstPage.continueCursor,
+        },
+      });
+      expect(secondPage.page).toHaveLength(75);
+      expect(secondPage.isDone).toBe(true);
+
+      const excludedEntryId = firstPage.page[0]._id;
+      const operationId = await ownerClient.mutation(
+        api.bulkOperations.startDelete,
+        {
+          galleryId,
+          folderId: rootFolderId,
+          selection: {
+            kind: "folder",
+            excludedEntryIds: [excludedEntryId],
+          },
+        },
+      );
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const result = await t.run(async (ctx) => ({
+        operation: await ctx.db.get("bulkOperations", operationId),
+        excluded: await ctx.db.get("entries", excludedEntryId),
+        ready: await ctx.db
+          .query("entries")
+          .withIndex("by_folderId_and_state", (q) =>
+            q.eq("folderId", rootFolderId).eq("state", "ready"),
+          )
+          .collect(),
+        deleteJobs: await ctx.db.query("storageDeleteJobs").collect(),
+        gallery: await ctx.db.get("galleries", galleryId),
+      }));
+      expect(result.operation).toMatchObject({
+        status: "complete",
+        discoveryComplete: true,
+        totalItems: 174,
+        completedItems: 174,
+        failedItems: 0,
+      });
+      expect(result.excluded?.state).toBe("ready");
+      expect(result.ready.map((entry) => entry._id)).toEqual([
+        excludedEntryId,
+      ]);
+      expect(result.deleteJobs).toHaveLength(174);
+      expect(result.gallery).toMatchObject({ itemCount: 1, totalBytes: 10 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("gallery owners can queue bulk moves and complete them across galleries", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
@@ -2677,13 +2818,22 @@ describe("upgallery backend", () => {
           expect.objectContaining({ _id: destinationGalleryId }),
         ]),
       );
-    const move = await authed.mutation(api.entries.moveMany, {
+    const operationId = await authed.mutation(api.bulkOperations.startMove, {
       sourceGalleryId,
+      sourceFolderId: sourceGallery!.rootFolderId!,
       destinationGalleryId,
       destinationFolderId: destinationFolder.folderId,
-      entryIds: [entryId],
+      selection: { kind: "ids", entryIds: [entryId] },
     });
-    expect(move).toEqual({ queued: 1 });
+    await t.mutation(internal.bulkOperations.process, { operationId });
+    await expect(
+      t.run(async (ctx) => ctx.db.get("bulkOperations", operationId)),
+    ).resolves.toMatchObject({
+      status: "processing",
+      discoveryComplete: true,
+      totalItems: 1,
+      completedItems: 0,
+    });
     const sourceListing = await authed.query(api.folders.list, {
       galleryId: sourceGalleryId,
       folderId: sourceGallery!.rootFolderId!,
@@ -2706,6 +2856,7 @@ describe("upgallery backend", () => {
       entry: await ctx.db.get("entries", entryId),
       source: await ctx.db.get("galleries", sourceGalleryId),
       destination: await ctx.db.get("galleries", destinationGalleryId),
+      operation: await ctx.db.get("bulkOperations", operationId),
       deleteJobs: await ctx.db
         .query("storageDeleteJobs")
         .withIndex("by_entryId", (q) => q.eq("entryId", entryId))
@@ -2722,6 +2873,12 @@ describe("upgallery backend", () => {
     expect(completed.destination).toMatchObject({
       itemCount: 1,
       totalBytes: 45,
+    });
+    expect(completed.operation).toMatchObject({
+      status: "complete",
+      totalItems: 1,
+      completedItems: 1,
+      failedItems: 0,
     });
     expect(completed.deleteJobs).toMatchObject([
       {
