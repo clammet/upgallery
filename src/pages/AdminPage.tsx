@@ -332,6 +332,45 @@ function publicGalleryUrl(
   return `${window.location.protocol}//${host}${route.rootPath}`;
 }
 
+function DangerToggle(props: {
+  title: string;
+  description: string;
+  enabled: boolean;
+  onChange: (enabled: boolean) => Promise<unknown>;
+  onMessage: (message: string) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <div className={styles.dangerSetting}>
+      <span>
+        <strong>{props.title}</strong>
+        <small>{props.description}</small>
+      </span>
+      <button
+        className={styles.danger}
+        type="button"
+        aria-pressed={props.enabled}
+        disabled={pending}
+        onClick={() => {
+          const enabled = !props.enabled;
+          setPending(true);
+          void props
+            .onChange(enabled)
+            .then(() =>
+              props.onMessage(
+                `${props.title} ${enabled ? "enabled" : "disabled"}`,
+              ),
+            )
+            .catch(showError(props.onMessage))
+            .finally(() => setPending(false));
+        }}
+      >
+        {pending ? "Updating…" : props.enabled ? "Disable" : "Enable"}
+      </button>
+    </div>
+  );
+}
+
 function GalleryAdmin(props: {
   galleryId: Id<"galleries">;
   isSystemAdmin: boolean;
@@ -345,7 +384,6 @@ function GalleryAdmin(props: {
   const revokeRole = useMutation(api.roles.revoke);
   const requestMigration = useMutation(api.migrations.request);
   const [message, setMessage] = useState<string | null>(null);
-  const [anonymousEditPending, setAnonymousEditPending] = useState(false);
 
   if (details === undefined) return <p>Loading gallery…</p>;
   if (details === null) return <p>Gallery no longer exists.</p>;
@@ -460,42 +498,25 @@ function GalleryAdmin(props: {
 
       <Section title="Danger zone">
         {props.isSystemAdmin ? (
-          <div className={styles.dangerSetting}>
-            <span>
-              <strong>Anonymous edit access</strong>
-              <small>
-                Admin only: grants editor access to every anonymous visitor
-              </small>
-            </span>
-            <button
-              className={styles.danger}
-              type="button"
-              aria-pressed={gallery.anonymousEdit === true}
-              disabled={anonymousEditPending}
-              onClick={() => {
-                const enabled = gallery.anonymousEdit !== true;
-                setAnonymousEditPending(true);
-                void updateGallery({
-                  galleryId: gallery._id,
-                  anonymousEdit: enabled,
-                })
-                  .then(() =>
-                    setMessage(
-                      `Anonymous edit access ${enabled ? "enabled" : "disabled"}`,
-                    ),
-                  )
-                  .catch(showError(setMessage))
-                  .finally(() => setAnonymousEditPending(false));
-              }}
-            >
-              {anonymousEditPending
-                ? "Updating…"
-                : gallery.anonymousEdit === true
-                  ? "Disable"
-                  : "Enable"}
-            </button>
-          </div>
+          <DangerToggle
+            title="Anonymous edit access"
+            description="Admin only: every anonymous visitor becomes an editor of this gallery"
+            enabled={gallery.anonymousEdit === true}
+            onChange={(enabled) =>
+              updateGallery({ galleryId: gallery._id, anonymousEdit: enabled })
+            }
+            onMessage={setMessage}
+          />
         ) : null}
+        <DangerToggle
+          title="Editor bulk actions"
+          description="Editors (and anonymous visitors, when enabled) can select, move, and delete files and folders"
+          enabled={gallery.editorBulkActions === true}
+          onChange={(enabled) =>
+            updateGallery({ galleryId: gallery._id, editorBulkActions: enabled })
+          }
+          onMessage={setMessage}
+        />
         <button
           className={styles.danger}
           type="button"

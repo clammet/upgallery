@@ -14,10 +14,12 @@ import {
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
 import {
+  canManageGallery,
   canViewFolder,
   getCurrentProfile,
   getEffectiveRole,
   isOwningProfile,
+  requireGalleryManager,
   requireGalleryRole,
   roleAtLeast,
   shouldListFolder,
@@ -259,7 +261,7 @@ export const list = query({
         role,
         canUpload,
         canEditFolder: roleAtLeast(role, "editor"),
-        canManage: roleAtLeast(role, "owner"),
+        canManage: canManageGallery(gallery, role),
         canAdminGallery: roleAtLeast(galleryRole, "owner"),
       },
     };
@@ -364,6 +366,7 @@ export const create = mutation({
 
 export const removeMany = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     folderIds: v.array(v.id("folders")),
   },
@@ -389,7 +392,12 @@ export const removeMany = mutation({
       gallery.rootFolderId === undefined
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
-    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    const actor = await requireGalleryManager(
+      ctx,
+      gallery,
+      rootFolder,
+      args.anonymousClaim,
+    );
     const folders = [];
     for (const folderId of folderIds) {
       const folder = await ctx.db.get("folders", folderId);
@@ -455,6 +463,7 @@ export const removeMany = mutation({
 
 export const moveMany = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     destinationFolderId: v.id("folders"),
     folderIds: v.array(v.id("folders")),
@@ -491,7 +500,12 @@ export const moveMany = mutation({
       gallery.rootFolderId === undefined
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
-    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    const actor = await requireGalleryManager(
+      ctx,
+      gallery,
+      rootFolder,
+      args.anonymousClaim,
+    );
 
     const selectedIds = new Set(folderIds);
     const folders = [];
@@ -705,7 +719,10 @@ export const reparentSubtree = internalMutation({
 });
 
 export const listOwnedMoveDestinations = query({
-  args: { galleryId: v.id("galleries") },
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+  },
   handler: async (ctx, args) => {
     const gallery = await ctx.db.get("galleries", args.galleryId);
     if (
@@ -720,7 +737,12 @@ export const listOwnedMoveDestinations = query({
       gallery.rootFolderId === undefined
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
-    await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    await requireGalleryManager(
+      ctx,
+      gallery,
+      rootFolder,
+      args.anonymousClaim,
+    );
     const folders = await ctx.db
       .query("folders")
       .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))

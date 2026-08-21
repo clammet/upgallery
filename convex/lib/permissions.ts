@@ -112,6 +112,19 @@ export async function shouldListFolder(
   return roleAtLeast(role, "viewer");
 }
 
+// Select mode, bulk move, and bulk delete are owner tools. The gallery-level
+// editorBulkActions switch extends them to editors, including anonymous
+// visitors admitted by anonymousEdit; gallery administration stays with owners.
+export function canManageGallery(
+  gallery: Doc<"galleries">,
+  role: Role | null,
+): boolean {
+  return (
+    roleAtLeast(role, "owner") ||
+    (gallery.editorBulkActions === true && roleAtLeast(role, "editor"))
+  );
+}
+
 export function isOwningProfile(
   ownerProfileId: Id<"profiles">,
   currentProfileId: Id<"profiles">,
@@ -129,6 +142,20 @@ export async function requireGalleryRole(
   const profile = await requireCurrentProfile(ctx, anonymousClaim);
   const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
   if (!roleAtLeast(role, minimum)) {
+    throw new Error("Unauthorized");
+  }
+  return profile;
+}
+
+export async function requireGalleryManager(
+  ctx: ReadCtx,
+  gallery: Doc<"galleries">,
+  folder: Doc<"folders"> | null,
+  anonymousClaim?: string,
+): Promise<Doc<"profiles">> {
+  const profile = await requireCurrentProfile(ctx, anonymousClaim);
+  const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
+  if (!canManageGallery(gallery, role)) {
     throw new Error("Unauthorized");
   }
   return profile;

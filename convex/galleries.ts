@@ -18,6 +18,7 @@ import {
   normalizeStorageRoot,
 } from "./lib/normalize";
 import {
+  canManageGallery,
   getCurrentProfile,
   getEffectiveRole,
   requireGalleryRole,
@@ -108,7 +109,7 @@ async function galleryResult(
       role,
       canView: rootFolder?.privacy !== "private" || roleAtLeast(role, "viewer"),
       canUpload: roleAtLeast(role, "editor"),
-      canManage: roleAtLeast(role, "owner"),
+      canManage: canManageGallery(gallery, role),
     },
   };
 }
@@ -350,9 +351,15 @@ export const listManaged = query({
 });
 
 export const listOwnedImageGalleries = query({
-  args: {},
-  handler: async (ctx) => {
-    const profile = await getCurrentProfile(ctx);
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    // The gallery being browsed. It is offered as a destination whenever the
+    // caller can bulk-move there without owning it (editors, anonymous
+    // visitors), since grants alone would miss it.
+    galleryId: v.optional(v.id("galleries")),
+  },
+  handler: async (ctx, args) => {
+    const profile = await getCurrentProfile(ctx, args.anonymousClaim);
     if (profile === null) {
       return [];
     }
@@ -379,6 +386,22 @@ export const listOwnedImageGalleries = query({
         const gallery = await ctx.db.get("galleries", galleryId);
         if (gallery !== null) {
           galleries.push(gallery);
+        }
+      }
+      if (
+        args.galleryId !== undefined &&
+        !galleryIds.includes(args.galleryId)
+      ) {
+        const current = await ctx.db.get("galleries", args.galleryId);
+        if (current !== null) {
+          const root =
+            current.rootFolderId === undefined
+              ? null
+              : await ctx.db.get("folders", current.rootFolderId);
+          const role = await getEffectiveRole(ctx, current._id, root, profile);
+          if (canManageGallery(current, role)) {
+            galleries.push(current);
+          }
         }
       }
     }
@@ -450,6 +473,7 @@ export const update = mutation({
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
+    editorBulkActions: v.optional(v.boolean()),
     anonymousEdit: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
@@ -548,6 +572,9 @@ export const update = mutation({
       ...(args.quickMove === undefined
         ? {}
         : { quickMove: args.quickMove ? true : undefined }),
+      ...(args.editorBulkActions === undefined
+        ? {}
+        : { editorBulkActions: args.editorBulkActions ? true : undefined }),
       ...(args.anonymousEdit === undefined
         ? {}
         : { anonymousEdit: args.anonymousEdit ? true : undefined }),

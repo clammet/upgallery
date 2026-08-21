@@ -6,6 +6,7 @@ import {
   getEffectiveRole,
   isOwningProfile,
   requireCurrentProfile,
+  requireGalleryManager,
   requireGalleryRole,
   roleAtLeast,
 } from "./lib/permissions";
@@ -877,6 +878,7 @@ export const remove = mutation({
 
 export const removeMany = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     entryIds: v.array(v.id("entries")),
   },
@@ -899,11 +901,11 @@ export const removeMany = mutation({
       gallery.rootFolderId === undefined
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
-    const actor = await requireGalleryRole(
+    const actor = await requireGalleryManager(
       ctx,
       gallery,
       rootFolder,
-      "owner",
+      args.anonymousClaim,
     );
     const entries = [];
     for (const entryId of entryIds) {
@@ -957,6 +959,7 @@ export const removeMany = mutation({
 
 export const moveMany = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     sourceGalleryId: v.id("galleries"),
     destinationGalleryId: v.id("galleries"),
     destinationFolderId: v.id("folders"),
@@ -1002,17 +1005,17 @@ export const moveMany = mutation({
         ? null
         : ctx.db.get("folders", destinationGallery.rootFolderId),
     ]);
-    const sourceActor = await requireGalleryRole(
+    const sourceActor = await requireGalleryManager(
       ctx,
       sourceGallery,
       sourceRoot,
-      "owner",
+      args.anonymousClaim,
     );
-    const destinationActor = await requireGalleryRole(
+    const destinationActor = await requireGalleryManager(
       ctx,
       destinationGallery,
       destinationRoot,
-      "owner",
+      args.anonymousClaim,
     );
     if (sourceActor._id !== destinationActor._id) {
       throw new Error("Gallery ownership could not be verified");

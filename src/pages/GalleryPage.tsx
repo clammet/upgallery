@@ -599,6 +599,7 @@ export function GalleryPage(props: {
     }
     const retryMove = (entryId: Id<"entries">, transferId: number) => {
       moveEntries({
+        anonymousClaim: anonymousClaim(),
         sourceGalleryId: props.gallery._id,
         destinationGalleryId,
         destinationFolderId,
@@ -615,6 +616,7 @@ export function GalleryPage(props: {
     };
     try {
       const result = await moveEntries({
+        anonymousClaim: anonymousClaim(),
         sourceGalleryId: props.gallery._id,
         destinationGalleryId,
         destinationFolderId,
@@ -678,6 +680,7 @@ export function GalleryPage(props: {
     }
     try {
       const result = await moveFolders({
+        anonymousClaim: anonymousClaim(),
         galleryId: props.gallery._id,
         destinationFolderId,
         folderIds,
@@ -764,6 +767,7 @@ export function GalleryPage(props: {
     transferId: number,
   ) => {
     moveFolders({
+      anonymousClaim: anonymousClaim(),
       galleryId: props.gallery._id,
       destinationFolderId,
       folderIds: [movedFolderId],
@@ -812,6 +816,7 @@ export function GalleryPage(props: {
     transferId: number,
   ) => {
     removeFolders({
+      anonymousClaim: anonymousClaim(),
       galleryId: props.gallery._id,
       folderIds: [deletedFolderId],
     })
@@ -838,7 +843,11 @@ export function GalleryPage(props: {
   };
 
   const retryEntryDelete = (entryId: Id<"entries">, transferId: number) => {
-    removeEntries({ galleryId: props.gallery._id, entryIds: [entryId] })
+    removeEntries({
+      anonymousClaim: anonymousClaim(),
+      galleryId: props.gallery._id,
+      entryIds: [entryId],
+    })
       .then(() => completeTransfer(transferId))
       .catch((reason: unknown) => {
         failTransfer(
@@ -1328,6 +1337,7 @@ export function GalleryPage(props: {
                   }
                   try {
                     const result = await removeFolders({
+                      anonymousClaim: anonymousClaim(),
                       galleryId: props.gallery._id,
                       folderIds: selectedFolderIdList,
                     });
@@ -1410,6 +1420,7 @@ export function GalleryPage(props: {
                   }
                   try {
                     await removeEntries({
+                      anonymousClaim: anonymousClaim(),
                       galleryId: props.gallery._id,
                       entryIds: selectedIds,
                     });
@@ -1881,7 +1892,10 @@ function MoveDialog(props: {
   // Folders can only move within their own gallery, so a selection that
   // includes folders pins the gallery column to the current gallery.
   const movingFolders = props.selectedFolderIds.length > 0;
-  const ownedGalleries = useQuery(api.galleries.listOwnedImageGalleries);
+  const ownedGalleries = useQuery(api.galleries.listOwnedImageGalleries, {
+    anonymousClaim: anonymousClaim(),
+    galleryId: props.currentGalleryId,
+  });
   const galleries = useMemo(
     () =>
       movingFolders
@@ -1896,7 +1910,9 @@ function MoveDialog(props: {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const folders = useQuery(
     api.folders.listOwnedMoveDestinations,
-    galleryId === null ? "skip" : { galleryId },
+    galleryId === null
+      ? "skip"
+      : { anonymousClaim: anonymousClaim(), galleryId },
   );
 
   useEffect(() => {

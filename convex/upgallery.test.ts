@@ -358,9 +358,128 @@ describe("upgallery backend", () => {
       }),
     ).resolves.toMatchObject({ kind: "complete" });
 
+    // Bulk actions stay owner-only until the gallery's editor bulk toggle is
+    // on; the two switches together give anonymous visitors the full set.
+    await expect(
+      t.mutation(api.folders.moveMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        destinationFolderId: rootFolderId,
+        folderIds: [created.folderId],
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+    await expect(
+      t.query(api.galleries.listOwnedImageGalleries, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+      }),
+    ).resolves.toEqual([]);
+    await ownerClient.mutation(api.galleries.update, {
+      galleryId,
+      editorBulkActions: true,
+    });
+    const bulkListing = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(bulkListing.access).toMatchObject({
+      role: "editor",
+      canManage: true,
+      canAdminGallery: false,
+    });
+    await expect(
+      t.query(api.galleries.listOwnedImageGalleries, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ _id: galleryId, rootFolderId }),
+    ]);
+    await expect(
+      t.query(api.folders.listOwnedMoveDestinations, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ _id: created.folderId }),
+      ]),
+    );
+    const nested = await t.mutation(api.folders.create, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      parentId: rootFolderId,
+      name: "Visitor nested",
+      privacy: "public",
+    });
+    if (nested.kind !== "complete") {
+      throw new Error("Expected a shared-storage folder");
+    }
+    await expect(
+      t.mutation(api.folders.moveMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        destinationFolderId: created.folderId,
+        folderIds: [nested.folderId],
+      }),
+    ).resolves.toMatchObject({ kind: "complete" });
+    const [movedEntryId, deletedEntryId] = await t.run(async (ctx) => {
+      const insert = (name: string, sha: string) =>
+        ctx.db.insert("entries", {
+          galleryId,
+          folderId: rootFolderId,
+          ownerProfileId: anonymous.profileId,
+          name,
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image",
+          size: 12,
+          sha256: sha.repeat(64),
+          storageKind: "shared",
+          storageKey: `public/shared/community-gallery/${sha}${sha}/${name}`,
+          state: "ready",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      return [await insert("moved.jpg", "d"), await insert("deleted.jpg", "e")];
+    });
+    await expect(
+      t.mutation(api.entries.moveMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        sourceGalleryId: galleryId,
+        destinationGalleryId: galleryId,
+        destinationFolderId: created.folderId,
+        entryIds: [movedEntryId],
+      }),
+    ).resolves.toEqual({ queued: 1 });
+    await expect(
+      t.mutation(api.entries.removeMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        entryIds: [deletedEntryId],
+      }),
+    ).resolves.toEqual({ removed: 1 });
+    await expect(
+      t.mutation(api.folders.removeMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        folderIds: [nested.folderId],
+      }),
+    ).resolves.toEqual({ kind: "complete" });
+
     await adminClient.mutation(api.galleries.update, {
       galleryId,
       anonymousEdit: false,
+    });
+    const disabledAgain = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(disabledAgain.access).toMatchObject({
+      role: null,
+      canManage: false,
     });
     await expect(
       t.mutation(api.folders.update, {
@@ -370,6 +489,20 @@ describe("upgallery backend", () => {
         privacy: "public",
       }),
     ).rejects.toThrow(/Unauthorized/);
+    await expect(
+      t.mutation(api.folders.moveMany, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        destinationFolderId: rootFolderId,
+        folderIds: [created.folderId],
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+    await expect(
+      t.query(api.galleries.listOwnedImageGalleries, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+      }),
+    ).resolves.toEqual([]);
   });
 
   test("gallery admin access requires a gallery-wide owner grant", async () => {
