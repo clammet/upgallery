@@ -40,6 +40,11 @@ export const entryState = v.union(
   v.literal("deleted"),
 );
 
+export const thumbnailState = v.union(
+  v.literal("pending"),
+  v.literal("failed"),
+);
+
 export const uploadState = v.union(
   v.literal("pending"),
   v.literal("uploading"),

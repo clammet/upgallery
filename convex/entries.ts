@@ -24,6 +24,7 @@ import {
 import { formatBytes } from "./lib/format";
 import { disposition } from "./lib/validators";
 import {
+  markThumbnailPendingIfNeeded,
   MEDIA_METADATA_VERSION,
   requestMediaPreview,
 } from "./lib/storageJobs";
@@ -374,6 +375,7 @@ export const removeLocationData = mutation({
         (job.status === "queued" || job.status === "processing"),
     );
     if (activeRemoval !== undefined) {
+      await markThumbnailPendingIfNeeded(ctx, entry._id);
       return { queued: false };
     }
 
@@ -405,6 +407,7 @@ export const removeLocationData = mutation({
         removeLocationData: true,
       });
     }
+    await markThumbnailPendingIfNeeded(ctx, entry._id);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "entry.location_removal_requested",
@@ -465,7 +468,10 @@ export const refreshMetadata = mutation({
     const active = jobs.find(
       (job) => job.status === "queued" || job.status === "processing",
     );
-    if (active !== undefined) return { queued: false };
+    if (active !== undefined) {
+      await markThumbnailPendingIfNeeded(ctx, entry._id);
+      return { queued: false };
+    }
     const failed = jobs.find((job) => job.status === "failed");
     if (failed !== undefined) {
       await ctx.db.patch("mediaProcessingJobs", failed._id, {
@@ -487,6 +493,7 @@ export const refreshMetadata = mutation({
         availableAt: 0,
       });
     }
+    await markThumbnailPendingIfNeeded(ctx, entry._id);
     return { queued: true };
   },
 });
@@ -642,6 +649,7 @@ export const updateMetadata = mutation({
 
 export const rename = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     entryId: v.id("entries"),
     name: v.string(),
@@ -677,7 +685,13 @@ export const rename = mutation({
     if (folder === null || folder.galleryId !== gallery._id) {
       throw new Error("File not found");
     }
-    const actor = await requireGalleryRole(ctx, gallery, folder, "editor");
+    const actor = await requireGalleryRole(
+      ctx,
+      gallery,
+      folder,
+      "editor",
+      args.anonymousClaim,
+    );
     if (entry.migrationState !== undefined) {
       throw new Error("File is currently being moved");
     }

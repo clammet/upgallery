@@ -7,6 +7,7 @@ dist/
 storage-dist/
 .storage/
 coverage/
+.profiles/
 *.log
 *.tsbuildinfo
 .DS_Store

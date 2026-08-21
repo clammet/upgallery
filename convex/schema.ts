@@ -11,6 +11,7 @@ import {
   privacy,
   storageKind,
   themeValidator,
+  thumbnailState,
   uploaderAccess,
   uploadState,
 } from "./lib/validators";
@@ -44,6 +45,9 @@ export default defineSchema({
     folderPreviewMode: v.optional(folderPreviewMode),
     // Allows owners to drag items into folders without entering select mode.
     quickMove: v.optional(v.boolean()),
+    // Grants the editor role across this gallery to anonymous profiles.
+    // Optional so galleries created before this setting default to disabled.
+    anonymousEdit: v.optional(v.boolean()),
     theme: themeValidator,
     itemCount: v.number(),
     totalBytes: v.number(),
@@ -101,6 +105,7 @@ export default defineSchema({
     storageKind,
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
+    thumbnailState: v.optional(thumbnailState),
     previewKey: v.optional(v.string()),
     previewError: v.optional(v.string()),
     metadataJson: v.optional(v.string()),

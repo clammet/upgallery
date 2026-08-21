@@ -10,6 +10,25 @@ export function storageJobRetryDelay(attempts: number): number {
   return Math.min(5 * 60 * 1000, 1_000 * 2 ** Math.max(0, attempts - 1));
 }
 
+export async function markThumbnailPendingIfNeeded(
+  ctx: MutationCtx,
+  entryId: Id<"entries">,
+) {
+  const entry = await ctx.db.get("entries", entryId);
+  if (
+    entry !== null &&
+    entry.state === "ready" &&
+    entry.thumbnailKey === undefined &&
+    entry.thumbnailState !== "pending" &&
+    (entry.mediaKind === "image" || entry.mediaKind === "video")
+  ) {
+    await ctx.db.patch("entries", entry._id, {
+      thumbnailState: "pending",
+      updatedAt: Date.now(),
+    });
+  }
+}
+
 export async function replaceMediaProcessingJob(
   ctx: MutationCtx,
   input: {
@@ -32,6 +51,13 @@ export async function replaceMediaProcessingJob(
   for (const job of existingJobs) {
     await ctx.db.delete("mediaProcessingJobs", job._id);
   }
+  await ctx.db.patch("entries", input.entryId, {
+    thumbnailState:
+      !input.alreadyProcessed &&
+      (input.mediaKind === "image" || input.mediaKind === "video")
+        ? "pending"
+        : undefined,
+  });
   if (
     (input.alreadyProcessed && !shouldGeneratePreview) ||
     (input.mediaKind !== "image" &&
@@ -83,9 +109,10 @@ export async function requestMediaPreview(
           }
         : {}),
     });
+    await markThumbnailPendingIfNeeded(ctx, input.entryId);
     return job._id;
   }
-  return await ctx.db.insert("mediaProcessingJobs", {
+  const jobId = await ctx.db.insert("mediaProcessingJobs", {
     entryId: input.entryId,
     expectedStorageKey: input.storageKey,
     expectedSha256: input.sha256,
@@ -95,4 +122,6 @@ export async function requestMediaPreview(
     processorVersion: MEDIA_PROCESSOR_VERSION,
     previewRequested: true,
   });
+  await markThumbnailPendingIfNeeded(ctx, input.entryId);
+  return jobId;
 }

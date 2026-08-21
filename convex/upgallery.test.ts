@@ -257,6 +257,121 @@ describe("upgallery backend", () => {
     expect(quickMoveOff?.maxFileSize).toBe(32 * 1024 * 1024);
   });
 
+  test("only system admins can grant anonymous editor access", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const adminClient = asUser(
+      t,
+      admin.googleSubject,
+      "admin@example.com",
+    );
+    const galleryId = await adminClient.mutation(api.galleries.create, {
+      name: "Community gallery",
+      slug: "community-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "community-gallery",
+      hosts: [{ host: "community.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const rootFolderId = gallery!.rootFolderId!;
+    const anonymous = await seedProfile(t, { anonymous: true });
+
+    const disabledListing = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(disabledListing.access).toMatchObject({
+      role: null,
+      canUpload: false,
+      canEditFolder: false,
+      canManage: false,
+    });
+    await expect(
+      t.mutation(api.folders.create, {
+        anonymousClaim: anonymous.anonymousClaim,
+        galleryId,
+        parentId: rootFolderId,
+        name: "Before enabled",
+        privacy: "public",
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+
+    const owner = await seedProfile(t, { email: "owner@example.com" });
+    await adminClient.mutation(api.roles.upsert, {
+      galleryId,
+      profileId: owner.profileId,
+      role: "owner",
+    });
+    const ownerClient = asUser(
+      t,
+      owner.googleSubject,
+      "owner@example.com",
+    );
+    await expect(
+      ownerClient.mutation(api.galleries.update, {
+        galleryId,
+        anonymousEdit: true,
+      }),
+    ).rejects.toThrow(/system administrators/);
+
+    await adminClient.mutation(api.galleries.update, {
+      galleryId,
+      anonymousEdit: true,
+    });
+    const enabledListing = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(enabledListing.access).toMatchObject({
+      role: "editor",
+      canUpload: true,
+      canEditFolder: true,
+      canManage: false,
+      canAdminGallery: false,
+    });
+
+    const created = await t.mutation(api.folders.create, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      parentId: rootFolderId,
+      name: "Visitor folder",
+      privacy: "public",
+    });
+    expect(created).toMatchObject({ kind: "complete" });
+    if (created.kind !== "complete") {
+      throw new Error("Expected a shared-storage folder");
+    }
+    await expect(
+      t.mutation(api.folders.update, {
+        anonymousClaim: anonymous.anonymousClaim,
+        folderId: created.folderId,
+        name: "Visitor renamed",
+        privacy: "public",
+      }),
+    ).resolves.toMatchObject({ kind: "complete" });
+
+    await adminClient.mutation(api.galleries.update, {
+      galleryId,
+      anonymousEdit: false,
+    });
+    await expect(
+      t.mutation(api.folders.update, {
+        anonymousClaim: anonymous.anonymousClaim,
+        folderId: created.folderId,
+        name: "No longer allowed",
+        privacy: "public",
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+  });
+
   test("gallery admin access requires a gallery-wide owner grant", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
@@ -1694,6 +1809,9 @@ describe("upgallery backend", () => {
       processorVersion: 2,
       expectedSha256: "c".repeat(64),
     });
+    await expect(
+      t.run(async (ctx) => ctx.db.get("entries", entryId)),
+    ).resolves.toMatchObject({ thumbnailState: "pending" });
 
     const claim = await t.mutation(
       internal.storageJobs.claimMediaProcessing,
@@ -1713,8 +1831,37 @@ describe("upgallery backend", () => {
         .take(10),
     }));
     expect(completed.entry?.thumbnailKey).toContain(".thumb.jpg");
+    expect(completed.entry?.thumbnailState).toBeUndefined();
     expect(completed.entry?.metadataJson).toBe('{"Make":"Test"}');
     expect(completed.jobs).toHaveLength(0);
+
+    const failedJobId = await t.run(async (ctx) => {
+      await ctx.db.patch("entries", entryId, {
+        thumbnailKey: undefined,
+        thumbnailState: "pending",
+      });
+      return await ctx.db.insert("mediaProcessingJobs", {
+        entryId,
+        expectedStorageKey: `public/shared/media-queue/cc/cc/${"c".repeat(64)}.jpg`,
+        expectedSha256: "c".repeat(64),
+        status: "processing",
+        attempts: 5,
+        availableAt: 0,
+      });
+    });
+    await t.mutation(internal.storageJobs.completeMediaProcessing, {
+      jobId: failedJobId,
+      error: "Unsupported decoder",
+    });
+    const failed = await t.run(async (ctx) => ({
+      entry: await ctx.db.get("entries", entryId),
+      job: await ctx.db.get("mediaProcessingJobs", failedJobId),
+    }));
+    expect(failed.entry?.thumbnailState).toBe("failed");
+    expect(failed.job).toMatchObject({
+      status: "failed",
+      error: "Unsupported decoder",
+    });
   });
 
   test("audio uploads queue metadata processing without a thumbnail", async () => {

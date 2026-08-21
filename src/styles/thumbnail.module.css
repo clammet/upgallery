@@ -1,0 +1,6 @@
+.placeholder { align-items: center; color: var(--gallery-muted); display: flex; justify-content: center; }
+.unavailable { box-sizing: border-box; padding: 10%; }
+.unavailableIcon { display: block; max-height: 100%; max-width: 100%; object-fit: contain; }
+.spinner { animation: thumbnail-spin 900ms linear infinite; height: 24%; min-height: 20px; min-width: 20px; width: 24%; }
+@keyframes thumbnail-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1800ms; } }

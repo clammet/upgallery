@@ -450,6 +450,7 @@ export const update = mutation({
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
+    anonymousEdit: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
   handler: async (ctx, args) => {
@@ -519,6 +520,11 @@ export const update = mutation({
         });
       }
     }
+    if (args.anonymousEdit !== undefined && !actor.isSystemAdmin) {
+      throw new Error(
+        "Only system administrators can change anonymous edit access",
+      );
+    }
     const name = args.name?.trim();
     // The limit is written when set explicitly, and pinned on legacy
     // galleries (which have none) whenever the size changes so owners
@@ -542,6 +548,9 @@ export const update = mutation({
       ...(args.quickMove === undefined
         ? {}
         : { quickMove: args.quickMove ? true : undefined }),
+      ...(args.anonymousEdit === undefined
+        ? {}
+        : { anonymousEdit: args.anonymousEdit ? true : undefined }),
       ...(args.theme === undefined ? {} : { theme: args.theme }),
     });
     if (name !== undefined && rootFolder !== null) {

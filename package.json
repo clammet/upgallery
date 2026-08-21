@@ -10,6 +10,7 @@
     "dev:storage": "concurrently -k -n storage-api,storage-worker \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
     "dev:storage-api": "tsx watch --env-file=.env.storage.local storage/server.ts",
     "dev:storage-worker": "tsx watch --env-file=.env.storage.local storage/worker.ts",
+    "profile:upload": "node scripts/profile-upload.mjs",
     "build": "tsc -b && vite build && tsc -p storage/tsconfig.json",
     "check": "tsc -b && tsc -p storage/tsconfig.json --noEmit",
     "test": "vitest run",

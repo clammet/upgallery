@@ -56,6 +56,10 @@ export async function getEffectiveRole(
   if (profile.isSystemAdmin) {
     return "owner";
   }
+  if (profile.isAnonymous) {
+    const gallery = await ctx.db.get("galleries", galleryId);
+    return gallery?.anonymousEdit === true ? "editor" : null;
+  }
   const grants = await ctx.db
     .query("galleryRoles")
     .withIndex("by_galleryId_and_profileId", (q) =>
@@ -120,8 +124,9 @@ export async function requireGalleryRole(
   gallery: Doc<"galleries">,
   folder: Doc<"folders"> | null,
   minimum: "viewer" | "editor" | "owner",
+  anonymousClaim?: string,
 ): Promise<Doc<"profiles">> {
-  const profile = await requireCurrentProfile(ctx);
+  const profile = await requireCurrentProfile(ctx, anonymousClaim);
   const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
   if (!roleAtLeast(role, minimum)) {
     throw new Error("Unauthorized");

@@ -13,6 +13,7 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import { MediaThumbnail } from "../components/MediaThumbnail";
 import {
   MediaViewer,
   shouldOpenMediaViewer,
@@ -493,8 +494,13 @@ function UploaderEntry(props: {
         }}
       >
         <span className={styles.thumbnail}>
-          {props.thumbnailUrl ? (
-            <img src={props.thumbnailUrl} alt="" loading="lazy" />
+          {props.entry.mediaKind === "image" ||
+          props.entry.mediaKind === "video" ? (
+            <MediaThumbnail
+              className={styles.mediaThumbnail}
+              src={props.thumbnailUrl}
+              state={props.entry.thumbnailState}
+            />
           ) : (
             <FileGlyph
               extension={props.entry.extension}

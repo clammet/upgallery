@@ -247,7 +247,24 @@ export const claimMediaProcessing = internalMutation({
         processorVersion: MEDIA_PROCESSOR_VERSION,
         error: job.error ?? "Media processing exhausted its retries",
       });
+      if (
+        entry.thumbnailKey === undefined &&
+        (entry.mediaKind === "image" || entry.mediaKind === "video")
+      ) {
+        await ctx.db.patch("entries", entry._id, {
+          thumbnailState: "failed",
+          updatedAt: now,
+        });
+      }
       return { kind: "none" as const };
+    }
+    const processThumbnail =
+      entry.mediaKind !== "audio" && entry.thumbnailKey === undefined;
+    if (processThumbnail && entry.thumbnailState !== "pending") {
+      await ctx.db.patch("entries", entry._id, {
+        thumbnailState: "pending",
+        updatedAt: now,
+      });
     }
     await ctx.db.patch("mediaProcessingJobs", job._id, {
       status: "processing",
@@ -270,8 +287,7 @@ export const claimMediaProcessing = internalMutation({
       storageRoot: gallery.storageRoot,
       size: entry.size,
       filesystemModifiedAt: entry.filesystemModifiedAt,
-      processThumbnail:
-        entry.mediaKind !== "audio" && entry.thumbnailKey === undefined,
+      processThumbnail,
       processMetadata:
         entry.metadataVersion !== MEDIA_METADATA_VERSION ||
         job.removeLocationData === true,
@@ -324,20 +340,26 @@ export const completeMediaProcessing = internalMutation({
           leaseExpiresAt: undefined,
           error,
         });
-        if (job.previewRequested === true) {
-          const entry = await ctx.db.get("entries", job.entryId);
-          if (
-            entry !== null &&
-            entry.state === "ready" &&
-            entry.storageKey === job.expectedStorageKey &&
-            entry.sha256 === job.expectedSha256
-          ) {
-            await ctx.db.patch("entries", entry._id, {
-              previewError:
-                "The full-resolution preview could not be generated. Please try again.",
-              updatedAt: Date.now(),
-            });
-          }
+        const entry = await ctx.db.get("entries", job.entryId);
+        if (
+          entry !== null &&
+          entry.state === "ready" &&
+          entry.storageKey === job.expectedStorageKey &&
+          entry.sha256 === job.expectedSha256
+        ) {
+          await ctx.db.patch("entries", entry._id, {
+            ...(entry.thumbnailKey === undefined &&
+            (entry.mediaKind === "image" || entry.mediaKind === "video")
+              ? { thumbnailState: "failed" as const }
+              : {}),
+            ...(job.previewRequested === true
+              ? {
+                  previewError:
+                    "The full-resolution preview could not be generated. Please try again.",
+                }
+              : {}),
+            updatedAt: Date.now(),
+          });
         }
       } else {
         await ctx.db.patch("mediaProcessingJobs", job._id, {
@@ -390,7 +412,10 @@ export const completeMediaProcessing = internalMutation({
         ...(replacement ?? {}),
         ...(args.thumbnailKey === undefined
           ? {}
-          : { thumbnailKey: args.thumbnailKey }),
+          : {
+              thumbnailKey: args.thumbnailKey,
+              thumbnailState: undefined,
+            }),
         ...(!metadataProcessed
           ? {}
           : {

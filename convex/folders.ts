@@ -162,9 +162,8 @@ export const list = query({
           entries: candidates.map((entry) => ({
             _id: entry._id,
             name: entry.name,
-            storageKey: entry.storageKey,
             thumbnailKey: entry.thumbnailKey,
-            filesystemModifiedAt: entry.filesystemModifiedAt,
+            thumbnailState: entry.thumbnailState,
           })),
         };
       }),
@@ -269,6 +268,7 @@ export const list = query({
 
 export const create = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     parentId: v.id("folders"),
     name: v.string(),
@@ -292,7 +292,13 @@ export const create = mutation({
     if (gallery.kind !== "image") {
       throw new Error("Uploader galleries do not support folders");
     }
-    const actor = await requireGalleryRole(ctx, gallery, parent, "editor");
+    const actor = await requireGalleryRole(
+      ctx,
+      gallery,
+      parent,
+      "editor",
+      args.anonymousClaim,
+    );
     if (parent.ancestorIds.length + 1 >= MAX_FOLDER_DEPTH) {
       throw new Error(`Folders cannot be nested deeper than ${MAX_FOLDER_DEPTH}`);
     }
@@ -727,6 +733,7 @@ export const listOwnedMoveDestinations = query({
 
 export const update = mutation({
   args: {
+    anonymousClaim: v.optional(v.string()),
     folderId: v.id("folders"),
     name: v.string(),
     privacy,
@@ -741,7 +748,13 @@ export const update = mutation({
     if (gallery === null || gallery.deletedAt !== undefined) {
       throw new Error("Gallery not found");
     }
-    const actor = await requireGalleryRole(ctx, gallery, folder, "editor");
+    const actor = await requireGalleryRole(
+      ctx,
+      gallery,
+      folder,
+      "editor",
+      args.anonymousClaim,
+    );
     if (gallery.rootFolderId === folder._id) {
       if (args.name.trim() !== folder.name) {
         throw new Error("Rename the root folder from gallery settings");

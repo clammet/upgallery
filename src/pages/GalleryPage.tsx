@@ -26,6 +26,7 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import { MediaThumbnail } from "../components/MediaThumbnail";
 import {
   MediaViewer,
   shouldOpenMediaViewer,
@@ -105,9 +106,8 @@ type FolderPreviewData = {
   entries: Array<{
     _id: Id<"entries">;
     name: string;
-    storageKey: string;
     thumbnailKey?: string;
-    filesystemModifiedAt?: number;
+    thumbnailState?: "pending" | "failed";
   }>;
 };
 
@@ -258,6 +258,7 @@ export function GalleryPage(props: {
   const changeViewerTitle = useCallback(
     async (item: MediaViewerItem, title: string) => {
       const result = await renameEntry({
+        anonymousClaim: anonymousClaim(),
         galleryId: props.gallery._id,
         entryId: item.id as Id<"entries">,
         name: title,
@@ -313,6 +314,7 @@ export function GalleryPage(props: {
       name: string,
     ): Promise<Id<"folders">> => {
       const result = await createFolder({
+        anonymousClaim: anonymousClaim(),
         galleryId: props.gallery._id,
         parentId,
         name,
@@ -1235,6 +1237,7 @@ export function GalleryPage(props: {
           onClose={() => setFolderDialog(null)}
           onSubmit={async (name, privacy, previewMode) => {
             const result = await createFolder({
+              anonymousClaim: anonymousClaim(),
               galleryId: props.gallery._id,
               parentId: folderId,
               name,
@@ -1267,6 +1270,7 @@ export function GalleryPage(props: {
           onClose={() => setFolderDialog(null)}
           onSubmit={async (name, privacy, previewMode) => {
             const result = await updateFolder({
+              anonymousClaim: anonymousClaim(),
               folderId,
               name,
               privacy,
@@ -1530,7 +1534,7 @@ function FolderPreview(props: { preview?: FolderPreviewData }) {
         strokeWidth={1.1}
       />
       {entries.map((entry, index) => (
-        <img
+        <MediaThumbnail
           className={
             isFan
               ? `${styles.folderPreviewCard} ${cardPositions[index]}`
@@ -1542,14 +1546,12 @@ function FolderPreview(props: { preview?: FolderPreviewData }) {
               : undefined
           }
           key={entry._id}
-          src={publicMediaUrl(
-            entry.thumbnailKey ?? entry.storageKey,
+          src={
             entry.thumbnailKey === undefined
-              ? entry.filesystemModifiedAt
-              : undefined,
-          )}
-          alt=""
-          loading="lazy"
+              ? undefined
+              : publicMediaUrl(entry.thumbnailKey)
+          }
+          state={entry.thumbnailState}
         />
       ))}
     </span>
@@ -1644,22 +1646,16 @@ function GalleryEntryCard(props: {
   const content = (
     <>
       <span className={styles.thumbnailFrame}>
-        {props.entry.thumbnailKey ? (
-          <img
+        {props.entry.mediaKind === "image" ||
+        props.entry.mediaKind === "video" ? (
+          <MediaThumbnail
             className={styles.fileThumb}
-            src={publicMediaUrl(props.entry.thumbnailKey)}
-            alt=""
-            loading="lazy"
-          />
-        ) : props.entry.mediaKind === "image" ? (
-          <img
-            className={styles.fileThumb}
-            src={publicMediaUrl(
-              props.entry.storageKey,
-              props.entry.filesystemModifiedAt,
-            )}
-            alt=""
-            loading="lazy"
+            src={
+              props.entry.thumbnailKey === undefined
+                ? undefined
+                : publicMediaUrl(props.entry.thumbnailKey)
+            }
+            state={props.entry.thumbnailState}
           />
         ) : (
           <FileGlyph
