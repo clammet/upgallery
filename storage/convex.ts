@@ -1,5 +1,17 @@
 import { config } from "./config.js";
 
+// Convex refusals that carry a code (a name the folder already holds) keep it
+// so the HTTP layer can forward it to the browser.
+export class ConvexRequestError extends Error {
+  readonly code: string | undefined;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ConvexRequestError";
+    this.code = code;
+  }
+}
+
 export async function callConvex<T>(
   path: string,
   body: Record<string, unknown> = {},
@@ -15,14 +27,16 @@ export async function callConvex<T>(
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    const body =
+      typeof payload === "object" && payload !== null ? payload : {};
     const message =
-      typeof payload === "object" &&
-      payload !== null &&
-      "error" in payload &&
-      typeof payload.error === "string"
-        ? payload.error
+      "error" in body && typeof body.error === "string"
+        ? body.error
         : `Convex request failed with status ${response.status}`;
-    throw new Error(message);
+    throw new ConvexRequestError(
+      message,
+      "code" in body && typeof body.code === "string" ? body.code : undefined,
+    );
   }
   return payload as T;
 }
@@ -30,6 +44,9 @@ export async function callConvex<T>(
 export type UploadClaim = {
   intentId: string;
   name: string;
+  // Path of the user-backed file this upload replaces, when that differs
+  // from where the upload lands (a case variant of the name).
+  replacesStorageKey?: string;
   declaredMimeType: string;
   declaredSize: number;
   galleryId: string;
@@ -85,6 +102,9 @@ export type MaintenanceClaim =
       targetStorageRoot: string;
       targetFolderSegments: string[];
       fileName: string;
+      // Overwrite a same-named destination file rather than refusing it.
+      replace?: boolean;
+      replacesStorageKey?: string;
       sourceStorageKey: string;
       sourceThumbnailKey?: string;
       sourcePreviewKey?: string;

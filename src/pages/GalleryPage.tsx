@@ -45,21 +45,26 @@ import {
   beginTransfer,
   clearFinishedTransfers,
   completeTransfer,
+  conflictTransfer,
+  createWorkQueue,
   discardTransfers,
   failTransfer,
   getTransfers,
   markTransferClientWork,
   parseTransferConcurrency,
   queueTransfer,
+  registerConflictBatch,
+  renameTransfer,
   reportTransferProgress,
-  runWithConcurrency,
   startTransfer,
   subscribeTransfers,
+  type ConflictChoice,
+  type ConflictPolicy,
 } from "../lib/transfers";
 import { useUploader } from "../hooks/useUpload";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
-import { friendlyError } from "../lib/errors";
+import { friendlyError, isEntryExistsError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
 import {
   isHeifImage,
@@ -450,11 +455,13 @@ export function GalleryPage(props: {
     }));
     // A lost success response is only provable for same-folder uploads of
     // names the listing doesn't already have.
-    const existingNames = new Set(entries.map((entry) => entry.name));
+    const existingNames = new Set(
+      entries.map((entry) => entry.name.toLowerCase()),
+    );
     for (const task of tasks) {
       if (
         task.pathSegments.length === 0 &&
-        !existingNames.has(task.file.name)
+        !existingNames.has(task.file.name.toLowerCase())
       ) {
         transferResolutions.current.set(task.transferId, {
           folderId,
@@ -462,27 +469,55 @@ export function GalleryPage(props: {
         });
       }
     }
-    const runTask = async (task: (typeof tasks)[number]): Promise<void> => {
+    // One conflict choice per drop. "Replace all" / "Auto rename all" /
+    // "Skip" sets it for the files not started yet; a parked file re-runs
+    // through the same queue once the user picks for it.
+    let batchChoice: ConflictChoice | undefined;
+    const queue = createWorkQueue(uploadConcurrency);
+    const runTask = async (
+      task: (typeof tasks)[number],
+      policy: ConflictPolicy | undefined,
+    ): Promise<void> => {
       try {
         startTransfer(task.transferId);
         const targetFolderId = await resolveTargetFolder(task.pathSegments);
-        await upload({
+        const result = await upload({
           file: task.file,
           galleryId: props.gallery._id,
           folderId: targetFolderId,
+          conflict:
+            policy ?? (batchChoice === "skip" ? undefined : batchChoice),
           onProgress: (fraction) =>
             reportTransferProgress(task.transferId, fraction),
         });
+        renameTransfer(task.transferId, result.name);
         completeTransfer(task.transferId);
       } catch (reason) {
+        if (isEntryExistsError(reason)) {
+          if (policy === undefined && batchChoice === "skip") {
+            discardTransfers([task.transferId]);
+            return;
+          }
+          conflictTransfer(task.transferId, (chosen) =>
+            queue.push(() => runTask(task, chosen)),
+          );
+          return;
+        }
         failTransfer(
           task.transferId,
           friendlyError(reason, "Upload failed"),
-          () => void runTask(task),
+          () => void runTask(task, policy),
         );
       }
     };
-    await runWithConcurrency(tasks, uploadConcurrency, runTask);
+    const unregister = registerConflictBatch((choice) => {
+      batchChoice = choice;
+    });
+    for (const task of tasks) {
+      queue.push(() => runTask(task, undefined));
+    }
+    await queue.drain();
+    unregister();
   };
 
   useEffect(() => {

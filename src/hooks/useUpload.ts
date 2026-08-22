@@ -3,8 +3,9 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { storageApi } from "../lib/files";
-import { friendlyError } from "../lib/errors";
+import { friendlyError, RequestError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
+import type { ConflictPolicy } from "../lib/transfers";
 
 export type UploadInput = {
   file: File;
@@ -14,7 +15,18 @@ export type UploadInput = {
   password?: string;
   removeLocationData?: boolean;
   unlisted?: boolean;
+  /**
+   * What to do when the folder already holds this name. Without it the
+   * upload is refused with an entry_exists error before any bytes are sent.
+   */
+  conflict?: ConflictPolicy;
   onProgress?: (fraction: number) => void;
+};
+
+export type UploadResult = {
+  entryId: Id<"entries">;
+  /** The stored name; differs from the file's when it was auto-renamed. */
+  name: string;
 };
 
 /**
@@ -26,7 +38,7 @@ export type UploadInput = {
 export function useUploader() {
   const createIntent = useMutation(api.entries.createUploadIntent);
   return useCallback(
-    async (input: UploadInput) => {
+    async (input: UploadInput): Promise<UploadResult> => {
       const intent = await createIntent({
         anonymousClaim: anonymousClaim(),
         galleryId: input.galleryId,
@@ -38,10 +50,11 @@ export function useUploader() {
         password: input.password || undefined,
         removeLocationData: input.removeLocationData || undefined,
         unlisted: input.unlisted || undefined,
+        conflict: input.conflict,
       });
       const form = new FormData();
       form.append("file", input.file, input.file.name);
-      return await new Promise<unknown>((resolve, reject) => {
+      return await new Promise<UploadResult>((resolve, reject) => {
         const request = new XMLHttpRequest();
         request.open("POST", storageApi("/api/storage/upload"));
         request.responseType = "json";
@@ -54,18 +67,32 @@ export function useUploader() {
         });
         request.addEventListener("load", () => {
           const body: unknown = request.response;
+          const record =
+            typeof body === "object" && body !== null ? body : {};
           if (request.status >= 200 && request.status < 300) {
-            resolve(body);
+            resolve({
+              entryId: (
+                "entryId" in record && typeof record.entryId === "string"
+                  ? record.entryId
+                  : ""
+              ) as Id<"entries">,
+              name:
+                "name" in record && typeof record.name === "string"
+                  ? record.name
+                  : input.file.name,
+            });
             return;
           }
-          const message =
-            typeof body === "object" &&
-            body !== null &&
-            "error" in body &&
-            typeof body.error === "string"
-              ? body.error
-              : "Upload failed";
-          reject(new Error(message));
+          reject(
+            new RequestError(
+              "error" in record && typeof record.error === "string"
+                ? record.error
+                : "Upload failed",
+              "code" in record && typeof record.code === "string"
+                ? record.code
+                : undefined,
+            ),
+          );
         });
         request.addEventListener("error", () =>
           reject(new Error("Upload failed")),

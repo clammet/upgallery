@@ -7,11 +7,26 @@ import { adjustGalleryStats } from "./lib/galleryStats";
 import { cleanFilesystemSegment } from "./lib/normalize";
 import {
   getCurrentProfile,
+  requireCurrentProfile,
   requireGalleryManager,
 } from "./lib/permissions";
+import {
+  bulkConflictPolicy,
+  bulkOperationStatus,
+  conflictPolicy,
+} from "./lib/validators";
+import {
+  isEntryExistsError,
+  reservedNameKeys,
+  resolveLandingName,
+  type ConflictPolicy,
+} from "./lib/entryNames";
+import { operationStatus } from "./lib/bulkOperations";
 
 const BULK_BATCH_SIZE = 32;
 const MAX_SELECTION_IDS = 8192;
+const MAX_LISTED_CONFLICTS = 100;
+const CONFLICT_BATCH_SIZE = 32;
 
 const entrySelection = v.union(
   v.object({
@@ -24,17 +39,10 @@ const entrySelection = v.union(
   }),
 );
 
-const operationStatus = v.union(
-  v.literal("queued"),
-  v.literal("processing"),
-  v.literal("complete"),
-  v.literal("failed"),
-);
-
 const operationSummary = v.object({
   _id: v.id("bulkOperations"),
   kind: v.union(v.literal("delete"), v.literal("move")),
-  status: operationStatus,
+  status: bulkOperationStatus,
   sourceGalleryId: v.id("galleries"),
   sourceFolderId: v.id("folders"),
   destinationGalleryId: v.optional(v.id("galleries")),
@@ -43,6 +51,16 @@ const operationSummary = v.object({
   totalItems: v.number(),
   completedItems: v.number(),
   failedItems: v.number(),
+  conflictItems: v.number(),
+  // Parked items awaiting a policy, capped for display; conflictItems is
+  // the full count.
+  conflicts: v.array(
+    v.object({
+      jobId: v.id("entryMoveJobs"),
+      entryId: v.id("entries"),
+      name: v.string(),
+    }),
+  ),
   error: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -132,6 +150,7 @@ async function insertOperation(
     totalItems: 0,
     completedItems: 0,
     failedItems: 0,
+    conflictItems: 0,
     createdAt: now,
     updatedAt: now,
   });
@@ -236,9 +255,27 @@ export const listMine = query({
       )
       .order("desc")
       .take(30);
-    return operations
-      .filter((operation) => operation.dismissedAt === undefined)
-      .map((operation) => ({
+    const summaries = [];
+    for (const operation of operations) {
+      if (operation.dismissedAt !== undefined) continue;
+      const conflicts = [];
+      if (operation.conflictItems > 0) {
+        const jobs = await ctx.db
+          .query("entryMoveJobs")
+          .withIndex("by_bulkOperationId_and_status", (q) =>
+            q.eq("bulkOperationId", operation._id).eq("status", "conflict"),
+          )
+          .take(MAX_LISTED_CONFLICTS);
+        for (const job of jobs) {
+          const entry = await ctx.db.get("entries", job.entryId);
+          conflicts.push({
+            jobId: job._id,
+            entryId: job.entryId,
+            name: entry?.name ?? "Deleted file",
+          });
+        }
+      }
+      summaries.push({
         _id: operation._id,
         kind: operation.kind,
         status: operation.status,
@@ -250,13 +287,19 @@ export const listMine = query({
         totalItems: operation.totalItems,
         completedItems: operation.completedItems,
         failedItems: operation.failedItems,
+        conflictItems: operation.conflictItems,
+        conflicts,
         error: operation.error,
         createdAt: operation.createdAt,
         updatedAt: operation.updatedAt,
-      }));
+      });
+    }
+    return summaries;
   },
 });
 
+// Operations with parked conflicts are not finished and stay listed until a
+// policy (or Skip) settles them.
 export const dismissFinished = mutation({
   args: { anonymousClaim: v.optional(v.string()) },
   returns: v.number(),
@@ -274,49 +317,67 @@ export const dismissFinished = mutation({
     let dismissed = 0;
     for (const operation of operations) {
       if (
-        operation.dismissedAt === undefined &&
-        (operation.status === "complete" || operation.status === "failed")
+        operation.dismissedAt !== undefined ||
+        (operation.status !== "complete" && operation.status !== "failed")
       ) {
-        await ctx.db.patch("bulkOperations", operation._id, {
-          dismissedAt: now,
-        });
-        dismissed += 1;
+        continue;
       }
+      await ctx.db.patch("bulkOperations", operation._id, {
+        dismissedAt: now,
+      });
+      dismissed += 1;
     }
     return dismissed;
   },
 });
 
-async function pendingDestinationNames(
+async function queueMoveJob(
   ctx: MutationCtx,
-  destinationFolderId: Id<"folders">,
+  input: {
+    jobId?: Id<"entryMoveJobs">;
+    entry: Doc<"entries">;
+    operation: Doc<"bulkOperations">;
+    sourceGalleryId: Id<"galleries">;
+    destinationGalleryId: Id<"galleries">;
+    destinationFolderId: Id<"folders">;
+    policy: ConflictPolicy | undefined;
+    targetName: string;
+  },
 ) {
-  const jobs = [
-    ...(await ctx.db
-      .query("entryMoveJobs")
-      .withIndex("by_destinationFolderId_and_status", (q) =>
-        q.eq("destinationFolderId", destinationFolderId).eq("status", "queued"),
-      )
-      .take(512)),
-    ...(await ctx.db
-      .query("entryMoveJobs")
-      .withIndex("by_destinationFolderId_and_status", (q) =>
-        q
-          .eq("destinationFolderId", destinationFolderId)
-          .eq("status", "processing"),
-      )
-      .take(512)),
-  ];
-  const names = new Set<string>();
-  for (const job of jobs) {
-    const entry = await ctx.db.get("entries", job.entryId);
-    if (entry !== null) names.add(entry.name);
+  const now = Date.now();
+  const fields = {
+    entryId: input.entry._id,
+    sourceGalleryId: input.sourceGalleryId,
+    destinationGalleryId: input.destinationGalleryId,
+    destinationFolderId: input.destinationFolderId,
+    actorProfileId: input.operation.actorProfileId,
+    bulkOperationId: input.operation._id,
+    expectedSourceStorageKey: input.entry.storageKey,
+    conflictPolicy: input.policy,
+    targetName:
+      input.targetName === input.entry.name ? undefined : input.targetName,
+    status: "queued" as const,
+    attempts: 0,
+    availableAt: 0,
+    claimedAt: undefined,
+    leaseExpiresAt: undefined,
+    error: undefined,
+  };
+  let jobId = input.jobId;
+  if (jobId === undefined) {
+    jobId = await ctx.db.insert("entryMoveJobs", fields);
+  } else {
+    await ctx.db.patch("entryMoveJobs", jobId, fields);
   }
-  return names;
-}
-
-function finalStatus(failedItems: number) {
-  return failedItems > 0 ? "failed" as const : "complete" as const;
+  await ctx.db.patch("entries", input.entry._id, {
+    moveJobId: jobId,
+    migrationState: "moving",
+    migrationClaimedAt: undefined,
+    migrationAttempts: 0,
+    migrationRetryAt: undefined,
+    migrationError: undefined,
+    updatedAt: now,
+  });
 }
 
 export const process = internalMutation({
@@ -389,6 +450,7 @@ export const process = internalMutation({
     let totalItems = operation.totalItems;
     let completedItems = operation.completedItems;
     let failedItems = operation.failedItems;
+    let conflictItems = operation.conflictItems;
     let firstError = operation.error;
     let removedBytes = 0;
     let removedItems = 0;
@@ -400,9 +462,14 @@ export const process = internalMutation({
       operation.destinationFolderId === undefined
         ? null
         : await ctx.db.get("folders", operation.destinationFolderId);
-    const reservedDestinationNames =
-      operation.kind === "move" && destinationGallery?.storageKind === "user"
-        ? await pendingDestinationNames(ctx, destinationFolder?._id ?? sourceFolder._id)
+    // "skip" is an operation-wide choice, not something a queued job carries.
+    const itemPolicy =
+      operation.conflictPolicy === "skip" ? undefined : operation.conflictPolicy;
+    // Names in-flight work will occupy in the destination; picks made in
+    // this batch are added as they happen.
+    const reserved =
+      operation.kind === "move" && destinationFolder !== null
+        ? await reservedNameKeys(ctx, destinationFolder._id)
         : new Set<string>();
 
     for (const entry of candidates) {
@@ -474,48 +541,51 @@ export const process = internalMutation({
             error instanceof Error ? error.message : "File name is invalid";
           continue;
         }
-        const existing = await ctx.db
-          .query("entries")
-          .withIndex(
-            "by_folderId_and_state_and_moveJobId_and_name",
-            (q) =>
-              q
-                .eq("folderId", destinationFolder._id)
-                .eq("state", "ready")
-                .eq("moveJobId", undefined)
-                .eq("name", entry.name),
-          )
-          .first();
-        if (
-          (existing !== null && existing._id !== entry._id) ||
-          reservedDestinationNames.has(entry.name)
-        ) {
-          failedItems += 1;
-          firstError ??= `${entry.name} already exists in the destination folder`;
+      }
+      // A taken name is queued under the operation's policy when it has
+      // one, skipped (and withdrawn from the operation) under "skip", and
+      // otherwise parked until the user decides.
+      let targetName: string;
+      try {
+        targetName = (
+          await resolveLandingName(ctx, {
+            gallery: destinationGallery,
+            folderId: destinationFolder._id,
+            name: entry.name,
+            policy: itemPolicy,
+            excludeEntryId: entry._id,
+            reserved,
+          })
+        ).name;
+      } catch (error) {
+        if (!isEntryExistsError(error)) throw error;
+        if (operation.conflictPolicy === "skip") {
+          totalItems -= 1;
           continue;
         }
-        reservedDestinationNames.add(entry.name);
+        await ctx.db.insert("entryMoveJobs", {
+          entryId: entry._id,
+          sourceGalleryId: sourceGallery._id,
+          destinationGalleryId: destinationGallery._id,
+          destinationFolderId: destinationFolder._id,
+          actorProfileId: operation.actorProfileId,
+          bulkOperationId: operation._id,
+          expectedSourceStorageKey: entry.storageKey,
+          status: "conflict",
+          attempts: 0,
+          availableAt: 0,
+        });
+        conflictItems += 1;
+        continue;
       }
-      const moveJobId = await ctx.db.insert("entryMoveJobs", {
-        entryId: entry._id,
+      await queueMoveJob(ctx, {
+        entry,
+        operation,
         sourceGalleryId: sourceGallery._id,
         destinationGalleryId: destinationGallery._id,
         destinationFolderId: destinationFolder._id,
-        actorProfileId: operation.actorProfileId,
-        bulkOperationId: operation._id,
-        expectedSourceStorageKey: entry.storageKey,
-        status: "queued",
-        attempts: 0,
-        availableAt: 0,
-      });
-      await ctx.db.patch("entries", entry._id, {
-        moveJobId,
-        migrationState: "moving",
-        migrationClaimedAt: undefined,
-        migrationAttempts: 0,
-        migrationRetryAt: undefined,
-        migrationError: undefined,
-        updatedAt: Date.now(),
+        policy: itemPolicy,
+        targetName,
       });
     }
 
@@ -525,16 +595,21 @@ export const process = internalMutation({
         bytes: -removedBytes,
       });
     }
-    const settledItems = completedItems + failedItems;
-    const finished = discoveryComplete && settledItems >= totalItems;
     await ctx.db.patch("bulkOperations", operation._id, {
-      status: finished ? finalStatus(failedItems) : "processing",
+      status: operationStatus({
+        discoveryComplete,
+        totalItems,
+        completedItems,
+        failedItems,
+        conflictItems,
+      }),
       nextIndex,
       cursor: nextCursor,
       discoveryComplete,
       totalItems,
       completedItems,
       failedItems,
+      conflictItems,
       error: firstError,
       updatedAt: Date.now(),
     });
@@ -542,6 +617,216 @@ export const process = internalMutation({
       await ctx.scheduler.runAfter(0, internal.bulkOperations.process, {
         operationId: operation._id,
       });
+    }
+    return null;
+  },
+});
+
+// Re-validates a parked item and queues it under the chosen policy, or
+// fails it when the file or destination went away meanwhile.
+async function resolveParkedJob(
+  ctx: MutationCtx,
+  job: Doc<"entryMoveJobs">,
+  policy: ConflictPolicy,
+) {
+  if (job.status !== "conflict" || job.bulkOperationId === undefined) return;
+  const operation = await ctx.db.get("bulkOperations", job.bulkOperationId);
+  if (operation === null) return;
+  const [entry, destinationGallery, destinationFolder] = await Promise.all([
+    ctx.db.get("entries", job.entryId),
+    ctx.db.get("galleries", job.destinationGalleryId),
+    ctx.db.get("folders", job.destinationFolderId),
+  ]);
+  const now = Date.now();
+  const fail = async (message: string) => {
+    await ctx.db.patch("entryMoveJobs", job._id, {
+      status: "failed",
+      error: message,
+    });
+    const counts = {
+      ...operation,
+      conflictItems: Math.max(0, operation.conflictItems - 1),
+      failedItems: operation.failedItems + 1,
+    };
+    await ctx.db.patch("bulkOperations", operation._id, {
+      conflictItems: counts.conflictItems,
+      failedItems: counts.failedItems,
+      error: operation.error ?? message,
+      status: operationStatus(counts),
+      updatedAt: now,
+    });
+  };
+  if (
+    entry === null ||
+    entry.state !== "ready" ||
+    entry.moveJobId !== undefined ||
+    entry.galleryId !== operation.sourceGalleryId ||
+    entry.folderId !== operation.sourceFolderId
+  ) {
+    return await fail("A selected file was no longer available");
+  }
+  if (
+    destinationGallery === null ||
+    destinationGallery.deletedAt !== undefined ||
+    destinationGallery.kind !== "image" ||
+    destinationGallery.pendingMigrationId !== undefined ||
+    destinationFolder === null ||
+    destinationFolder.galleryId !== destinationGallery._id ||
+    destinationFolder.filesystemMissingAt !== undefined
+  ) {
+    return await fail("Move destination is no longer available");
+  }
+  if (entry.size > destinationGallery.maxFileSize) {
+    return await fail(`${entry.name} exceeds the destination file size limit`);
+  }
+  const landing = await resolveLandingName(ctx, {
+    gallery: destinationGallery,
+    folderId: destinationFolder._id,
+    name: entry.name,
+    policy,
+    excludeEntryId: entry._id,
+    excludeJobId: job._id,
+  });
+  await queueMoveJob(ctx, {
+    jobId: job._id,
+    entry,
+    operation,
+    sourceGalleryId: operation.sourceGalleryId,
+    destinationGalleryId: destinationGallery._id,
+    destinationFolderId: destinationFolder._id,
+    policy,
+    targetName: landing.name,
+  });
+  const counts = {
+    ...operation,
+    conflictItems: Math.max(0, operation.conflictItems - 1),
+  };
+  await ctx.db.patch("bulkOperations", operation._id, {
+    conflictItems: counts.conflictItems,
+    status: operationStatus(counts),
+    updatedAt: now,
+  });
+}
+
+export const resolveConflict = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    jobId: v.id("entryMoveJobs"),
+    policy: conflictPolicy,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
+    const job = await ctx.db.get("entryMoveJobs", args.jobId);
+    if (
+      job === null ||
+      job.status !== "conflict" ||
+      job.bulkOperationId === undefined
+    ) {
+      throw new Error("This conflict is no longer pending");
+    }
+    const operation = await ctx.db.get("bulkOperations", job.bulkOperationId);
+    if (operation === null || operation.actorProfileId !== profile._id) {
+      throw new Error("Unauthorized");
+    }
+    await resolveParkedJob(ctx, job, args.policy);
+    return null;
+  },
+});
+
+// "Replace all" / "Auto rename all" / "Skip": adopts the choice for the
+// caller's operations that have parked items (or one operation), so both the
+// parked items and any conflicts discovered later resolve themselves.
+export const resolveConflicts = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    policy: bulkConflictPolicy,
+    operationId: v.optional(v.id("bulkOperations")),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
+    const operations =
+      args.operationId === undefined
+        ? await ctx.db
+            .query("bulkOperations")
+            .withIndex("by_actorProfileId_and_createdAt", (q) =>
+              q.eq("actorProfileId", profile._id),
+            )
+            .order("desc")
+            .take(30)
+        : [await ctx.db.get("bulkOperations", args.operationId)];
+    let adopted = 0;
+    for (const operation of operations) {
+      if (
+        operation === null ||
+        operation.actorProfileId !== profile._id ||
+        operation.dismissedAt !== undefined ||
+        operation.kind !== "move" ||
+        operation.conflictItems === 0
+      ) {
+        continue;
+      }
+      await ctx.db.patch("bulkOperations", operation._id, {
+        conflictPolicy: args.policy,
+        updatedAt: Date.now(),
+      });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.bulkOperations.applyConflictPolicy,
+        { operationId: operation._id },
+      );
+      adopted += 1;
+    }
+    return adopted;
+  },
+});
+
+export const applyConflictPolicy = internalMutation({
+  args: { operationId: v.id("bulkOperations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const operation = await ctx.db.get("bulkOperations", args.operationId);
+    if (
+      operation === null ||
+      operation.conflictPolicy === undefined ||
+      operation.dismissedAt !== undefined
+    ) {
+      return null;
+    }
+    const jobs = await ctx.db
+      .query("entryMoveJobs")
+      .withIndex("by_bulkOperationId_and_status", (q) =>
+        q.eq("bulkOperationId", operation._id).eq("status", "conflict"),
+      )
+      .take(CONFLICT_BATCH_SIZE);
+    if (operation.conflictPolicy === "skip") {
+      // Skipped items leave the operation: the files stay where they are.
+      for (const job of jobs) {
+        await ctx.db.delete("entryMoveJobs", job._id);
+      }
+      const counts = {
+        ...operation,
+        conflictItems: Math.max(0, operation.conflictItems - jobs.length),
+        totalItems: Math.max(0, operation.totalItems - jobs.length),
+      };
+      await ctx.db.patch("bulkOperations", operation._id, {
+        conflictItems: counts.conflictItems,
+        totalItems: counts.totalItems,
+        status: operationStatus(counts),
+        updatedAt: Date.now(),
+      });
+    } else {
+      for (const job of jobs) {
+        await resolveParkedJob(ctx, job, operation.conflictPolicy);
+      }
+    }
+    if (jobs.length === CONFLICT_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.bulkOperations.applyConflictPolicy,
+        { operationId: operation._id },
+      );
     }
     return null;
   },

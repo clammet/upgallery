@@ -1,9 +1,17 @@
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { sha256 } from "./lib/crypto";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import { getFilesystemFolderSegments } from "./lib/filesystem";
+import {
+  entryExistsError,
+  findReadyEntryByNameKey,
+  pickAvailableName,
+  reservedNameKeys,
+  resolveLandingName,
+} from "./lib/entryNames";
+import { entryNameKey, fileExtensionFromName } from "./lib/normalize";
 import {
   replaceMediaProcessingJob,
   STORAGE_JOB_LEASE_MS,
@@ -12,6 +20,21 @@ import {
 } from "./lib/storageJobs";
 import { mediaKind } from "./lib/validators";
 import { settleBulkMoveItem } from "./lib/bulkOperations";
+
+// A user-backed replacement lands on the replaced file's own path (or a case
+// variant of it, which the storage server reconciles on disk), so unlinking
+// the replaced entry's original would remove the new file. Shared keys are
+// content-addressed and reference-checked, so they are always safe to queue.
+function keepsReplacedOriginal(
+  storageKind: "shared" | "user",
+  replacedKey: string,
+  newKey: string,
+): boolean {
+  return (
+    storageKind === "user" &&
+    replacedKey.toLowerCase() === newKey.toLowerCase()
+  );
+}
 
 export const claimUpload = internalMutation({
   args: {
@@ -43,17 +66,33 @@ export const claimUpload = internalMutation({
     ) {
       throw new Error("Gallery is unavailable");
     }
+    // The name is settled here, before any bytes arrive, so concurrent
+    // uploads into the folder see it reserved; completeUpload re-checks.
+    const landing = await resolveLandingName(ctx, {
+      gallery,
+      folderId: folder._id,
+      name: intent.name,
+      policy: intent.conflictPolicy,
+      excludeIntentId: intent._id,
+    });
     const now = Date.now();
     await ctx.db.patch("uploadIntents", intent._id, {
       state: "uploading",
       attempts: (intent.attempts ?? 0) + 1,
       claimedAt: now,
       leaseExpiresAt: now + STORAGE_JOB_LEASE_MS,
+      resolvedName: landing.name,
       error: undefined,
     });
     return {
       intentId: intent._id,
-      name: intent.name,
+      name: landing.name,
+      // Lets the storage server reconcile a replaced file that sits on a
+      // case variant of the new path; shared storage never needs this.
+      replacesStorageKey:
+        gallery.storageKind === "user"
+          ? landing.replaces?.storageKey
+          : undefined,
       declaredMimeType: intent.declaredMimeType,
       declaredSize: intent.declaredSize,
       galleryId: gallery._id,
@@ -89,14 +128,14 @@ export const completeUpload = internalMutation({
     if (intent === null) {
       throw new Error("Upload intent not found");
     }
-    let existing = await ctx.db
+    const claimed = await ctx.db
       .query("entries")
       .withIndex("by_uploadIntentId", (q) =>
         q.eq("uploadIntentId", intent._id),
       )
       .unique();
-    if (existing !== null) {
-      return existing._id;
+    if (claimed !== null) {
+      return { entryId: claimed._id, name: claimed.name };
     }
     if (intent.state !== "uploading") {
       throw new Error("Upload intent is not being processed");
@@ -116,6 +155,25 @@ export const completeUpload = internalMutation({
     ) {
       throw new Error("Storage metadata is too large");
     }
+    const name = intent.resolvedName ?? intent.name;
+    const nameKey = entryNameKey(name);
+    // The entry this upload lands on: the folder's same-named file when the
+    // policy is replace, or (user storage) the entry already at this path,
+    // which may be a deleted one awaiting cleanup.
+    let existing: Doc<"entries"> | null = null;
+    if (gallery.kind === "image") {
+      const occupant = await findReadyEntryByNameKey(
+        ctx,
+        intent.folderId,
+        nameKey,
+      );
+      if (occupant !== null) {
+        if (intent.conflictPolicy !== "replace") {
+          throw entryExistsError(name);
+        }
+        existing = occupant;
+      }
+    }
     if (gallery.storageKind === "user") {
       if (
         args.filesystemModifiedAt === undefined ||
@@ -126,24 +184,38 @@ export const completeUpload = internalMutation({
       ) {
         throw new Error("User-backed upload is missing filesystem metadata");
       }
-      existing = await ctx.db
+      const atPath = await ctx.db
         .query("entries")
         .withIndex("by_storageKey", (q) => q.eq("storageKey", args.storageKey))
         .unique();
-      if (existing !== null && existing.galleryId !== gallery._id) {
+      if (atPath !== null && atPath.galleryId !== gallery._id) {
         throw new Error("Storage path is already owned by another gallery");
       }
+      existing ??= atPath;
     }
     const now = Date.now();
     if (existing !== null) {
       const wasReady = existing.state === "ready";
       const contentChanged = existing.sha256 !== args.sha256;
+      // Derivative keys are content-addressed: unchanged content keeps them,
+      // changed content leaves the old ones to clean up.
+      const thumbnailKey =
+        args.thumbnailKey ??
+        (contentChanged ? undefined : existing.thumbnailKey);
+      const staleStorageKey =
+        existing.storageKey !== args.storageKey
+          ? existing.storageKey
+          : undefined;
+      const staleThumbnailKey = contentChanged
+        ? existing.thumbnailKey
+        : undefined;
       const stalePreviewKey = contentChanged ? existing.previewKey : undefined;
       await ctx.db.patch("entries", existing._id, {
         folderId: intent.folderId,
         ownerProfileId: intent.ownerProfileId,
         uploadIntentId: intent._id,
-        name: intent.name,
+        name,
+        nameKey,
         description: intent.description,
         mimeType: args.actualMimeType,
         extension: args.extension,
@@ -152,7 +224,7 @@ export const completeUpload = internalMutation({
         sha256: args.sha256,
         storageKind: gallery.storageKind,
         storageKey: args.storageKey,
-        thumbnailKey: args.thumbnailKey,
+        thumbnailKey,
         previewKey: contentChanged ? undefined : existing.previewKey,
         previewError: contentChanged ? undefined : existing.previewError,
         metadataJson: args.metadataJson,
@@ -173,12 +245,23 @@ export const completeUpload = internalMutation({
       for (const job of pendingDeleteJobs) {
         await ctx.db.delete("storageDeleteJobs", job._id);
       }
-      if (stalePreviewKey !== undefined) {
+      if (
+        staleStorageKey !== undefined ||
+        staleThumbnailKey !== undefined ||
+        stalePreviewKey !== undefined
+      ) {
         await ctx.db.insert("storageDeleteJobs", {
           entryId: existing._id,
-          storageKey: args.storageKey,
+          storageKey: staleStorageKey ?? args.storageKey,
+          thumbnailKey: staleThumbnailKey,
           previewKey: stalePreviewKey,
-          deleteOriginal: false,
+          deleteOriginal:
+            staleStorageKey !== undefined &&
+            !keepsReplacedOriginal(
+              gallery.storageKind,
+              staleStorageKey,
+              args.storageKey,
+            ),
           deleteEntry: false,
           status: "queued",
           attempts: 0,
@@ -212,16 +295,17 @@ export const completeUpload = internalMutation({
         storageKey: args.storageKey,
         sha256: args.sha256,
         mediaKind: args.mediaKind,
-        alreadyProcessed: args.thumbnailKey !== undefined,
+        alreadyProcessed: thumbnailKey !== undefined,
       });
-      return existing._id;
+      return { entryId: existing._id, name };
     }
     const entryId = await ctx.db.insert("entries", {
       galleryId: gallery._id,
       folderId: intent.folderId,
       ownerProfileId: intent.ownerProfileId,
       uploadIntentId: intent._id,
-      name: intent.name,
+      name,
+      nameKey,
       description: intent.description,
       mimeType: args.actualMimeType,
       extension: args.extension,
@@ -262,7 +346,7 @@ export const completeUpload = internalMutation({
       mediaKind: args.mediaKind,
       alreadyProcessed: args.thumbnailKey !== undefined,
     });
-    return entryId;
+    return { entryId, name };
   },
 });
 
@@ -462,29 +546,7 @@ export const claimMaintenance = internalMutation({
           ctx.db.get("galleries", moveJob.destinationGalleryId),
           ctx.db.get("folders", moveJob.destinationFolderId),
         ]);
-      if (
-        attempts > STORAGE_JOB_MAX_ATTEMPTS ||
-        entry === null ||
-        entry.state !== "ready" ||
-        entry.galleryId !== moveJob.sourceGalleryId ||
-        entry.storageKey !== moveJob.expectedSourceStorageKey ||
-        entry.migrationState !== "moving" ||
-        entry.moveJobId !== moveJob._id ||
-        sourceGallery === null ||
-        sourceGallery.deletedAt !== undefined ||
-        sourceGallery.pendingMigrationId !== undefined ||
-        destinationGallery === null ||
-        destinationGallery.deletedAt !== undefined ||
-        destinationGallery.kind !== "image" ||
-        destinationGallery.pendingMigrationId !== undefined ||
-        destinationFolder === null ||
-        destinationFolder.galleryId !== destinationGallery._id ||
-        destinationFolder.filesystemMissingAt !== undefined
-      ) {
-        const moveError =
-          attempts > STORAGE_JOB_MAX_ATTEMPTS
-            ? moveJob.error ?? "Move exhausted its retries"
-            : "Move source or destination is no longer available";
+      const failMove = async (moveError: string) => {
         await ctx.db.patch("entryMoveJobs", moveJob._id, {
           status: "failed",
           leaseExpiresAt: undefined,
@@ -510,6 +572,64 @@ export const claimMaintenance = internalMutation({
           error: moveError,
         });
         return { kind: "none" as const };
+      };
+      if (
+        attempts > STORAGE_JOB_MAX_ATTEMPTS ||
+        entry === null ||
+        entry.state !== "ready" ||
+        entry.galleryId !== moveJob.sourceGalleryId ||
+        entry.storageKey !== moveJob.expectedSourceStorageKey ||
+        entry.migrationState !== "moving" ||
+        entry.moveJobId !== moveJob._id ||
+        sourceGallery === null ||
+        sourceGallery.deletedAt !== undefined ||
+        sourceGallery.pendingMigrationId !== undefined ||
+        destinationGallery === null ||
+        destinationGallery.deletedAt !== undefined ||
+        destinationGallery.kind !== "image" ||
+        destinationGallery.pendingMigrationId !== undefined ||
+        destinationFolder === null ||
+        destinationFolder.galleryId !== destinationGallery._id ||
+        destinationFolder.filesystemMissingAt !== undefined
+      ) {
+        return await failMove(
+          attempts > STORAGE_JOB_MAX_ATTEMPTS
+            ? moveJob.error ?? "Move exhausted its retries"
+            : "Move source or destination is no longer available",
+        );
+      }
+      // The destination may have gained the name since the job was queued
+      // (an upload, another move). Without a policy the item fails here,
+      // before any copy; rename picks again; replace learns its target.
+      let fileName = moveJob.targetName ?? entry.name;
+      let replaces: Doc<"entries"> | null = null;
+      const occupant = await findReadyEntryByNameKey(
+        ctx,
+        destinationFolder._id,
+        entryNameKey(fileName),
+        entry._id,
+      );
+      if (occupant !== null) {
+        if (moveJob.conflictPolicy === "replace") {
+          replaces = occupant;
+        } else if (moveJob.conflictPolicy === "rename") {
+          fileName = await pickAvailableName(
+            ctx,
+            destinationFolder._id,
+            entry.name,
+            await reservedNameKeys(ctx, destinationFolder._id, {
+              jobId: moveJob._id,
+            }),
+            entry._id,
+          );
+          await ctx.db.patch("entryMoveJobs", moveJob._id, {
+            targetName: fileName,
+          });
+        } else {
+          return await failMove(
+            `${fileName} already exists in the destination folder`,
+          );
+        }
       }
       await ctx.db.patch("entryMoveJobs", moveJob._id, {
         status: "processing",
@@ -538,7 +658,14 @@ export const claimMaintenance = internalMutation({
                 destinationFolder,
               )
             : [],
-        fileName: entry.name,
+        fileName,
+        // Overwrite a same-named destination file; for user storage also
+        // tells the worker which path the replaced entry occupied.
+        replace: moveJob.conflictPolicy === "replace",
+        replacesStorageKey:
+          destinationGallery.storageKind === "user"
+            ? replaces?.storageKey
+            : undefined,
         sourceStorageKey: entry.storageKey,
         sourceThumbnailKey: entry.thumbnailKey,
         sourcePreviewKey: entry.previewKey,
@@ -896,20 +1023,12 @@ export const completeEntryMove = internalMutation({
       }
       return null;
     }
-    if (
-      entry === null ||
-      entry.state !== "ready" ||
-      entry.galleryId !== job.sourceGalleryId ||
-      entry.storageKey !== job.expectedSourceStorageKey ||
-      entry.migrationState !== "moving" ||
-      entry.moveJobId !== job._id
-    ) {
-      const changedError = "Move source changed before completion";
+    const failCompletion = async (message: string) => {
       await ctx.db.patch("entryMoveJobs", job._id, {
         status: "failed",
         claimedAt: undefined,
         leaseExpiresAt: undefined,
-        error: changedError,
+        error: message,
       });
       if (entry !== null && entry.moveJobId === job._id) {
         await ctx.db.patch("entries", entry._id, {
@@ -918,14 +1037,24 @@ export const completeEntryMove = internalMutation({
           migrationClaimedAt: undefined,
           migrationAttempts: undefined,
           migrationRetryAt: undefined,
-          migrationError: changedError,
+          migrationError: message,
         });
       }
       await settleBulkMoveItem(ctx, job.bulkOperationId, {
         success: false,
-        error: changedError,
+        error: message,
       });
       return null;
+    };
+    if (
+      entry === null ||
+      entry.state !== "ready" ||
+      entry.galleryId !== job.sourceGalleryId ||
+      entry.storageKey !== job.expectedSourceStorageKey ||
+      entry.migrationState !== "moving" ||
+      entry.moveJobId !== job._id
+    ) {
+      return await failCompletion("Move source changed before completion");
     }
     const [sourceGallery, destinationGallery, destinationFolder] =
       await Promise.all([
@@ -942,13 +1071,55 @@ export const completeEntryMove = internalMutation({
     ) {
       throw new Error("Move destination is no longer available");
     }
+    const targetName = job.targetName ?? entry.name;
+    const targetNameKey = entryNameKey(targetName);
+    const occupant = await findReadyEntryByNameKey(
+      ctx,
+      destinationFolder._id,
+      targetNameKey,
+      entry._id,
+    );
+    if (occupant !== null && job.conflictPolicy !== "replace") {
+      return await failCompletion(
+        `${targetName} already exists in the destination folder`,
+      );
+    }
     const sourceStorageKey = entry.storageKey;
     const sourceThumbnailKey = entry.thumbnailKey;
     const sourcePreviewKey = entry.previewKey;
     const now = Date.now();
+    if (occupant !== null) {
+      await ctx.db.patch("entries", occupant._id, {
+        state: "deleted",
+        deletedAt: now,
+        updatedAt: now,
+      });
+      await adjustGalleryStats(ctx, destinationGallery, {
+        items: -1,
+        bytes: -occupant.size,
+      });
+      await ctx.db.insert("storageDeleteJobs", {
+        entryId: occupant._id,
+        storageKey: occupant.storageKey,
+        thumbnailKey: occupant.thumbnailKey,
+        previewKey: occupant.previewKey,
+        deleteOriginal: !keepsReplacedOriginal(
+          destinationGallery.storageKind,
+          occupant.storageKey,
+          args.storageKey,
+        ),
+        deleteEntry: true,
+        status: "queued",
+        attempts: 0,
+        availableAt: 0,
+      });
+    }
     await ctx.db.patch("entries", entry._id, {
       galleryId: destinationGallery._id,
       folderId: destinationFolder._id,
+      name: targetName,
+      nameKey: targetNameKey,
+      extension: fileExtensionFromName(targetName, entry.extension),
       storageKind: destinationGallery.storageKind,
       storageKey: args.storageKey,
       thumbnailKey: args.thumbnailKey,
@@ -1005,7 +1176,7 @@ export const completeEntryMove = internalMutation({
       actorProfileId: job.actorProfileId,
       action: "entry.moved",
       galleryId: destinationGallery._id,
-      detail: `${entry.name} from ${sourceGallery.name} to ${destinationFolder.name}`,
+      detail: `${targetName} from ${sourceGallery.name} to ${destinationFolder.name}`,
       createdAt: now,
     });
     await settleBulkMoveItem(ctx, job.bulkOperationId, { success: true });

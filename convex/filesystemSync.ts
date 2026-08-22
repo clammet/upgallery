@@ -19,6 +19,7 @@ import {
 } from "./lib/storageJobs";
 import {
   cleanFilesystemSegment,
+  entryNameKey,
   fileExtensionFromName,
   filesystemSlug,
 } from "./lib/normalize";
@@ -404,6 +405,7 @@ export const reconcileFilesystemFile = internalMutation({
       await ctx.db.patch("entries", existing._id, {
         folderId: folder._id,
         name: args.name,
+        nameKey: entryNameKey(args.name),
         mimeType: args.mimeType,
         extension: args.extension,
         mediaKind: args.mediaKind,
@@ -483,6 +485,7 @@ export const reconcileFilesystemFile = internalMutation({
       folderId: folder._id,
       ownerProfileId: ownerGrant.profileId,
       name: args.name,
+      nameKey: entryNameKey(args.name),
       mimeType: args.mimeType,
       extension: args.extension,
       mediaKind: args.mediaKind,
@@ -959,6 +962,7 @@ export const completeFilesystemOperation = internalMutation({
       const now = Date.now();
       await ctx.db.patch("entries", entry._id, {
         name: operation.name,
+        nameKey: entryNameKey(operation.name),
         extension: fileExtensionFromName(operation.name, entry.extension),
         storageKey: getFilesystemStorageKey(
           gallery,

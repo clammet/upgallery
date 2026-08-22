@@ -18,8 +18,13 @@ import {
   cleanDescription,
   cleanFileName,
   cleanFilesystemSegment,
+  entryNameKey,
   fileExtensionFromName,
 } from "./lib/normalize";
+import {
+  findReadyEntryByNameKey,
+  resolveLandingName,
+} from "./lib/entryNames";
 import {
   createPasswordHash,
   createToken,
@@ -28,7 +33,7 @@ import {
 } from "./lib/crypto";
 import { formatBytes } from "./lib/format";
 import { adjustGalleryStats } from "./lib/galleryStats";
-import { disposition } from "./lib/validators";
+import { conflictPolicy, disposition } from "./lib/validators";
 import {
   markThumbnailPendingIfNeeded,
   MEDIA_METADATA_VERSION,
@@ -38,7 +43,6 @@ import {
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
 const MAX_BULK_ENTRIES = 128;
-const MAX_FILESYSTEM_DIRECTORY_ITEMS = 500;
 const MAX_GALLERY_PAGE_SIZE = 250;
 
 function validateGalleryPaginationSize(numItems: number) {
@@ -250,6 +254,9 @@ export const createUploadIntent = mutation({
     password: v.optional(v.string()),
     removeLocationData: v.optional(v.boolean()),
     unlisted: v.optional(v.boolean()),
+    // Required to proceed when the folder already holds this name; without
+    // it the intent is refused with entry_exists so the client can ask.
+    conflict: v.optional(conflictPolicy),
   },
   handler: async (ctx, args) => {
     const { gallery, profile } = await assertCanUpload(
@@ -284,6 +291,16 @@ export const createUploadIntent = mutation({
         `Password must contain between 1 and ${MAX_PASSWORD_LENGTH} characters`,
       );
     }
+    const name = cleanFileName(args.name);
+    // Early refusal so no bytes are sent for a name the user must decide on;
+    // claimUpload repeats the check when the storage server starts.
+    if (args.conflict === undefined) {
+      await resolveLandingName(ctx, {
+        gallery,
+        folderId: args.folderId,
+        name,
+      });
+    }
     const token = createToken();
     const password =
       args.password === undefined
@@ -293,12 +310,13 @@ export const createUploadIntent = mutation({
       galleryId: gallery._id,
       folderId: args.folderId,
       ownerProfileId: profile._id,
-      name: cleanFileName(args.name),
+      name,
       description: cleanDescription(args.description),
       declaredMimeType: args.mimeType || "application/octet-stream",
       declaredSize: args.size,
       removeLocationData: args.removeLocationData || undefined,
       unlisted: args.unlisted || undefined,
+      conflictPolicy: args.conflict,
       tokenHash: await sha256(token),
       passwordSalt: password?.salt,
       passwordHash: password?.hash,
@@ -830,24 +848,19 @@ export const rename = mutation({
     if (name === entry.name) {
       return { kind: "complete" as const, entryId: entry._id, name };
     }
+    // Changing only the case of the entry's own name is allowed.
+    if (
+      (await findReadyEntryByNameKey(
+        ctx,
+        folder._id,
+        entryNameKey(name),
+        entry._id,
+      )) !== null
+    ) {
+      throw new Error("A file with that name already exists here");
+    }
 
     if (gallery.storageKind === "user") {
-      const siblings = await ctx.db
-        .query("entries")
-        .withIndex("by_folderId_and_state", (q) =>
-          q.eq("folderId", folder._id).eq("state", "ready"),
-        )
-        .take(MAX_FILESYSTEM_DIRECTORY_ITEMS + 1);
-      if (siblings.length > MAX_FILESYSTEM_DIRECTORY_ITEMS) {
-        throw new Error("Directory contains too many tracked files");
-      }
-      if (
-        siblings.some(
-          (sibling) => sibling._id !== entry._id && sibling.name === name,
-        )
-      ) {
-        throw new Error("A file with that name already exists here");
-      }
       const token = createToken();
       const operationId = await ctx.db.insert("filesystemOperations", {
         galleryId: gallery._id,
@@ -868,6 +881,7 @@ export const rename = mutation({
     const now = Date.now();
     await ctx.db.patch("entries", entry._id, {
       name,
+      nameKey: entryNameKey(name),
       extension: fileExtensionFromName(name, entry.extension),
       updatedAt: now,
     });
@@ -928,6 +942,7 @@ export const setMarkdownMode = mutation({
     }
     await ctx.db.patch("entries", entry._id, {
       name,
+      nameKey: entryNameKey(name),
       extension: args.markdown ? "md" : "txt",
       updatedAt: Date.now(),
     });
@@ -1077,155 +1092,5 @@ export const removeMany = mutation({
       createdAt: now,
     });
     return { removed: entries.length };
-  },
-});
-
-export const moveMany = mutation({
-  args: {
-    anonymousClaim: v.optional(v.string()),
-    sourceGalleryId: v.id("galleries"),
-    destinationGalleryId: v.id("galleries"),
-    destinationFolderId: v.id("folders"),
-    entryIds: v.array(v.id("entries")),
-  },
-  handler: async (ctx, args) => {
-    const entryIds = [...new Set(args.entryIds)];
-    if (entryIds.length < 1 || entryIds.length > MAX_BULK_ENTRIES) {
-      throw new Error(
-        `Select between 1 and ${MAX_BULK_ENTRIES} files to move`,
-      );
-    }
-    const [sourceGallery, destinationGallery, destinationFolder] =
-      await Promise.all([
-        ctx.db.get("galleries", args.sourceGalleryId),
-        ctx.db.get("galleries", args.destinationGalleryId),
-        ctx.db.get("folders", args.destinationFolderId),
-      ]);
-    if (
-      sourceGallery === null ||
-      sourceGallery.deletedAt !== undefined ||
-      sourceGallery.kind !== "image" ||
-      sourceGallery.pendingMigrationId !== undefined
-    ) {
-      throw new Error("Source gallery is unavailable");
-    }
-    if (
-      destinationGallery === null ||
-      destinationGallery.deletedAt !== undefined ||
-      destinationGallery.kind !== "image" ||
-      destinationGallery.pendingMigrationId !== undefined ||
-      destinationFolder === null ||
-      destinationFolder.galleryId !== destinationGallery._id ||
-      destinationFolder.filesystemMissingAt !== undefined
-    ) {
-      throw new Error("Destination folder is unavailable");
-    }
-    const [sourceRoot, destinationRoot] = await Promise.all([
-      sourceGallery.rootFolderId === undefined
-        ? null
-        : ctx.db.get("folders", sourceGallery.rootFolderId),
-      destinationGallery.rootFolderId === undefined
-        ? null
-        : ctx.db.get("folders", destinationGallery.rootFolderId),
-    ]);
-    const sourceActor = await requireGalleryManager(
-      ctx,
-      sourceGallery,
-      sourceRoot,
-      args.anonymousClaim,
-    );
-    const destinationActor = await requireGalleryManager(
-      ctx,
-      destinationGallery,
-      destinationRoot,
-      args.anonymousClaim,
-    );
-    if (sourceActor._id !== destinationActor._id) {
-      throw new Error("Gallery ownership could not be verified");
-    }
-
-    const entries = [];
-    for (const entryId of entryIds) {
-      const entry = await ctx.db.get("entries", entryId);
-      if (
-        entry === null ||
-        entry.galleryId !== sourceGallery._id ||
-        entry.state !== "ready"
-      ) {
-        throw new Error("A selected file is no longer available");
-      }
-      if (entry.migrationState !== undefined) {
-        throw new Error(`${entry.name} is already being moved`);
-      }
-      if (entry.size > destinationGallery.maxFileSize) {
-        throw new Error(
-          `${entry.name} exceeds the destination gallery's file size limit`,
-        );
-      }
-      entries.push(entry);
-    }
-
-    const movingEntries = entries.filter(
-      (entry) =>
-        entry.galleryId !== destinationGallery._id ||
-        entry.folderId !== destinationFolder._id,
-    );
-    if (destinationGallery.storageKind === "user") {
-      const existing = await ctx.db
-        .query("entries")
-        .withIndex("by_folderId_and_state", (q) =>
-          q.eq("folderId", destinationFolder._id).eq("state", "ready"),
-        )
-        .take(512);
-      const movingIds = new Set(movingEntries.map((entry) => entry._id));
-      const reservedNames = new Set(
-        existing
-          .filter((entry) => !movingIds.has(entry._id))
-          .map((entry) => entry.name),
-      );
-      for (const entry of movingEntries) {
-        cleanFilesystemSegment(entry.name);
-        if (reservedNames.has(entry.name)) {
-          throw new Error(
-            `${entry.name} already exists in the destination folder`,
-          );
-        }
-        reservedNames.add(entry.name);
-      }
-    }
-
-    const now = Date.now();
-    for (const entry of movingEntries) {
-      const moveJobId = await ctx.db.insert("entryMoveJobs", {
-        entryId: entry._id,
-        sourceGalleryId: sourceGallery._id,
-        destinationGalleryId: destinationGallery._id,
-        destinationFolderId: destinationFolder._id,
-        actorProfileId: sourceActor._id,
-        expectedSourceStorageKey: entry.storageKey,
-        status: "queued",
-        attempts: 0,
-        availableAt: 0,
-      });
-      await ctx.db.patch("entries", entry._id, {
-        moveJobId,
-        migrationState: "moving",
-        migrationClaimedAt: undefined,
-        migrationAttempts: 0,
-        migrationRetryAt: undefined,
-        migrationError: undefined,
-        updatedAt: now,
-      });
-    }
-    if (movingEntries.length > 0) {
-      await ctx.db.insert("auditEvents", {
-        actorProfileId: sourceActor._id,
-        action: "entries.move_queued",
-        galleryId: sourceGallery._id,
-        detail: `${movingEntries.length} file${movingEntries.length === 1 ? "" : "s"} to ${destinationGallery.name}/${destinationFolder.name}`,
-        createdAt: now,
-      });
-    }
-    return { queued: movingEntries.length };
   },
 });

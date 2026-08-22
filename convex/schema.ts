@@ -1,7 +1,11 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
+  bulkConflictPolicy,
+  bulkOperationStatus,
+  conflictPolicy,
   disposition,
+  entryMoveJobState,
   entryState,
   folderPreviewMode,
   galleryKind,
@@ -114,6 +118,8 @@ export default defineSchema({
     ownerProfileId: v.id("profiles"),
     uploadIntentId: v.optional(v.id("uploadIntents")),
     name: v.string(),
+    // Lower-cased name; image galleries keep it unique within a folder.
+    nameKey: v.string(),
     description: v.optional(v.string()),
     mimeType: v.string(),
     extension: v.string(),
@@ -150,6 +156,7 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index("by_folderId_and_state", ["folderId", "state"])
+    .index("by_folderId_and_state_and_nameKey", ["folderId", "state", "nameKey"])
     .index("by_folderId_and_state_and_moveJobId_and_createdAt", [
       "folderId",
       "state",
@@ -250,6 +257,10 @@ export default defineSchema({
     declaredSize: v.number(),
     removeLocationData: v.optional(v.boolean()),
     unlisted: v.optional(v.boolean()),
+    conflictPolicy: v.optional(conflictPolicy),
+    // Name chosen at claim time once conflicts are resolved; the entry is
+    // created under it. Absent until the storage server claims the upload.
+    resolvedName: v.optional(v.string()),
     tokenHash: v.string(),
     passwordSalt: v.optional(v.string()),
     passwordHash: v.optional(v.string()),
@@ -262,6 +273,7 @@ export default defineSchema({
     leaseExpiresAt: v.optional(v.number()),
   })
     .index("by_galleryId", ["galleryId"])
+    .index("by_folderId_and_state", ["folderId", "state"])
     .index("by_ownerProfileId", ["ownerProfileId"])
     .index("by_state", ["state"])
     .index("by_state_and_expiresAt", ["state", "expiresAt"])
@@ -302,7 +314,11 @@ export default defineSchema({
     actorProfileId: v.id("profiles"),
     bulkOperationId: v.optional(v.id("bulkOperations")),
     expectedSourceStorageKey: v.string(),
-    status: jobState,
+    conflictPolicy: v.optional(conflictPolicy),
+    // Name the entry takes in the destination when auto-renamed; absent
+    // means it keeps its own name.
+    targetName: v.optional(v.string()),
+    status: entryMoveJobState,
     attempts: v.number(),
     availableAt: v.number(),
     claimedAt: v.optional(v.number()),
@@ -317,7 +333,7 @@ export default defineSchema({
       "destinationFolderId",
       "status",
     ])
-    .index("by_bulkOperationId", ["bulkOperationId"]),
+    .index("by_bulkOperationId_and_status", ["bulkOperationId", "status"]),
 
   bulkOperations: defineTable({
     actorProfileId: v.id("profiles"),
@@ -333,10 +349,14 @@ export default defineSchema({
     cursor: v.optional(v.string()),
     nextIndex: v.number(),
     discoveryComplete: v.boolean(),
-    status: jobState,
+    status: bulkOperationStatus,
     totalItems: v.number(),
     completedItems: v.number(),
     failedItems: v.number(),
+    // Items parked on a name conflict until a policy resolves them.
+    conflictItems: v.number(),
+    // Once set, conflicts found later in this operation resolve themselves.
+    conflictPolicy: v.optional(bulkConflictPolicy),
     error: v.optional(v.string()),
     dismissedAt: v.optional(v.number()),
     createdAt: v.number(),

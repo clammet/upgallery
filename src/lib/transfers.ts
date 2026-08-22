@@ -1,15 +1,25 @@
 export type TransferKind = "upload" | "delete" | "move";
+/** How one parked item proceeds. */
+export type ConflictPolicy = "replace" | "rename";
+/** What a batch does with conflicts: a policy, or skip them. */
+export type ConflictChoice = ConflictPolicy | "skip";
 export type TransferItem = {
   id: number;
   name: string;
   kind: TransferKind;
-  /** Queued items wait for a free slot; they are pending but not yet running. */
-  status: "queued" | "active" | "success" | "error";
+  /**
+   * Queued items wait for a free slot; conflict items wait for the user to
+   * pick a policy. Neither counts as finished, but only queued and active
+   * items are pending work.
+   */
+  status: "queued" | "active" | "success" | "error" | "conflict";
   /** 0..1 fraction, or null for operations without measurable progress. */
   progress: number | null;
   error?: string;
   /** Re-attempts the failed operation; present when the failure is retryable. */
   retry?: () => void;
+  /** Re-runs the operation under a policy; present on conflict rows. */
+  resolve?: (policy: ConflictPolicy) => void;
   /**
    * True once the operation needs this tab's JavaScript to finish (beyond a
    * fire-and-forget server mutation), so closing the page would strand it.
@@ -20,6 +30,9 @@ export type TransferItem = {
 let nextId = 1;
 let items: TransferItem[] = [];
 const listeners = new Set<() => void>();
+// Batches still queuing work register here so "Replace all" / "Auto rename
+// all" / "Skip" also covers the items they have not started yet.
+const batchPolicyListeners = new Set<(choice: ConflictChoice) => void>();
 
 let emitScheduled = false;
 
@@ -132,6 +145,13 @@ export function markTransferClientWork(id: number): void {
   update(id, { clientWork: true });
 }
 
+/** Shows the name the item ended up with (an auto-renamed upload). */
+export function renameTransfer(id: number, name: string): void {
+  const current = items.find((item) => item.id === id);
+  if (current === undefined || current.name === name) return;
+  update(id, { name });
+}
+
 export function completeTransfer(id: number): void {
   update(id, { status: "success", progress: 1 });
 }
@@ -141,7 +161,75 @@ export function failTransfer(
   error: string,
   retry?: () => void,
 ): void {
-  update(id, { status: "error", error, retry });
+  update(id, { status: "error", error, retry, resolve: undefined });
+}
+
+/**
+ * Parks the item because the destination already holds its name. `resolve`
+ * re-runs it under the chosen policy; until then the row shows "Item exists"
+ * with Replace / Auto rename. Only "Skip" drops parked rows.
+ */
+export function conflictTransfer(
+  id: number,
+  resolve: (policy: ConflictPolicy) => void,
+): void {
+  update(id, {
+    status: "conflict",
+    error: "Item exists",
+    retry: undefined,
+    resolve,
+    progress: 0,
+  });
+}
+
+export function resolveTransferConflict(
+  id: number,
+  policy: ConflictPolicy,
+): void {
+  const current = items.find((item) => item.id === id);
+  if (current === undefined || current.status !== "conflict") return;
+  const resolve = current.resolve;
+  if (resolve === undefined) return;
+  update(id, {
+    status: "queued",
+    error: undefined,
+    resolve: undefined,
+    progress: 0,
+  });
+  resolve(policy);
+}
+
+/**
+ * Lets a batch adopt the choice made by "Replace all" / "Auto rename all" /
+ * "Skip" for the items it has not started yet. Returns the unregister
+ * function.
+ */
+export function registerConflictBatch(
+  onChoice: (choice: ConflictChoice) => void,
+): () => void {
+  batchPolicyListeners.add(onChoice);
+  return () => {
+    batchPolicyListeners.delete(onChoice);
+  };
+}
+
+/** Applies one policy to every parked item and every running batch. */
+export function resolveAllTransferConflicts(policy: ConflictPolicy): void {
+  for (const listener of batchPolicyListeners) listener(policy);
+  for (const item of items) {
+    if (item.status === "conflict") resolveTransferConflict(item.id, policy);
+  }
+}
+
+/**
+ * Drops every parked item and tells running batches to skip conflicts from
+ * now on. The files are simply not uploaded; nothing else changes.
+ */
+export function skipAllTransferConflicts(): void {
+  for (const listener of batchPolicyListeners) listener("skip");
+  discardTransfers(
+    items.filter((item) => item.status === "conflict").map((item) => item.id),
+  );
 }
 
 export function retryTransfer(id: number): void {
@@ -158,8 +246,13 @@ export function retryTransfer(id: number): void {
   retry();
 }
 
+/** True for rows "Clear" may drop: done or failed, neither pending nor parked. */
+export function transferFinished(item: TransferItem): boolean {
+  return item.status === "success" || item.status === "error";
+}
+
 export function clearFinishedTransfers(): void {
-  const remaining = items.filter(transferPending);
+  const remaining = items.filter((item) => !transferFinished(item));
   if (remaining.length === items.length) return;
   items = remaining;
   emit();
@@ -185,23 +278,48 @@ export function parseTransferConcurrency(raw: string | undefined): number {
   return Math.min(parsed, MAX_TRANSFER_CONCURRENCY);
 }
 
-/** Runs worker over every item, keeping at most `limit` calls in flight. */
-export async function runWithConcurrency<T>(
-  tasks: readonly T[],
-  limit: number,
-  worker: (task: T) => Promise<void>,
-): Promise<void> {
-  let index = 0;
-  await Promise.all(
-    Array.from(
-      { length: Math.max(1, Math.min(limit, tasks.length)) },
-      async () => {
-        while (index < tasks.length) {
-          const task = tasks[index];
-          index += 1;
-          await worker(task);
-        }
-      },
-    ),
-  );
+export type WorkQueue = {
+  /** Runs the job once a slot is free; jobs start in push order. */
+  push: (job: () => Promise<void>) => void;
+  /** Resolves once nothing is queued or running. */
+  drain: () => Promise<void>;
+};
+
+/**
+ * Keeps at most `limit` jobs in flight. Unlike a one-shot worker pool it
+ * accepts jobs at any time, so items re-run after a conflict is resolved
+ * wait for a slot like the rest.
+ */
+export function createWorkQueue(limit: number): WorkQueue {
+  const pending: Array<() => Promise<void>> = [];
+  const waiting: Array<() => void> = [];
+  let inFlight = 0;
+  const pump = () => {
+    while (inFlight < Math.max(1, limit) && pending.length > 0) {
+      const job = pending.shift()!;
+      inFlight += 1;
+      void Promise.resolve()
+        .then(job)
+        .catch(() => undefined)
+        .then(() => {
+          inFlight -= 1;
+          pump();
+        });
+    }
+    if (inFlight === 0 && pending.length === 0) {
+      for (const resolve of waiting.splice(0)) resolve();
+    }
+  };
+  return {
+    push(job) {
+      pending.push(job);
+      pump();
+    },
+    drain() {
+      if (inFlight === 0 && pending.length === 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        waiting.push(resolve);
+      });
+    },
+  };
 }

@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { AuthControls } from "./AuthControls";
 import { TransferStatus } from "./TransferStatus";
-import { BulkOperationStatus } from "./BulkOperationStatus";
 import { THEME_MODE_DEFAULTS } from "../lib/theme";
 import styles from "../styles/layout.module.css";
 
@@ -51,7 +50,6 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
         <div className={styles.headerActions}>{actions}<AuthControls /></div>
       </header>
       <main className={styles.main}>
-        <BulkOperationStatus />
         <TransferStatus />
         {children}
       </main>

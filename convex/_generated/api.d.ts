@@ -22,6 +22,7 @@ import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_bulkOperations from "../lib/bulkOperations.js";
 import type * as lib_crypto from "../lib/crypto.js";
+import type * as lib_entryNames from "../lib/entryNames.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
 import type * as lib_format from "../lib/format.js";
 import type * as lib_galleryStats from "../lib/galleryStats.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/bulkOperations": typeof lib_bulkOperations;
   "lib/crypto": typeof lib_crypto;
+  "lib/entryNames": typeof lib_entryNames;
   "lib/filesystem": typeof lib_filesystem;
   "lib/format": typeof lib_format;
   "lib/galleryStats": typeof lib_galleryStats;

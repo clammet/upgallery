@@ -1,6 +1,29 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 
+export type OperationCounts = {
+  discoveryComplete: boolean;
+  totalItems: number;
+  completedItems: number;
+  failedItems: number;
+  conflictItems: number;
+};
+
+// Items are either still moving, done, failed, or parked on a name conflict.
+// Parked items hold the operation in "conflict" (nothing is running, but it
+// is not over) until a policy resolves them or the operation is dismissed.
+export function operationStatus(
+  counts: OperationCounts,
+): "processing" | "complete" | "failed" | "conflict" {
+  const settled =
+    counts.completedItems + counts.failedItems + counts.conflictItems;
+  if (!counts.discoveryComplete || settled < counts.totalItems) {
+    return "processing";
+  }
+  if (counts.conflictItems > 0) return "conflict";
+  return counts.failedItems > 0 ? "failed" : "complete";
+}
+
 export async function settleBulkMoveItem(
   ctx: MutationCtx,
   operationId: Id<"bulkOperations"> | undefined,
@@ -19,18 +42,13 @@ export async function settleBulkMoveItem(
   const completedItems =
     operation.completedItems + (result.success ? 1 : 0);
   const failedItems = operation.failedItems + (result.success ? 0 : 1);
-  const settledItems = completedItems + failedItems;
-  const finished =
-    operation.discoveryComplete && settledItems >= operation.totalItems;
   await ctx.db.patch("bulkOperations", operation._id, {
     completedItems,
     failedItems,
     ...(result.error === undefined
       ? {}
       : { error: result.error.slice(0, 1000) }),
-    ...(finished
-      ? { status: failedItems > 0 ? "failed" as const : "complete" as const }
-      : {}),
+    status: operationStatus({ ...operation, completedItems, failedItems }),
     updatedAt: Date.now(),
   });
 }

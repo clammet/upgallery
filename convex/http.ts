@@ -1,4 +1,5 @@
 import { httpRouter } from "convex/server";
+import { ConvexError } from "convex/values";
 import { httpAction, env } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -21,6 +22,24 @@ function json(value: unknown, status = 200) {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+// Structured refusals (a name the folder already holds) travel as a code so
+// the storage server can pass them to the browser; anything else is a plain
+// message.
+function errorResponse(error: unknown, fallback: string) {
+  if (
+    error instanceof ConvexError &&
+    isRecord(error.data) &&
+    error.data.code === "entry_exists"
+  ) {
+    return json({ error: "Item exists", code: "entry_exists" }, 409);
+  }
+  return json(
+    { error: error instanceof Error ? error.message : fallback },
+    400,
+  );
+}
+
 function storageAuthorized(request: Request): boolean {
   const secret = env.STORAGE_INTERNAL_SECRET;
   return (
@@ -66,10 +85,7 @@ http.route({
       );
       return json(result);
     } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Upload rejected" },
-        400,
-      );
+      return errorResponse(error, "Upload rejected");
     }
   }),
 });
@@ -133,7 +149,7 @@ http.route({
       return json({ error: "Invalid media kind" }, 400);
     }
     try {
-      const entryId = await ctx.runMutation(
+      const result = await ctx.runMutation(
         internal.storageGateway.completeUpload,
         {
           intentId: body.intentId as Id<"uploadIntents">,
@@ -156,12 +172,9 @@ http.route({
           filesystemIdentity: body.filesystemIdentity,
         },
       );
-      return json({ entryId });
+      return json(result);
     } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Upload failed" },
-        400,
-      );
+      return errorResponse(error, "Upload failed");
     }
   }),
 });

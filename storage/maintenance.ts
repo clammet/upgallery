@@ -8,6 +8,7 @@ import {
   absoluteStoragePath,
   buildStorageKey,
 } from "./paths.js";
+import { removeReplacedFile } from "./replacedFile.js";
 
 export async function runMaintenanceOnce(): Promise<void> {
   const claim = await callConvex<MaintenanceClaim>(
@@ -148,7 +149,17 @@ async function processEntryMove(
       storageKey,
       signal,
       claim.sha256,
+      claim.replace === true,
     );
+    if (
+      claim.replacesStorageKey !== undefined &&
+      claim.replacesStorageKey !== storageKey
+    ) {
+      await removeReplacedFile(
+        claim.replacesStorageKey,
+        absoluteStoragePath(storageKey),
+      );
+    }
     let thumbnailKey: string | undefined;
     if (claim.sourceThumbnailKey !== undefined) {
       thumbnailKey = buildStorageKey({
@@ -200,11 +211,15 @@ async function processEntryMove(
   }
 }
 
+// An existing destination with the expected content (or any content, for
+// content-addressed derivatives) is kept. Different content is refused
+// unless `overwrite` is set, in which case the rename replaces it in place.
 async function copyAtomically(
   sourceKey: string,
   destinationKey: string,
   signal: AbortSignal,
   expectedSha256?: string,
+  overwrite = false,
 ) {
   const source = absoluteStoragePath(sourceKey);
   const destination = absoluteStoragePath(destinationKey);
@@ -216,13 +231,13 @@ async function copyAtomically(
     destinationExists = false;
   }
   if (destinationExists) {
-    if (
-      expectedSha256 !== undefined &&
-      (await fileSha256(destination, signal)) !== expectedSha256
-    ) {
+    const sameContent =
+      expectedSha256 === undefined ||
+      (await fileSha256(destination, signal)) === expectedSha256;
+    if (sameContent) return;
+    if (!overwrite) {
       throw new Error("Destination already contains a different file");
     }
-    return;
   }
   const temporary = `${destination}.partial-${process.pid}-${randomUUID()}`;
   try {

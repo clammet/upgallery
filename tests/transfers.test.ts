@@ -1,20 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   beginTransfer,
+  skipAllTransferConflicts,
   clearFinishedTransfers,
   completeTransfer,
+  conflictTransfer,
+  createWorkQueue,
   discardTransfers,
   failTransfer,
   getTransfers,
   markTransferClientWork,
   parseTransferConcurrency,
   queueTransfer,
+  registerConflictBatch,
+  renameTransfer,
   reportTransferProgress,
+  resolveAllTransferConflicts,
+  resolveTransferConflict,
   retryTransfer,
-  runWithConcurrency,
   startTransfer,
   subscribeTransfers,
   transferPending,
+  type ConflictPolicy,
 } from "../src/lib/transfers";
 
 describe("transfers store", () => {
@@ -199,6 +206,88 @@ describe("transfers store", () => {
       getTransfers().find((candidate) => candidate.id === id),
     ).toMatchObject({ status: "success", progress: 1 });
   });
+
+  it("parks a conflict until a policy re-runs it, and Clear leaves it alone", () => {
+    const id = beginTransfer("dupe.jpg", "upload");
+    const find = () => getTransfers().find((candidate) => candidate.id === id);
+    const chosen: ConflictPolicy[] = [];
+    conflictTransfer(id, (policy) => chosen.push(policy));
+    expect(find()).toMatchObject({
+      status: "conflict",
+      error: "Item exists",
+      progress: 0,
+    });
+    expect(transferPending(find()!)).toBe(false);
+
+    resolveTransferConflict(id, "rename");
+    expect(chosen).toEqual(["rename"]);
+    expect(find()).toMatchObject({ status: "queued", progress: 0 });
+    expect(find()?.error).toBeUndefined();
+    expect(find()?.resolve).toBeUndefined();
+    // A second resolution is a no-op: the row is no longer parked.
+    resolveTransferConflict(id, "replace");
+    expect(chosen).toEqual(["rename"]);
+
+    const parkedId = beginTransfer("other.jpg", "upload");
+    conflictTransfer(parkedId, () => undefined);
+    const doneId = beginTransfer("done.jpg", "upload");
+    completeTransfer(doneId);
+    clearFinishedTransfers();
+    expect(
+      getTransfers().find((candidate) => candidate.id === parkedId),
+    ).toMatchObject({ status: "conflict" });
+    expect(
+      getTransfers().find((candidate) => candidate.id === doneId),
+    ).toBeUndefined();
+    expect(find()).toBeDefined();
+    skipAllTransferConflicts();
+    expect(
+      getTransfers().find((candidate) => candidate.id === parkedId),
+    ).toBeUndefined();
+  });
+
+  it("applies an all-items policy to parked rows and registered batches", () => {
+    const batchPolicies: ConflictPolicy[] = [];
+    const unregister = registerConflictBatch((policy) =>
+      batchPolicies.push(policy),
+    );
+    const chosen: ConflictPolicy[] = [];
+    const first = beginTransfer("a.jpg", "upload");
+    const second = beginTransfer("b.jpg", "upload");
+    conflictTransfer(first, (policy) => chosen.push(policy));
+    conflictTransfer(second, (policy) => chosen.push(policy));
+
+    resolveAllTransferConflicts("replace");
+    expect(chosen).toEqual(["replace", "replace"]);
+    expect(batchPolicies).toEqual(["replace"]);
+
+    // Skip tells batches to skip from now on and drops parked rows.
+    const third = beginTransfer("c.jpg", "upload");
+    conflictTransfer(third, (policy) => chosen.push(policy));
+    skipAllTransferConflicts();
+    expect(batchPolicies).toEqual(["replace", "skip"]);
+    expect(chosen).toEqual(["replace", "replace"]);
+    expect(
+      getTransfers().find((candidate) => candidate.id === third),
+    ).toBeUndefined();
+
+    unregister();
+    resolveAllTransferConflicts("rename");
+    expect(batchPolicies).toEqual(["replace", "skip"]);
+    completeTransfer(first);
+    completeTransfer(second);
+  });
+
+  it("renames a row to the name it ended up with", () => {
+    const id = beginTransfer("photo.jpg", "upload");
+    const before = getTransfers();
+    renameTransfer(id, "photo.jpg");
+    expect(getTransfers()).toBe(before);
+    renameTransfer(id, "photo (2).jpg");
+    expect(
+      getTransfers().find((candidate) => candidate.id === id)?.name,
+    ).toBe("photo (2).jpg");
+  });
 });
 
 describe("parseTransferConcurrency", () => {
@@ -217,28 +306,41 @@ describe("parseTransferConcurrency", () => {
   });
 });
 
-describe("runWithConcurrency", () => {
-  it("processes every task while keeping at most `limit` in flight", async () => {
+describe("createWorkQueue", () => {
+  it("runs every job while keeping at most `limit` in flight", async () => {
     let inFlight = 0;
     let peak = 0;
     const done: number[] = [];
-    await runWithConcurrency([1, 2, 3, 4, 5], 2, async (task) => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      inFlight -= 1;
-      done.push(task);
-    });
+    const queue = createWorkQueue(2);
+    for (const task of [1, 2, 3, 4, 5]) {
+      queue.push(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight -= 1;
+        done.push(task);
+      });
+    }
+    await queue.drain();
     expect(done.toSorted((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
     expect(peak).toBe(2);
   });
 
-  it("handles an empty task list and limits above the task count", async () => {
-    await runWithConcurrency([], 4, () => Promise.reject(new Error("no")));
+  it("drains immediately when idle, survives rejected jobs, and accepts late jobs", async () => {
+    const queue = createWorkQueue(8);
+    await queue.drain();
     const seen: string[] = [];
-    await runWithConcurrency(["only"], 8, async (task) => {
-      seen.push(task);
+    queue.push(() => Promise.reject(new Error("no")));
+    queue.push(async () => {
+      seen.push("only");
     });
+    await queue.drain();
     expect(seen).toEqual(["only"]);
+    // Work pushed after a drain (a resolved conflict) still runs.
+    queue.push(async () => {
+      seen.push("later");
+    });
+    await queue.drain();
+    expect(seen).toEqual(["only", "later"]);
   });
 });

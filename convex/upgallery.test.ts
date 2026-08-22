@@ -484,6 +484,7 @@ describe("upgallery backend", () => {
           folderId: rootFolderId,
           ownerProfileId: anonymous.profileId,
           name,
+          nameKey: name.toLowerCase(),
           mimeType: "image/jpeg",
           extension: "jpg",
           mediaKind: "image",
@@ -498,14 +499,15 @@ describe("upgallery backend", () => {
       return [await insert("moved.jpg", "d"), await insert("deleted.jpg", "e")];
     });
     await expect(
-      t.mutation(api.entries.moveMany, {
+      t.mutation(api.bulkOperations.startMove, {
         anonymousClaim: anonymous.anonymousClaim,
         sourceGalleryId: galleryId,
+        sourceFolderId: rootFolderId,
         destinationGalleryId: galleryId,
         destinationFolderId: created.folderId,
-        entryIds: [movedEntryId],
+        selection: { kind: "ids", entryIds: [movedEntryId] },
       }),
-    ).resolves.toEqual({ queued: 1 });
+    ).resolves.toBeDefined();
     await expect(
       t.mutation(api.entries.removeMany, {
         anonymousClaim: anonymous.anonymousClaim,
@@ -742,7 +744,7 @@ describe("upgallery backend", () => {
       unlisted: true,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "text/plain",
         extension: "txt",
@@ -801,7 +803,7 @@ describe("upgallery backend", () => {
       size: 123,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -937,7 +939,7 @@ describe("upgallery backend", () => {
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
     const sha = "e".repeat(64);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/heic",
         extension: "heic",
@@ -1283,6 +1285,7 @@ describe("upgallery backend", () => {
           folderId: created.folderId,
           ownerProfileId: admin.profileId,
           name,
+          nameKey: name.toLowerCase(),
           mimeType: "image/jpeg",
           extension: "jpg",
           mediaKind: "image",
@@ -1620,6 +1623,7 @@ describe("upgallery backend", () => {
           folderId: japan.folderId,
           ownerProfileId: owner.profileId,
           name: "shrine.jpg",
+          nameKey: "shrine.jpg",
           mimeType: "image/jpeg",
           extension: "jpg",
           mediaKind: "image",
@@ -1723,6 +1727,7 @@ describe("upgallery backend", () => {
           folderId,
           ownerProfileId: owner.profileId,
           name: "portrait.jpg",
+          nameKey: "portrait.jpg",
           mimeType: "image/jpeg",
           extension: "jpg",
           mediaKind: "image",
@@ -1825,6 +1830,7 @@ describe("upgallery backend", () => {
         folderId: rootFolderId,
         ownerProfileId: owner.profileId,
         name: "original.jpg",
+        nameKey: "original.jpg",
         mimeType: "image/jpeg",
         extension: "jpg",
         mediaKind: "image",
@@ -1884,6 +1890,7 @@ describe("upgallery backend", () => {
         folderId: gallery!.rootFolderId!,
         ownerProfileId: owner.profileId,
         name: "portrait.jpg",
+        nameKey: "portrait.jpg",
         mimeType: "image/jpeg",
         extension: "jpg",
         mediaKind: "image",
@@ -1976,7 +1983,7 @@ describe("upgallery backend", () => {
       size: 123,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -2079,7 +2086,7 @@ describe("upgallery backend", () => {
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
     const sha256 = "d".repeat(64);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
       intentId: intent.intentId,
       actualMimeType: "audio/x-wav",
       extension: "wav",
@@ -2143,6 +2150,7 @@ describe("upgallery backend", () => {
         folderId: gallery!.rootFolderId!,
         ownerProfileId: admin.profileId,
         name: "existing.wav",
+        nameKey: "existing.wav",
         mimeType: "audio/x-wav",
         extension: "wav",
         mediaKind: "audio",
@@ -2189,6 +2197,7 @@ describe("upgallery backend", () => {
         folderId: gallery!.rootFolderId!,
         ownerProfileId: admin.profileId,
         name: "existing.mp4",
+        nameKey: "existing.mp4",
         mimeType: "video/mp4",
         extension: "mp4",
         mediaKind: "video",
@@ -2247,7 +2256,7 @@ describe("upgallery backend", () => {
     ).resolves.toMatchObject({ removeLocationData: true });
     const oldSha = "a".repeat(64);
     const oldStorageKey = `public/shared/private-metadata/aa/aa/${oldSha}.jpg`;
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -2392,7 +2401,7 @@ describe("upgallery backend", () => {
     );
     await t.mutation(internal.storageGateway.claimUpload, intent);
     const sha = "d".repeat(64);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -2463,6 +2472,7 @@ describe("upgallery backend", () => {
         folderId,
         ownerProfileId: profileId,
         name: "photo.jpg",
+        nameKey: "photo.jpg",
         mimeType: "image/jpeg",
         extension: "jpg",
         mediaKind: "image",
@@ -2590,6 +2600,7 @@ describe("upgallery backend", () => {
         folderId: gallery!.rootFolderId!,
         ownerProfileId: uploader.profileId,
         name: "mine.txt",
+        nameKey: "mine.txt",
         mimeType: "text/plain",
         extension: "txt",
         mediaKind: "text",
@@ -2699,6 +2710,7 @@ describe("upgallery backend", () => {
             folderId,
             ownerProfileId: owner.profileId,
             name: `photo-${index}.jpg`,
+            nameKey: `photo-${index}.jpg`,
             mimeType: "image/jpeg",
             extension: "jpg",
             mediaKind: "image",
@@ -2826,7 +2838,7 @@ describe("upgallery backend", () => {
       size: 45,
     });
     await t.mutation(internal.storageGateway.claimUpload, intent);
-    const entryId = await t.mutation(internal.storageGateway.completeUpload, {
+    const { entryId } = await t.mutation(internal.storageGateway.completeUpload, {
         intentId: intent.intentId,
         actualMimeType: "image/jpeg",
         extension: "jpg",
@@ -3065,6 +3077,7 @@ describe("upgallery backend", () => {
             folderId: shootsId,
             ownerProfileId: owner.profileId,
             name: "portrait.jpg",
+            nameKey: "portrait.jpg",
             mimeType: "image/jpeg",
             extension: "jpg",
             mediaKind: "image",

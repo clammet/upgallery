@@ -1,12 +1,16 @@
 .bar { align-items: center; display: flex; gap: .5rem; justify-content: space-between; }
 .barFailed { color: #bd2c31; }
 .barActions { align-items: center; display: flex; gap: .25rem; }
-.panel { background: var(--gallery-surface); border: 1px solid var(--border); border-right: 0; border-radius: var(--gallery-radius) 0 0 var(--gallery-radius); bottom: .65rem; box-shadow: var(--shadow); display: flex; flex-direction: column; position: fixed; right: 0; top: 52px; width: min(320px, 90vw); z-index: 40; }
+/* Shrink-to-fit: the pane grows with its widest row (a name plus its
+   Replace / Auto rename buttons) up to the cap, and only then do names
+   truncate. The minmax(0, 1fr) tracks let rows shrink below their content so
+   the list never scrolls sideways. */
+.panel { background: var(--gallery-surface); border: 1px solid var(--border); border-right: 0; border-radius: var(--gallery-radius) 0 0 var(--gallery-radius); bottom: .65rem; box-shadow: var(--shadow); display: flex; flex-direction: column; max-width: min(640px, 90vw); min-width: min(320px, 90vw); position: fixed; right: 0; top: 52px; width: auto; z-index: 40; }
 .panelHeader { align-items: center; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; padding: .55rem .75rem; }
 .panelHeader h2 { font-size: .95rem; margin: 0; }
 .panelActions { align-items: center; display: flex; gap: .4rem; }
-.list { align-content: start; display: grid; flex: 1; gap: .65rem; list-style: none; margin: 0; overflow-y: auto; padding: .6rem .75rem .75rem; }
-.row { display: grid; gap: .3rem; }
+.list { align-content: start; display: grid; flex: 1; gap: .65rem; grid-template-columns: minmax(0, 1fr); list-style: none; margin: 0; overflow-x: hidden; overflow-y: auto; padding: .6rem .75rem .75rem; }
+.row { display: grid; gap: .3rem; grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .rowTop { align-items: center; display: flex; gap: .45rem; }
 .rowName { flex: 1; font-size: .8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rowKind { color: var(--gallery-muted); flex: none; font-size: .68rem; text-transform: capitalize; }
@@ -27,3 +31,10 @@
   .spinner { animation-duration: 1.8s; }
   .progressIndeterminate { animation-duration: 2.2s; }
 }
+/* Conflict controls: small text buttons in the bar ("Replace all") and at the
+   right of a parked row ("Replace" / "Auto rename"); the row name shrinks to
+   make room for them. */
+.barButton { font-size: .72rem; height: 26px; line-height: 1; padding: .2rem .5rem; white-space: nowrap; }
+.rowActions { display: flex; flex: none; gap: .3rem; }
+.rowActionButton { font-size: .7rem; height: 24px; line-height: 1; padding: .15rem .45rem; white-space: nowrap; }
+.conflictList { border-left: 2px solid var(--border); display: grid; gap: .5rem; grid-template-columns: minmax(0, 1fr); list-style: none; margin: .2rem 0 0; padding: 0 0 0 .6rem; }

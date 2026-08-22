@@ -18,7 +18,11 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { config } from "./config.js";
-import { callConvex, type UploadClaim } from "./convex.js";
+import {
+  callConvex,
+  ConvexRequestError,
+  type UploadClaim,
+} from "./convex.js";
 import { formatBytes } from "./format.js";
 import { runWithHeartbeat } from "./heartbeat.js";
 import {
@@ -35,6 +39,7 @@ import {
   sha256File,
   writeImageWithoutLocationData,
 } from "./locationMetadata.js";
+import { removeReplacedFile } from "./replacedFile.js";
 
 type ParsedFile = {
   temporaryPath: string;
@@ -133,8 +138,14 @@ export async function handleUpload(
             await installReplacing(parsed.temporaryPath, finalPath, signal);
           }
         }
+        if (
+          claim!.replacesStorageKey !== undefined &&
+          claim!.replacesStorageKey !== storageKey
+        ) {
+          await removeReplacedFile(claim!.replacesStorageKey, finalPath);
+        }
         const installed = await stat(finalPath);
-        return await callConvex<{ entryId: string }>(
+        return await callConvex<{ entryId: string; name: string }>(
           "/internal/storage/complete-upload",
           {
             intentId,
@@ -157,13 +168,17 @@ export async function handleUpload(
     response.status(201).json(completed);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Upload failed";
+    const code =
+      error instanceof ConvexRequestError ? error.code : undefined;
     if (claim !== undefined) {
       await callConvex("/internal/storage/fail-upload", {
         intentId,
         error: message,
       }).catch(() => undefined);
     }
-    response.status(400).json({ error: message });
+    response
+      .status(code === "entry_exists" ? 409 : 400)
+      .json({ error: message, code });
   } finally {
     if (temporaryDirectory !== undefined) {
       await rm(temporaryDirectory, { recursive: true, force: true }).catch(

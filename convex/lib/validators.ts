@@ -89,3 +89,21 @@ export const themeValidator = v.object({
   thumbnailFrameSize: v.optional(v.number()),
   customCss: v.optional(v.string()),
 });
+
+// How an upload or move proceeds when a gallery folder already holds a file
+// with the same name (case-insensitive). Absent means "ask first".
+export const conflictPolicy = v.union(
+  v.literal("replace"),
+  v.literal("rename"),
+);
+
+// Operation-wide choice: the two policies above, or skip every conflicting
+// item (it stays where it is and leaves the operation).
+export const bulkConflictPolicy = v.union(conflictPolicy, v.literal("skip"));
+
+// A move job parked because its destination already has the name; it waits
+// for a conflict policy before it is queued.
+export const entryMoveJobState = v.union(jobState, v.literal("conflict"));
+
+// A bulk operation whose remaining items all wait on a conflict policy.
+export const bulkOperationStatus = v.union(jobState, v.literal("conflict"));

@@ -1,6 +1,7 @@
 export const DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024;
 export const MAX_HOSTS_PER_GALLERY = 16;
 export const MAX_FOLDER_DEPTH = 32;
+const MAX_FILE_NAME_LENGTH = 240;
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLocaleLowerCase();
@@ -52,10 +53,32 @@ export function cleanFileName(value: string): string {
     .normalize("NFKC")
     .replaceAll(/[\u0000-\u001f\u007f/\\]/g, "_")
     .trim();
-  if (name.length === 0 || name.length > 240) {
+  if (name.length === 0 || name.length > MAX_FILE_NAME_LENGTH) {
     throw new Error("File name must contain between 1 and 240 characters.");
   }
   return name;
+}
+
+// Key for case-insensitive name uniqueness inside a gallery folder. Names
+// are already NFKC-normalized by cleanFileName/cleanFilesystemSegment; the
+// normalize here keeps keys stable for names that bypassed those.
+export function entryNameKey(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
+// "photo.jpg" -> "photo (2).jpg"; an existing " (n)" suffix is replaced
+// rather than stacked, and the stem is trimmed to keep the name in bounds.
+export function autoRenamedFileName(name: string, attempt: number): string {
+  const dot = name.lastIndexOf(".");
+  const hasExtension = dot > 0 && dot < name.length - 1;
+  const extension = hasExtension ? name.slice(dot) : "";
+  const stem = (hasExtension ? name.slice(0, dot) : name).replace(
+    / \(\d+\)$/,
+    "",
+  );
+  const suffix = ` (${attempt})`;
+  const maxStem = MAX_FILE_NAME_LENGTH - suffix.length - extension.length;
+  return `${stem.slice(0, Math.max(1, maxStem))}${suffix}${extension}`;
 }
 
 export function fileExtensionFromName(
