@@ -905,9 +905,6 @@ export function GalleryPage(props: {
       setAllEntriesSelected(false);
       setExcludedEntryIds(new Set());
       closeActionDialogs();
-      setNotice(
-        `${entryCount} file${entryCount === 1 ? "" : "s"} queued to move`,
-      );
     } catch (reason) {
       const message = friendlyError(
         reason,
@@ -1792,9 +1789,6 @@ export function GalleryPage(props: {
                     if (actionEntrySelection.kind === "ids") {
                       stepViewerPast(actionEntrySelection.entryIds);
                     }
-                    setNotice(
-                      `${actionEntryCount} file${actionEntryCount === 1 ? "" : "s"} queued to delete`,
-                    );
                   } catch (reason) {
                     const message = friendlyError(
                       reason,

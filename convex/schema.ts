@@ -363,7 +363,14 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_actorProfileId_and_createdAt", ["actorProfileId", "createdAt"])
-    .index("by_status_and_createdAt", ["status", "createdAt"]),
+    .index("by_status_and_createdAt", ["status", "createdAt"])
+    // Undismissed rows sort first (dismissedAt unset), so the auto-dismiss
+    // sweep reads only what it still has to touch.
+    .index("by_dismissedAt_and_status_and_updatedAt", [
+      "dismissedAt",
+      "status",
+      "updatedAt",
+    ]),
 
   storageMigrations: defineTable({
     galleryId: v.id("galleries"),

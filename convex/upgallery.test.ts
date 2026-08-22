@@ -3143,4 +3143,84 @@ describe("upgallery backend", () => {
       vi.useRealTimers();
     }
   });
+
+  test("cron dismisses finished bulk operations idle for an hour", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, { admin: true });
+    const authed = asUser(t, admin.googleSubject);
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Sweep",
+      slug: "sweep",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "sweep",
+      hosts: [{ host: "sweep.example.com", rootPath: "/" }],
+    });
+    const rootFolderId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      if (gallery?.rootFolderId === undefined) {
+        throw new Error("gallery root folder missing");
+      }
+      return gallery.rootFolderId;
+    });
+    const hour = 60 * 60 * 1000;
+    const now = Date.now();
+    const rows = await t.run(async (ctx) => {
+      const insert = (
+        status: "queued" | "complete" | "failed",
+        updatedAt: number,
+        dismissedAt?: number,
+      ) =>
+        ctx.db.insert("bulkOperations", {
+          actorProfileId: admin.profileId,
+          kind: "delete",
+          sourceGalleryId: galleryId,
+          sourceFolderId: rootFolderId,
+          selectionKind: "folder",
+          cutoffCreatedAt: updatedAt,
+          nextIndex: 0,
+          discoveryComplete: true,
+          status,
+          totalItems: 1,
+          completedItems: status === "complete" ? 1 : 0,
+          failedItems: status === "failed" ? 1 : 0,
+          conflictItems: 0,
+          createdAt: updatedAt,
+          updatedAt,
+          ...(dismissedAt === undefined ? {} : { dismissedAt }),
+        });
+      return {
+        staleComplete: await insert("complete", now - 2 * hour),
+        staleFailed: await insert("failed", now - 2 * hour),
+        freshComplete: await insert("complete", now - hour / 2),
+        staleRunning: await insert("queued", now - 2 * hour),
+        alreadyDismissed: await insert("complete", now - 2 * hour, now - hour),
+      };
+    });
+
+    const dismissed = await t.mutation(
+      internal.bulkOperations.dismissStale,
+      {},
+    );
+    expect(dismissed).toBe(2);
+
+    const after = await t.run(async (ctx) => ({
+      staleComplete: await ctx.db.get("bulkOperations", rows.staleComplete),
+      staleFailed: await ctx.db.get("bulkOperations", rows.staleFailed),
+      freshComplete: await ctx.db.get("bulkOperations", rows.freshComplete),
+      staleRunning: await ctx.db.get("bulkOperations", rows.staleRunning),
+      alreadyDismissed: await ctx.db.get(
+        "bulkOperations",
+        rows.alreadyDismissed,
+      ),
+    }));
+    expect(after.staleComplete?.dismissedAt).toBeDefined();
+    expect(after.staleFailed?.dismissedAt).toBeDefined();
+    expect(after.freshComplete?.dismissedAt).toBeUndefined();
+    expect(after.staleRunning?.dismissedAt).toBeUndefined();
+    expect(after.alreadyDismissed?.dismissedAt).toBe(now - hour);
+    expect(
+      await t.mutation(internal.bulkOperations.dismissStale, {}),
+    ).toBe(0);
+  });
 });

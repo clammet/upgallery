@@ -380,6 +380,42 @@ async function queueMoveJob(
   });
 }
 
+// Finished operations the user never cleared would otherwise sit in the
+// status bar forever. The cron hides them once they have been idle this long.
+const AUTO_DISMISS_AFTER_MS = 60 * 60 * 1000;
+const AUTO_DISMISS_BATCH = 100;
+
+export const dismissStale = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const now = Date.now();
+    const cutoff = now - AUTO_DISMISS_AFTER_MS;
+    let dismissed = 0;
+    for (const status of ["complete", "failed"] as const) {
+      const stale = await ctx.db
+        .query("bulkOperations")
+        .withIndex("by_dismissedAt_and_status_and_updatedAt", (q) =>
+          q
+            .eq("dismissedAt", undefined)
+            .eq("status", status)
+            .lt("updatedAt", cutoff),
+        )
+        .take(AUTO_DISMISS_BATCH);
+      for (const operation of stale) {
+        await ctx.db.patch("bulkOperations", operation._id, {
+          dismissedAt: now,
+        });
+        dismissed += 1;
+      }
+    }
+    if (dismissed === AUTO_DISMISS_BATCH * 2) {
+      await ctx.scheduler.runAfter(0, internal.bulkOperations.dismissStale, {});
+    }
+    return dismissed;
+  },
+});
+
 export const process = internalMutation({
   args: { operationId: v.id("bulkOperations") },
   returns: v.null(),

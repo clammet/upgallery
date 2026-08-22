@@ -65,25 +65,48 @@ function transferSummary(items: TransferItem[]): string | null {
   return `${plural(counted.length, "item")} ${verbFor(counted, 1)}`;
 }
 
-// Server-side bulk operations, which outlive the page.
+// Server-side bulk operations, which outlive the page. Worded like
+// transferSummary so the bar reads the same whichever side did the work.
 function operationSummary(operations: BulkOperation[]): string | null {
+  const verbs: Record<BulkOperation["kind"], [active: string, done: string]> =
+    {
+      delete: ["deleting", "deleted"],
+      move: ["moving", "moved"],
+    };
+  const verbFor = (subset: BulkOperation[], tense: 0 | 1) => {
+    const kind = subset[0]?.kind;
+    return kind !== undefined && subset.every((op) => op.kind === kind)
+      ? verbs[kind][tense]
+      : ["processing", "processed"][tense];
+  };
+  const sum = (subset: BulkOperation[], pick: (op: BulkOperation) => number) =>
+    subset.reduce((total, op) => total + pick(op), 0);
   const active = operations.filter(
-    (operation) =>
-      operation.status === "queued" || operation.status === "processing",
+    (op) => op.status === "queued" || op.status === "processing",
   );
-  const failed = operations.filter((operation) => operation.status === "failed");
+  const failed = operations.filter((op) => op.status === "failed");
   const finished = operations.filter(
-    (operation) =>
-      operation.status === "complete" || operation.status === "failed",
+    (op) => op.status === "complete" || op.status === "failed",
   );
   if (active.length > 0) {
-    return `${plural(active.length, "bulk operation")} running`;
+    const total = sum(active, (op) => op.totalItems);
+    // Discovery may still be counting; say what we know without a bogus "0".
+    return total === 0
+      ? `${verbFor(active, 0)} files`
+      : `${plural(total, "file")} ${verbFor(active, 0)}`;
   }
   if (failed.length > 0) {
-    return `${plural(failed.length, "bulk operation")} failed`;
+    const failedFiles = sum(failed, (op) => op.failedItems);
+    if (failedFiles === 0) {
+      // Failed before touching any file (source folder gone, for instance).
+      return `${plural(failed.length, "operation")} failed`;
+    }
+    const totalFiles = sum(finished, (op) => op.totalItems);
+    return `${failedFiles} of ${plural(totalFiles, "file")} failed`;
   }
   if (finished.length > 0) {
-    return `${plural(finished.length, "bulk operation")} complete`;
+    const doneFiles = sum(finished, (op) => op.completedItems);
+    return `${plural(doneFiles, "file")} ${verbFor(finished, 1)}`;
   }
   return null;
 }

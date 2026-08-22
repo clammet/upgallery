@@ -10,4 +10,11 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "dismiss stale bulk operations",
+  { minutes: 15 },
+  internal.bulkOperations.dismissStale,
+  {},
+);
+
 export default crons;
