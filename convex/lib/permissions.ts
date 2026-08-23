@@ -1,6 +1,8 @@
+import { isValidAnonymousClaim } from "@clammet/convex-googly-auth";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { googlyAuth } from "./auth";
+import { ensureCurrentProfile } from "./ensureProfile";
 import { profileByIdentityId } from "./profiles";
 
 type ReadCtx = QueryCtx | MutationCtx;
@@ -11,6 +13,10 @@ const roleRank: Record<Role, number> = {
   editor: 2,
   owner: 3,
 };
+
+function isMutationCtx(ctx: ReadCtx): ctx is MutationCtx {
+  return "runMutation" in ctx;
+}
 
 export async function getCurrentProfile(
   ctx: ReadCtx,
@@ -28,10 +34,18 @@ export async function requireCurrentProfile(
   anonymousClaim?: string,
 ): Promise<Doc<"profiles">> {
   const profile = await getCurrentProfile(ctx, anonymousClaim);
-  if (profile === null) {
+  if (profile !== null) {
+    return profile;
+  }
+  if (!isMutationCtx(ctx)) {
     throw new Error("Not authenticated");
   }
-  return profile;
+  const profileId = await ensureCurrentProfile(ctx, { anonymousClaim });
+  const ensured = await ctx.db.get("profiles", profileId);
+  if (ensured === null) {
+    throw new Error("Profile could not be created");
+  }
+  return ensured;
 }
 
 export async function requireSystemAdmin(
@@ -49,9 +63,14 @@ export async function getEffectiveRole(
   galleryId: Id<"galleries">,
   folder: Doc<"folders"> | null,
   profile: Doc<"profiles"> | null,
+  anonymousClaim?: string,
 ): Promise<Role | null> {
   if (profile === null) {
-    return null;
+    if (!isValidAnonymousClaim(anonymousClaim)) {
+      return null;
+    }
+    const gallery = await ctx.db.get("galleries", galleryId);
+    return gallery?.anonymousEdit === true ? "editor" : null;
   }
   if (profile.isSystemAdmin) {
     return "owner";
@@ -92,11 +111,18 @@ export async function canViewFolder(
   ctx: ReadCtx,
   folder: Doc<"folders">,
   profile: Doc<"profiles"> | null,
+  anonymousClaim?: string,
 ): Promise<boolean> {
   if (folder.privacy === "public" || folder.privacy === "unlisted") {
     return true;
   }
-  const role = await getEffectiveRole(ctx, folder.galleryId, folder, profile);
+  const role = await getEffectiveRole(
+    ctx,
+    folder.galleryId,
+    folder,
+    profile,
+    anonymousClaim,
+  );
   return roleAtLeast(role, "viewer");
 }
 
@@ -104,11 +130,18 @@ export async function shouldListFolder(
   ctx: ReadCtx,
   folder: Doc<"folders">,
   profile: Doc<"profiles"> | null,
+  anonymousClaim?: string,
 ): Promise<boolean> {
   if (folder.privacy === "public") {
     return true;
   }
-  const role = await getEffectiveRole(ctx, folder.galleryId, folder, profile);
+  const role = await getEffectiveRole(
+    ctx,
+    folder.galleryId,
+    folder,
+    profile,
+    anonymousClaim,
+  );
   return roleAtLeast(role, "viewer");
 }
 
@@ -123,6 +156,25 @@ export function canManageGallery(
     roleAtLeast(role, "owner") ||
     (gallery.editorBulkActions === true && roleAtLeast(role, "editor"))
   );
+}
+
+export async function assertCanManageGallery(
+  ctx: ReadCtx,
+  gallery: Doc<"galleries">,
+  folder: Doc<"folders"> | null,
+  anonymousClaim?: string,
+): Promise<void> {
+  const profile = await getCurrentProfile(ctx, anonymousClaim);
+  const role = await getEffectiveRole(
+    ctx,
+    gallery._id,
+    folder,
+    profile,
+    anonymousClaim,
+  );
+  if (!canManageGallery(gallery, role)) {
+    throw new Error("Unauthorized");
+  }
 }
 
 export function isOwningProfile(
@@ -140,7 +192,13 @@ export async function requireGalleryRole(
   anonymousClaim?: string,
 ): Promise<Doc<"profiles">> {
   const profile = await requireCurrentProfile(ctx, anonymousClaim);
-  const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
+  const role = await getEffectiveRole(
+    ctx,
+    gallery._id,
+    folder,
+    profile,
+    anonymousClaim,
+  );
   if (!roleAtLeast(role, minimum)) {
     throw new Error("Unauthorized");
   }
@@ -154,7 +212,13 @@ export async function requireGalleryManager(
   anonymousClaim?: string,
 ): Promise<Doc<"profiles">> {
   const profile = await requireCurrentProfile(ctx, anonymousClaim);
-  const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
+  const role = await getEffectiveRole(
+    ctx,
+    gallery._id,
+    folder,
+    profile,
+    anonymousClaim,
+  );
   if (!canManageGallery(gallery, role)) {
     throw new Error("Unauthorized");
   }

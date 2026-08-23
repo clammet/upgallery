@@ -302,7 +302,9 @@ export default defineSchema({
     disposition,
     expiresAt: v.number(),
     claimedAt: v.optional(v.number()),
-  }).index("by_tokenHash", ["tokenHash"]),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_expiresAt", ["expiresAt"]),
 
   storageDeleteJobs: defineTable({
     entryId: v.id("entries"),

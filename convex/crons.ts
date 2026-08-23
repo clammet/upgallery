@@ -17,4 +17,11 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "cleanup expired download tickets",
+  { minutes: 15 },
+  internal.ticketMaintenance.cleanupExpired,
+  {},
+);
+
 export default crons;

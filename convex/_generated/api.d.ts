@@ -23,6 +23,7 @@ import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_bulkOperations from "../lib/bulkOperations.js";
 import type * as lib_crypto from "../lib/crypto.js";
+import type * as lib_ensureProfile from "../lib/ensureProfile.js";
 import type * as lib_entryNames from "../lib/entryNames.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
 import type * as lib_folderStats from "../lib/folderStats.js";
@@ -38,6 +39,7 @@ import type * as profiles from "../profiles.js";
 import type * as roles from "../roles.js";
 import type * as storageGateway from "../storageGateway.js";
 import type * as storageJobs from "../storageJobs.js";
+import type * as ticketMaintenance from "../ticketMaintenance.js";
 
 import type {
   ApiFromModules,
@@ -61,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/bulkOperations": typeof lib_bulkOperations;
   "lib/crypto": typeof lib_crypto;
+  "lib/ensureProfile": typeof lib_ensureProfile;
   "lib/entryNames": typeof lib_entryNames;
   "lib/filesystem": typeof lib_filesystem;
   "lib/folderStats": typeof lib_folderStats;
@@ -76,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   roles: typeof roles;
   storageGateway: typeof storageGateway;
   storageJobs: typeof storageJobs;
+  ticketMaintenance: typeof ticketMaintenance;
 }>;
 
 /**

@@ -37,15 +37,13 @@ function AuthBootstrap() {
   const syncing = useRef<string | null>(null);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !isAuthenticated) return;
     const claim = anonymousClaim();
-    const key = `${isAuthenticated ? "google" : "anonymous"}:${claim}`;
+    const key = `google:${claim}`;
     if (syncing.current === key) return;
     syncing.current = key;
     void ensureProfile({ anonymousClaim: claim })
-      .then(() => {
-        if (isAuthenticated) authClient.clearAnonymousClaim();
-      })
+      .then(() => authClient.clearAnonymousClaim())
       .catch((error: unknown) => {
         console.error("Failed to synchronize authentication profile", error);
         syncing.current = null;

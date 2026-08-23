@@ -7,6 +7,7 @@ import {
   paginationResultValidator,
 } from "convex/server";
 import {
+  assertCanManageGallery,
   canViewFolder,
   getCurrentProfile,
   getEffectiveRole,
@@ -109,7 +110,7 @@ async function assertCanUpload(
   const [gallery, folder, profile] = await Promise.all([
     ctx.db.get("galleries", galleryId),
     ctx.db.get("folders", folderId),
-    getCurrentProfile(ctx, anonymousClaim),
+    requireCurrentProfile(ctx, anonymousClaim),
   ]);
   if (
     gallery === null ||
@@ -159,7 +160,7 @@ async function loadViewableImageFolder(
     gallery.kind !== "image" ||
     folder === null ||
     folder.galleryId !== gallery._id ||
-    !(await canViewFolder(ctx, folder, profile))
+    !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
   ) {
     throw new Error("Folder not found");
   }
@@ -294,7 +295,7 @@ export const listSelectableIds = query({
     ) {
       throw new Error("Folder not found");
     }
-    await requireGalleryManager(
+    await assertCanManageGallery(
       ctx,
       gallery,
       folder,
@@ -432,7 +433,7 @@ export const createDownloadTicket = mutation({
       gallery === null ||
       gallery.deletedAt !== undefined ||
       folder === null ||
-      !(await canViewFolder(ctx, folder, profile))
+      !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
       throw new Error("Unauthorized");
     }
@@ -491,7 +492,7 @@ export const requestPreview = mutation({
       gallery === null ||
       gallery.deletedAt !== undefined ||
       folder === null ||
-      !(await canViewFolder(ctx, folder, profile))
+      !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
       throw new Error("Unauthorized");
     }
@@ -746,7 +747,7 @@ export const getForUploaderView = query({
       gallery.deletedAt !== undefined ||
       gallery.kind !== "uploader" ||
       folder === null ||
-      !(await canViewFolder(ctx, folder, profile))
+      !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
       return null;
     }
@@ -789,7 +790,7 @@ export const createThumbnailTickets = mutation({
       gallery.kind !== "uploader" ||
       folder === null ||
       folder.galleryId !== gallery._id ||
-      !(await canViewFolder(ctx, folder, profile))
+      !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
       throw new Error("Unauthorized");
     }

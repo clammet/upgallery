@@ -714,9 +714,22 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
-    const anonymous = await seedProfile(t, { anonymous: true });
+    const anonymousClaim = "b".repeat(64);
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
+    const listing = await t.query(api.folders.list, {
+      anonymousClaim,
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+    });
+    expect(listing.access.canUpload).toBe(true);
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
+
     const result = await t.mutation(api.entries.createUploadIntent, {
-      anonymousClaim: anonymous.anonymousClaim,
+      anonymousClaim,
       galleryId,
       folderId: gallery!.rootFolderId!,
       name: "notes.txt",
@@ -728,11 +741,51 @@ describe("upgallery backend", () => {
     const intent = await t.run(async (ctx) =>
       ctx.db.get("uploadIntents", result.intentId),
     );
+    const anonymous = await t.query(api.profiles.current, { anonymousClaim });
 
     expect(result.token.length).toBeGreaterThan(32);
     expect(intent?.tokenHash).not.toBe(result.token);
     expect(intent?.passwordHash).not.toBe("secret");
-    expect(intent?.ownerProfileId).toBe(anonymous.profileId);
+    expect(anonymous).toMatchObject({ isAnonymous: true });
+    expect(intent?.ownerProfileId).toBe(anonymous?._id);
+  });
+
+  test("a rejected anonymous write rolls profile creation back", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const galleryId = await asUser(
+      t,
+      admin.googleSubject,
+      "admin@example.com",
+    ).mutation(api.galleries.create, {
+      name: "Private edits",
+      slug: "private-edits",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "private-edits",
+      hosts: [{ host: "private.example.com", rootPath: "/" }],
+    });
+    const gallery = await t.run(async (ctx) =>
+      ctx.db.get("galleries", galleryId),
+    );
+    const anonymousClaim = "c".repeat(64);
+
+    await expect(
+      t.mutation(api.entries.createUploadIntent, {
+        anonymousClaim,
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        name: "not-allowed.txt",
+        mimeType: "text/plain",
+        size: 12,
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
   });
 
   test("unlisted uploader entries are listed only for their uploader", async () => {
@@ -798,7 +851,7 @@ describe("upgallery backend", () => {
     expect(adminListing.entries).toEqual([]);
   });
 
-  test("uploader file and attachment serves share one counted view metric", async () => {
+  test("anonymous uploader views count without profiles and expired tickets are cleaned", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
@@ -839,11 +892,15 @@ describe("upgallery backend", () => {
         previewKey: `derivatives/up/counted-files/previews/dd/dd/${"d".repeat(64)}.preview.jpg`,
       });
     });
-    const visitor = await seedProfile(t, { anonymous: true });
+    const anonymousClaim = "d".repeat(64);
+
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
 
     await expect(
       t.query(api.entries.getForUploaderView, {
-        anonymousClaim: visitor.anonymousClaim,
+        anonymousClaim,
         galleryId,
         entryId,
       }),
@@ -855,7 +912,7 @@ describe("upgallery backend", () => {
     const attachmentTicket = await t.mutation(
       api.entries.createDownloadTicket,
       {
-        anonymousClaim: visitor.anonymousClaim,
+        anonymousClaim,
         galleryId,
         entryId,
         disposition: "attachment",
@@ -871,7 +928,7 @@ describe("upgallery backend", () => {
     const [thumbnailTicket] = await t.mutation(
       api.entries.createThumbnailTickets,
       {
-        anonymousClaim: visitor.anonymousClaim,
+        anonymousClaim,
         galleryId,
         folderId: gallery!.rootFolderId!,
         entryIds: [entryId],
@@ -883,7 +940,7 @@ describe("upgallery backend", () => {
     });
 
     const previewTicket = await t.mutation(api.entries.createDownloadTicket, {
-        anonymousClaim: visitor.anonymousClaim,
+        anonymousClaim,
         galleryId,
         entryId,
         disposition: "preview",
@@ -905,6 +962,35 @@ describe("upgallery backend", () => {
         .unique(),
     );
     expect(counter).toMatchObject({ views: 2, downloads: 0 });
+    await expect(
+      t.query(api.profiles.current, { anonymousClaim }),
+    ).resolves.toBeNull();
+
+    const [expiredTicketId, futureTicketId] = await t.run(async (ctx) =>
+      Promise.all([
+        ctx.db.insert("downloadTickets", {
+          entryId,
+          tokenHash: "expired-ticket",
+          disposition: "inline",
+          expiresAt: Date.now() - 1,
+        }),
+        ctx.db.insert("downloadTickets", {
+          entryId,
+          tokenHash: "future-ticket",
+          disposition: "inline",
+          expiresAt: Date.now() + 60_000,
+        }),
+      ]),
+    );
+    await expect(
+      t.mutation(internal.ticketMaintenance.cleanupExpired, {}),
+    ).resolves.toBe(1);
+    const retainedTickets = await t.run(async (ctx) => ({
+      expired: await ctx.db.get("downloadTickets", expiredTicketId),
+      future: await ctx.db.get("downloadTickets", futureTicketId),
+    }));
+    expect(retainedTickets.expired).toBeNull();
+    expect(retainedTickets.future).not.toBeNull();
 
     const failedJobId = await t.run(async (ctx) =>
       ctx.db.insert("mediaProcessingJobs", {

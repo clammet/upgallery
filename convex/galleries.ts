@@ -120,7 +120,13 @@ async function galleryResult(
       ? null
       : await ctx.db.get("folders", gallery.rootFolderId);
   const profile = await getCurrentProfile(ctx, anonymousClaim);
-  const role = await getEffectiveRole(ctx, gallery._id, rootFolder, profile);
+  const role = await getEffectiveRole(
+    ctx,
+    gallery._id,
+    rootFolder,
+    profile,
+    anonymousClaim,
+  );
   return {
     gallery,
     rootFolder,
@@ -382,7 +388,36 @@ export const listOwnedImageGalleries = query({
   handler: async (ctx, args) => {
     const profile = await getCurrentProfile(ctx, args.anonymousClaim);
     if (profile === null) {
-      return [];
+      if (args.galleryId === undefined) {
+        return [];
+      }
+      const current = await ctx.db.get("galleries", args.galleryId);
+      if (
+        current === null ||
+        current.kind !== "image" ||
+        current.deletedAt !== undefined ||
+        current.pendingMigrationId !== undefined ||
+        current.rootFolderId === undefined
+      ) {
+        return [];
+      }
+      const root = await ctx.db.get("folders", current.rootFolderId);
+      const role = await getEffectiveRole(
+        ctx,
+        current._id,
+        root,
+        null,
+        args.anonymousClaim,
+      );
+      return canManageGallery(current, role)
+        ? [
+            {
+              _id: current._id,
+              name: current.name,
+              rootFolderId: current.rootFolderId,
+            },
+          ]
+        : [];
     }
     let galleries: Array<Doc<"galleries">>;
     if (profile.isSystemAdmin) {
@@ -419,7 +454,13 @@ export const listOwnedImageGalleries = query({
             current.rootFolderId === undefined
               ? null
               : await ctx.db.get("folders", current.rootFolderId);
-          const role = await getEffectiveRole(ctx, current._id, root, profile);
+          const role = await getEffectiveRole(
+            ctx,
+            current._id,
+            root,
+            profile,
+            args.anonymousClaim,
+          );
           if (canManageGallery(current, role)) {
             galleries.push(current);
           }

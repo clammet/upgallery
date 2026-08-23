@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { isValidAnonymousClaim } from "@clammet/convex-googly-auth";
 import { internal } from "./_generated/api";
 import { folderPreviewMode, privacy } from "./lib/validators";
 import type { Id } from "./_generated/dataModel";
@@ -15,6 +16,7 @@ import {
 import { createToken, sha256 } from "./lib/crypto";
 import { createFolderStats } from "./lib/folderStats";
 import {
+  assertCanManageGallery,
   canManageGallery,
   canViewFolder,
   getCurrentProfile,
@@ -67,10 +69,16 @@ export const list = query({
       throw new Error("Folder not found");
     }
     const profile = await getCurrentProfile(ctx, args.anonymousClaim);
-    if (!(await canViewFolder(ctx, folder, profile))) {
+    if (!(await canViewFolder(ctx, folder, profile, args.anonymousClaim))) {
       throw new Error("Unauthorized");
     }
-    const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
+    const role = await getEffectiveRole(
+      ctx,
+      gallery._id,
+      folder,
+      profile,
+      args.anonymousClaim,
+    );
     const filesystemSync =
       gallery.storageKind === "user"
         ? await ctx.db
@@ -83,7 +91,7 @@ export const list = query({
       (gallery.kind === "image"
         ? roleAtLeast(role, "editor")
         : gallery.uploaderAccess === "anonymous"
-          ? profile !== null
+          ? profile !== null || isValidAnonymousClaim(args.anonymousClaim)
           : gallery.uploaderAccess === "sso"
             ? profile !== null && !profile.isAnonymous
             : roleAtLeast(role, "editor"));
@@ -98,7 +106,7 @@ export const list = query({
     for (const child of candidateFolders) {
       if (
         child.filesystemMissingAt === undefined &&
-        (await shouldListFolder(ctx, child, profile))
+        (await shouldListFolder(ctx, child, profile, args.anonymousClaim))
       ) {
         folders.push(child);
       }
@@ -253,6 +261,7 @@ export const list = query({
         gallery._id,
         galleryRoot,
         profile,
+        args.anonymousClaim,
       );
     }
 
@@ -761,7 +770,7 @@ export const listOwnedMoveDestinations = query({
       gallery.rootFolderId === undefined
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
-    await requireGalleryManager(
+    await assertCanManageGallery(
       ctx,
       gallery,
       rootFolder,
