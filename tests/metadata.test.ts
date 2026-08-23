@@ -7,6 +7,16 @@ import {
 } from "../src/lib/metadata";
 
 describe("media metadata presentation", () => {
+  test("presents uploader attribution even without embedded file metadata", () => {
+    expect(metadataRows({}, "Current Display Name")).toEqual([
+      {
+        key: "__uploader",
+        label: "Uploader",
+        value: "Current Display Name",
+      },
+    ]);
+  });
+
   test("parses canonical metadata and formats table rows", () => {
     const metadata = parseMetadataJson(
       JSON.stringify({

@@ -146,9 +146,12 @@ export function parseMetadataJson(json: string): MediaMetadata | null {
   }
 }
 
-export function metadataRows(metadata: MediaMetadata): MetadataRow[] {
+export function metadataRows(
+  metadata: MediaMetadata,
+  uploader?: string,
+): MetadataRow[] {
   const rank = new Map(preferredOrder.map((key, index) => [key, index]));
-  return Object.entries(metadata)
+  const rows = Object.entries(metadata)
     .sort(
       ([left], [right]) =>
         metadataRank(left, rank) - metadataRank(right, rank) ||
@@ -159,6 +162,9 @@ export function metadataRows(metadata: MediaMetadata): MetadataRow[] {
       label: metadataLabel(key),
       value: formatValue(key, value),
     }));
+  return uploader === undefined
+    ? rows
+    : [{ key: "__uploader", label: "Uploader", value: uploader }, ...rows];
 }
 
 export function metadataLocation(

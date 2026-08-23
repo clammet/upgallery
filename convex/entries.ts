@@ -46,6 +46,7 @@ import {
   MEDIA_METADATA_VERSION,
   requestMediaPreview,
 } from "./lib/storageJobs";
+import { uploaderAttribution } from "./lib/profiles";
 
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
@@ -236,14 +237,24 @@ export const listGalleryPage = query({
       .order("desc")
       .paginate(args.paginationOpts);
     const page = [];
+    const uploaderByProfileId = new Map<Id<"profiles">, string>();
     for (const entry of result.page) {
-      const counter = await ctx.db
+      const counterPromise = ctx.db
         .query("entryCounters")
         .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
         .unique();
+      let uploader = uploaderByProfileId.get(entry.ownerProfileId);
+      if (uploader === undefined) {
+        const profile = await ctx.db.get("profiles", entry.ownerProfileId);
+        uploader =
+          profile === null ? "Unknown" : uploaderAttribution(profile);
+        uploaderByProfileId.set(entry.ownerProfileId, uploader);
+      }
+      const counter = await counterPromise;
       const locked = entry.passwordHash !== undefined;
       page.push({
         ...entry,
+        uploader,
         description: locked ? undefined : entry.description,
         metadataJson: locked ? undefined : entry.metadataJson,
         passwordSalt: undefined,
@@ -724,10 +735,11 @@ export const getForUploaderView = query({
     ) {
       return null;
     }
-    const [gallery, folder, profile] = await Promise.all([
+    const [gallery, folder, profile, uploaderProfile] = await Promise.all([
       ctx.db.get("galleries", entry.galleryId),
       ctx.db.get("folders", entry.folderId),
       getCurrentProfile(ctx, args.anonymousClaim),
+      ctx.db.get("profiles", entry.ownerProfileId),
     ]);
     if (
       gallery === null ||
@@ -745,6 +757,10 @@ export const getForUploaderView = query({
       previewKey: entry.previewKey,
       previewError: entry.previewError,
       passwordProtected: entry.passwordHash !== undefined,
+      uploader:
+        uploaderProfile === null
+          ? "Unknown"
+          : uploaderAttribution(uploaderProfile),
     };
   },
 });

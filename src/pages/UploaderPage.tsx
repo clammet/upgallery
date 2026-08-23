@@ -194,6 +194,7 @@ export function UploaderPage(props: {
           entry.previewKey !== undefined,
         previewError: entry.previewError,
         metadataJson: entry.metadataJson,
+        uploader: entry.uploader,
       })),
     [listing?.entries, props.routeRoot],
   );
@@ -426,10 +427,13 @@ export function UploaderPage(props: {
           />
         ))}
       </div>
-      {metadataEntry?.metadataJson ? (
+      {metadataEntry !== undefined &&
+      (metadataEntry.metadataJson !== undefined ||
+        metadataEntry.uploader !== undefined) ? (
         <MetadataDialog
           entryName={metadataEntry.name}
           metadataJson={metadataEntry.metadataJson}
+          uploader={metadataEntry.uploader}
           canRemoveLocation={
             metadataEntry.canDelete && metadataEntry.mediaKind === "image"
           }
@@ -463,6 +467,7 @@ function UploaderEntry(props: {
     passwordProtected: boolean;
     canDelete: boolean;
     views: number;
+    uploader: string;
   };
   routeRoot: string;
   thumbnailUrl?: string;
@@ -537,7 +542,8 @@ function UploaderEntry(props: {
                 <LockKeyhole aria-hidden="true" size={13} />
               </span>
             ) : null}
-            {props.entry.metadataJson ? (
+            {props.entry.metadataJson !== undefined ||
+            props.entry.uploader !== undefined ? (
               <button
                 className={styles.metadataButton}
                 type="button"
@@ -644,7 +650,8 @@ function UploaderEntry(props: {
 
 function MetadataDialog(props: {
   entryName: string;
-  metadataJson: string;
+  metadataJson?: string;
+  uploader?: string;
   canRemoveLocation: boolean;
   onClose: () => void;
   onRemoveLocation: () => Promise<void>;
@@ -653,8 +660,11 @@ function MetadataDialog(props: {
   const [removing, setRemoving] = useState(false);
   const [removeRequested, setRemoveRequested] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const metadata = parseMetadataJson(props.metadataJson);
-  const rows = metadata === null ? [] : metadataRows(metadata);
+  const metadata =
+    props.metadataJson === undefined
+      ? null
+      : parseMetadataJson(props.metadataJson);
+  const rows = metadataRows(metadata ?? {}, props.uploader);
   const location = metadata === null ? null : metadataLocation(metadata);
   const mapUrls =
     location === null ? null : openStreetMapUrls(location);

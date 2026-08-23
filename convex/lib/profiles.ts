@@ -43,3 +43,11 @@ export function publicProfile(profile: Doc<"profiles">) {
     infiniteScroll: profile.infiniteScroll !== false,
   };
 }
+
+export function uploaderAttribution(profile: Doc<"profiles">): string {
+  return (
+    profile.displayName?.trim() ||
+    profile.email?.trim() ||
+    (profile.isAnonymous ? "Anonymous" : "Unknown")
+  );
+}

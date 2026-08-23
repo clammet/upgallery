@@ -25,6 +25,7 @@ import {
   roleAtLeast,
   shouldListFolder,
 } from "./lib/permissions";
+import { uploaderAttribution } from "./lib/profiles";
 
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
 
@@ -186,6 +187,7 @@ export const list = query({
             .order("desc")
             .take(128);
     const items = [];
+    const uploaderByProfileId = new Map<Id<"profiles">, string>();
     for (const entry of entries) {
       if (entry.moveJobId !== undefined) {
         continue;
@@ -201,15 +203,29 @@ export const list = query({
       ) {
         continue;
       }
-      const counter = await ctx.db
+      const counterPromise = ctx.db
         .query("entryCounters")
         .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
         .unique();
+      let uploader = uploaderByProfileId.get(entry.ownerProfileId);
+      if (uploader === undefined) {
+        const uploaderProfile = await ctx.db.get(
+          "profiles",
+          entry.ownerProfileId,
+        );
+        uploader =
+          uploaderProfile === null
+            ? "Unknown"
+            : uploaderAttribution(uploaderProfile);
+        uploaderByProfileId.set(entry.ownerProfileId, uploader);
+      }
+      const counter = await counterPromise;
       const locked = entry.passwordHash !== undefined;
       const canDelete = ownsEntry;
       const concealProtectedMetadata = locked && !canDelete;
       items.push({
         ...entry,
+        uploader,
         description: locked ? undefined : entry.description,
         metadataJson: concealProtectedMetadata
           ? undefined

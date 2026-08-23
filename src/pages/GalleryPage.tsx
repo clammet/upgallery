@@ -152,6 +152,7 @@ type GalleryEntry = Doc<"entries"> & {
   passwordProtected: boolean;
   canDelete: boolean;
   views: number;
+  uploader: string;
 };
 
 type EntrySelection =
@@ -323,6 +324,7 @@ export function GalleryPage(props: {
             !heif || nativeHeifPreview || entry.previewKey !== undefined,
           previewError: nativeHeifPreview ? undefined : entry.previewError,
           metadataJson: entry.metadataJson,
+          uploader: entry.uploader,
         };
       }),
     [entries],
@@ -1634,10 +1636,13 @@ export function GalleryPage(props: {
           onClose={() => setViewerEntry(null, true)}
         />
       ) : null}
-      {metadataEntry?.metadataJson ? (
+      {metadataEntry !== undefined &&
+      (metadataEntry.metadataJson !== undefined ||
+        metadataEntry.uploader !== undefined) ? (
         <GalleryMetadataDialog
           entryName={metadataEntry.name}
           metadataJson={metadataEntry.metadataJson}
+          uploader={metadataEntry.uploader}
           canRemoveLocation={
             listing.access.canEditFolder && metadataEntry.mediaKind === "image"
           }
@@ -2052,7 +2057,7 @@ function GalleryFolderCard(props: {
 // every upload. Handlers take the entry id so the parent can pass stable
 // functions and a card re-renders only when its own entry or flags change.
 const GalleryEntryCard = memo(function GalleryEntryCard(props: {
-  entry: Doc<"entries">;
+  entry: GalleryEntry;
   selectMode: boolean;
   selected: boolean;
   draggable: boolean;
@@ -2140,7 +2145,9 @@ const GalleryEntryCard = memo(function GalleryEntryCard(props: {
           {content}
         </a>
       )}
-      {!props.selectMode && props.entry.metadataJson ? (
+      {!props.selectMode &&
+      (props.entry.metadataJson !== undefined ||
+        props.entry.uploader !== undefined) ? (
         <button
           className={styles.cardMetadataButton}
           type="button"
@@ -2157,7 +2164,8 @@ const GalleryEntryCard = memo(function GalleryEntryCard(props: {
 
 function GalleryMetadataDialog(props: {
   entryName: string;
-  metadataJson: string;
+  metadataJson?: string;
+  uploader?: string;
   canRemoveLocation: boolean;
   onClose: () => void;
   onRemoveLocation: () => Promise<void>;
@@ -2166,8 +2174,11 @@ function GalleryMetadataDialog(props: {
   const [removing, setRemoving] = useState(false);
   const [removeRequested, setRemoveRequested] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const metadata = parseMetadataJson(props.metadataJson);
-  const rows = metadata === null ? [] : metadataRows(metadata);
+  const metadata =
+    props.metadataJson === undefined
+      ? null
+      : parseMetadataJson(props.metadataJson);
+  const rows = metadataRows(metadata ?? {}, props.uploader);
   const location = metadata === null ? null : metadataLocation(metadata);
   const mapUrls =
     location === null ? null : openStreetMapUrls(location);

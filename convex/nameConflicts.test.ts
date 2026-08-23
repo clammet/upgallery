@@ -610,3 +610,46 @@ describe("name conflicts", () => {
     ).resolves.toMatchObject({ folderId: rootFolderId, state: "ready" });
   });
 });
+
+describe("uploader attribution", () => {
+  test("gallery and uploader listings use the profile's latest display name", async () => {
+    const t = setupTest();
+    const { authed } = await seedAdmin(t);
+    const imageGallery = await createGallery(t, authed, {
+      slug: "attributed-gallery",
+      kind: "image",
+    });
+    const uploaderGallery = await createGallery(t, authed, {
+      slug: "attributed-uploader",
+      kind: "uploader",
+    });
+    await uploadFile(t, authed, {
+      galleryId: imageGallery.galleryId,
+      folderId: imageGallery.rootFolderId,
+      name: "gallery.jpg",
+      sha: "1",
+    });
+    await uploadFile(t, authed, {
+      galleryId: uploaderGallery.galleryId,
+      folderId: uploaderGallery.rootFolderId,
+      name: "uploader.jpg",
+      sha: "2",
+    });
+
+    await authed.mutation(api.profiles.updatePreferences, {
+      displayName: "Newest Display Name",
+    });
+
+    const galleryPage = await authed.query(api.entries.listGalleryPage, {
+      galleryId: imageGallery.galleryId,
+      folderId: imageGallery.rootFolderId,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    const uploaderListing = await authed.query(api.folders.list, {
+      galleryId: uploaderGallery.galleryId,
+      folderId: uploaderGallery.rootFolderId,
+    });
+    expect(galleryPage.page[0]?.uploader).toBe("Newest Display Name");
+    expect(uploaderListing.entries[0]?.uploader).toBe("Newest Display Name");
+  });
+});

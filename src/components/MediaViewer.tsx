@@ -61,6 +61,7 @@ export type MediaViewerItem = {
   previewReady?: boolean;
   previewError?: string;
   metadataJson?: string;
+  uploader?: string;
 };
 
 type NaturalSize = {
@@ -311,8 +312,8 @@ export function MediaViewer(props: {
     [activeItem?.metadataJson],
   );
   const infoRows = useMemo(
-    () => (metadata === null ? [] : metadataRows(metadata)),
-    [metadata],
+    () => metadataRows(metadata ?? {}, activeItem?.uploader),
+    [activeItem?.uploader, metadata],
   );
   const location = useMemo(
     () => (metadata === null ? null : metadataLocation(metadata)),
