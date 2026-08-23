@@ -51,7 +51,7 @@
     "@types/supertest": "7.2.1",
     "@vitejs/plugin-react": "6.0.5",
     "concurrently": "10.0.5",
-    "convex-test": "0.0.55",
+    "convex-test": "0.0.56",
     "node-addon-api": "8.9.2",
     "node-gyp": "13.0.1",
     "supertest": "7.2.2",
