@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { adjustGalleryStats } from "./lib/galleryStats";
+import { adjustFolderStats } from "./lib/folderStats";
 import { cleanFilesystemSegment } from "./lib/normalize";
 import {
   getCurrentProfile,
@@ -630,6 +631,11 @@ export const process = internalMutation({
         items: -removedItems,
         bytes: -removedBytes,
       });
+      await adjustFolderStats(
+        ctx,
+        { folderId: sourceFolder._id, galleryId: sourceGallery._id },
+        { items: -removedItems, bytes: -removedBytes },
+      );
     }
     await ctx.db.patch("bulkOperations", operation._id, {
       status: operationStatus({

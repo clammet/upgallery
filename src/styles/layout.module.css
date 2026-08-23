@@ -5,7 +5,28 @@
 .breadcrumb a { overflow: hidden; text-overflow: ellipsis; }
 .separator { color: var(--gallery-muted); margin: 0 .35rem; }
 .headerActions, .authGroup { align-items: center; display: flex; gap: .35rem; justify-content: flex-end; min-width: 0; }
+.authGroup { position: relative; }
 .authStatus, .authName { color: var(--gallery-muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.authName { align-items: center; background: transparent; border-color: transparent; display: inline-flex; gap: .3rem; max-width: 220px; padding: .3rem .4rem; }
+.authName[aria-expanded="true"], .authName:hover { border-color: var(--border); color: var(--gallery-fg); }
+.authNameText { overflow: hidden; text-overflow: ellipsis; }
+.accountPopover { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); box-shadow: var(--shadow); display: grid; gap: .75rem; padding: .85rem; position: absolute; right: 0; top: calc(100% + .4rem); width: min(300px, calc(100vw - 1.3rem)); z-index: 30; }
+.accountIdentity { display: grid; gap: .15rem; min-width: 0; }
+.accountNameRow { align-items: center; display: flex; gap: .25rem; min-width: 0; }
+.accountName { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accountNameForm { align-items: center; display: flex; gap: .25rem; }
+.accountNameForm input { flex: 1 1 auto; min-width: 0; padding: .3rem .45rem; }
+.accountEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accountSetting { align-items: center; display: flex; font-size: .85rem; gap: .75rem; justify-content: space-between; }
+.accountSetting > span { display: grid; gap: .1rem; }
+.accountSetting[data-disabled] { color: var(--gallery-muted); cursor: not-allowed; }
+.accountHint { font-size: .72rem; }
+.switch { appearance: none; background: color-mix(in srgb, var(--gallery-fg) 22%, transparent); border: 0; border-radius: 999px; cursor: pointer; flex: 0 0 auto; height: 20px; margin: 0; padding: 0; position: relative; transition: background .15s ease; width: 36px; }
+.switch::after { background: var(--gallery-surface); border-radius: 50%; box-shadow: 0 1px 2px rgb(0 0 0 / 30%); content: ""; height: 16px; left: 2px; position: absolute; top: 2px; transition: transform .15s ease; width: 16px; }
+.switch:checked { background: var(--gallery-accent); }
+.switch:checked::after { transform: translateX(16px); }
+.switch:disabled { cursor: not-allowed; opacity: .45; }
+.switch:focus-visible { outline: 2px solid var(--gallery-accent); outline-offset: 2px; }
 .quietButton { background: transparent; border-color: transparent; color: var(--gallery-muted); padding: .3rem .4rem; text-decoration: none; }
 .iconButton { align-items: center; background: transparent; display: inline-flex; font-size: 1rem; height: 30px; justify-content: center; padding: 0; width: 30px; }
 .syncIndicator { align-items: center; color: var(--gallery-muted); display: inline-flex; font-size: 1.05rem; height: 30px; justify-content: center; line-height: 1; width: 24px; }
@@ -39,5 +60,5 @@
 @media (max-width: 650px) {
   .header { grid-template-columns: 1fr auto; }
   .breadcrumb { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; order: 3; }
-  .authName { display: none; }
+  .authNameText { display: none; }
 }

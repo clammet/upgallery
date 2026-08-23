@@ -24,9 +24,15 @@ export default defineSchema({
   profiles: defineTable({
     identityId: v.string(),
     displayName: v.optional(v.string()),
+    // Set once the user picks their own name; stops sign-in from replacing
+    // it with the identity provider's name.
+    displayNameCustom: v.optional(v.boolean()),
     email: v.optional(v.string()),
     image: v.optional(v.string()),
     isAnonymous: v.boolean(),
+    // Per-user infinite scroll preference. Undefined means on; a gallery
+    // that disables infinite scroll wins regardless.
+    infiniteScroll: v.optional(v.boolean()),
     isSystemAdmin: v.boolean(),
     lastSeenAt: v.number(),
   })
@@ -78,6 +84,17 @@ export default defineSchema({
     itemCount: v.number(),
     totalBytes: v.number(),
   }).index("by_galleryId", ["galleryId"]),
+
+  // Ready-file count and bytes per folder (see lib/folderStats.ts). Kept
+  // apart from the folder document for the same reason as galleryStats.
+  folderStats: defineTable({
+    folderId: v.id("folders"),
+    galleryId: v.id("galleries"),
+    itemCount: v.number(),
+    totalBytes: v.number(),
+  })
+    .index("by_folderId", ["folderId"])
+    .index("by_galleryId", ["galleryId"]),
 
   galleryHosts: defineTable({
     galleryId: v.id("galleries"),

@@ -47,7 +47,7 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
           {gallery?.name ?? "upgallery"}
         </Link>
         <div className={styles.breadcrumb}>{breadcrumb}</div>
-        <div className={styles.headerActions}>{actions}<AuthControls /></div>
+        <div className={styles.headerActions}>{actions}<AuthControls gallery={gallery} /></div>
       </header>
       <main className={styles.main}>
         <TransferStatus />

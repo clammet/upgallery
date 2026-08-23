@@ -13,6 +13,7 @@ import {
   normalizeSlug,
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
+import { createFolderStats } from "./lib/folderStats";
 import {
   canManageGallery,
   canViewFolder,
@@ -359,6 +360,7 @@ export const create = mutation({
       privacy: args.privacy,
       previewMode: args.previewMode,
     });
+    await createFolderStats(ctx, folderId, gallery._id);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "folder.created",

@@ -1,4 +1,6 @@
 import { mutation, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
   paginationOptsValidator,
@@ -33,6 +35,11 @@ import {
 } from "./lib/crypto";
 import { formatBytes } from "./lib/format";
 import { adjustGalleryStats } from "./lib/galleryStats";
+import {
+  adjustFolderStats,
+  adjustFolderStatsForEntries,
+  readFolderStats,
+} from "./lib/folderStats";
 import { conflictPolicy, disposition } from "./lib/validators";
 import {
   markThumbnailPendingIfNeeded,
@@ -132,6 +139,88 @@ async function assertCanUpload(
   return { gallery, folder, profile };
 }
 
+async function loadViewableImageFolder(
+  ctx: QueryCtx,
+  args: {
+    anonymousClaim?: string;
+    galleryId: Id<"galleries">;
+    folderId: Id<"folders">;
+  },
+) {
+  const [gallery, folder, profile] = await Promise.all([
+    ctx.db.get("galleries", args.galleryId),
+    ctx.db.get("folders", args.folderId),
+    getCurrentProfile(ctx, args.anonymousClaim),
+  ]);
+  if (
+    gallery === null ||
+    gallery.deletedAt !== undefined ||
+    gallery.kind !== "image" ||
+    folder === null ||
+    folder.galleryId !== gallery._id ||
+    !(await canViewFolder(ctx, folder, profile))
+  ) {
+    throw new Error("Folder not found");
+  }
+  return { gallery, folder, profile };
+}
+
+// The entries a gallery folder shows: ready, and not hidden by an in-flight
+// bulk move.
+function listedFolderEntries(ctx: QueryCtx, folderId: Id<"folders">) {
+  return ctx.db
+    .query("entries")
+    .withIndex(
+      "by_folderId_and_state_and_moveJobId_and_createdAt",
+      (q) =>
+        q
+          .eq("folderId", folderId)
+          .eq("state", "ready")
+          .eq("moveJobId", undefined),
+    );
+}
+
+// Check transaction headroom every this many entries while counting.
+const COUNT_METRICS_INTERVAL = 256;
+// Stop counting once a transaction has less than this left, so a very large
+// folder returns a lower bound instead of failing the query.
+const COUNT_RESERVE_DOCUMENTS = 1_024;
+const COUNT_RESERVE_BYTES = 1024 * 1024;
+
+// Number of files the paged gallery can show in a folder, for its
+// "Page X/Y" label. Served from folderStats; a folder that has no stats row
+// yet (created before folderStats.backfill ran) is counted by walking the
+// listing index, and one too big to count in one transaction comes back as a
+// lower bound with `exact: false`.
+export const countFolderEntries = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+  },
+  returns: v.object({ count: v.number(), exact: v.boolean() }),
+  handler: async (ctx, args) => {
+    const { folder } = await loadViewableImageFolder(ctx, args);
+    const stats = await readFolderStats(ctx, folder._id);
+    if (stats !== null) {
+      return { count: stats.itemCount, exact: true };
+    }
+    let count = 0;
+    for await (const _entry of listedFolderEntries(ctx, folder._id)) {
+      count += 1;
+      if (count % COUNT_METRICS_INTERVAL !== 0) continue;
+      const metrics = await ctx.meta.getTransactionMetrics();
+      if (
+        metrics.documentsRead.remaining < COUNT_RESERVE_DOCUMENTS ||
+        metrics.bytesRead.remaining < COUNT_RESERVE_BYTES
+      ) {
+        return { count, exact: false };
+      }
+    }
+    return { count, exact: true };
+  },
+});
+
 export const listGalleryPage = query({
   args: {
     anonymousClaim: v.optional(v.string()),
@@ -142,31 +231,8 @@ export const listGalleryPage = query({
   returns: paginationResultValidator(v.any()),
   handler: async (ctx, args) => {
     validateGalleryPaginationSize(args.paginationOpts.numItems);
-    const [gallery, folder, profile] = await Promise.all([
-      ctx.db.get("galleries", args.galleryId),
-      ctx.db.get("folders", args.folderId),
-      getCurrentProfile(ctx, args.anonymousClaim),
-    ]);
-    if (
-      gallery === null ||
-      gallery.deletedAt !== undefined ||
-      gallery.kind !== "image" ||
-      folder === null ||
-      folder.galleryId !== gallery._id ||
-      !(await canViewFolder(ctx, folder, profile))
-    ) {
-      throw new Error("Folder not found");
-    }
-    const result = await ctx.db
-      .query("entries")
-      .withIndex(
-        "by_folderId_and_state_and_moveJobId_and_createdAt",
-        (q) =>
-          q
-            .eq("folderId", folder._id)
-            .eq("state", "ready")
-            .eq("moveJobId", undefined),
-      )
+    const { folder } = await loadViewableImageFolder(ctx, args);
+    const result = await listedFolderEntries(ctx, folder._id)
       .order("desc")
       .paginate(args.paginationOpts);
     const page = [];
@@ -1000,6 +1066,7 @@ export const remove = mutation({
       deletedAt: Date.now(),
     });
     await adjustGalleryStats(ctx, gallery, { items: -1, bytes: -entry.size });
+    await adjustFolderStats(ctx, entry, { items: -1, bytes: -entry.size });
     await ctx.db.insert("storageDeleteJobs", {
       entryId: entry._id,
       storageKey: entry.storageKey,
@@ -1084,6 +1151,7 @@ export const removeMany = mutation({
       items: -entries.length,
       bytes: -removedBytes,
     });
+    await adjustFolderStatsForEntries(ctx, entries, -1);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "entries.deleted",

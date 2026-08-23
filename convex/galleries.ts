@@ -10,6 +10,7 @@ import {
 } from "./lib/validators";
 import { formatBytes } from "./lib/format";
 import { createGalleryStats, readGalleryStats } from "./lib/galleryStats";
+import { createFolderStats } from "./lib/folderStats";
 import {
   DEFAULT_MAX_FILE_SIZE,
   MAX_HOSTS_PER_GALLERY,
@@ -210,6 +211,7 @@ export const create = mutation({
       privacy: "public",
     });
     await ctx.db.patch("galleries", galleryId, { rootFolderId });
+    await createFolderStats(ctx, rootFolderId, galleryId);
     await ctx.db.insert("galleryRoles", {
       galleryId,
       profileId: actor._id,

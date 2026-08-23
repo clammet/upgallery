@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { adjustGalleryStats } from "./lib/galleryStats";
+import { adjustFolderStats } from "./lib/folderStats";
 import {
   MEDIA_METADATA_VERSION,
   MEDIA_PROCESSOR_VERSION,
@@ -438,6 +439,9 @@ export const completeMediaProcessing = internalMutation({
             bytes: replacement.size - entry.size,
           });
         }
+        await adjustFolderStats(ctx, entry, {
+          bytes: replacement.size - entry.size,
+        });
         if (replacement.storageKey !== entry.storageKey) {
           await ctx.db.insert("storageDeleteJobs", {
             entryId: entry._id,

@@ -108,6 +108,33 @@ function readDraggedIds<T extends string>(
   }
 }
 
+// "Page 2/5 · 101-200 (100 per page)". The total is omitted until the count
+// arrives and shown as a lower bound ("5+") when the folder was too large to
+// count exactly.
+function paginationLabel(input: {
+  page: number;
+  pageSize: number;
+  shown: number;
+  total: { count: number; exact: boolean } | undefined;
+}): string {
+  const first = (input.page - 1) * input.pageSize + 1;
+  const last = first + input.shown - 1;
+  let pages = "";
+  if (input.total !== undefined) {
+    // The count can lag a page fetch, so never show a page past the total.
+    const totalPages = Math.max(
+      input.page,
+      Math.ceil(input.total.count / input.pageSize),
+    );
+    pages = `/${totalPages.toLocaleString()}${input.total.exact ? "" : "+"}`;
+  }
+  return (
+    `Page ${input.page.toLocaleString()}${pages} · ` +
+    `${first.toLocaleString()}-${last.toLocaleString()} ` +
+    `(${input.pageSize.toLocaleString()} per page)`
+  );
+}
+
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
 
 type FolderPreviewData = {
@@ -150,8 +177,14 @@ export function GalleryPage(props: {
     previewSeed,
     includeEntries: false,
   });
+  const profile = useQuery(api.profiles.current, {
+    anonymousClaim: anonymousClaim(),
+  });
   const pageSize = props.gallery.paginationPageSize ?? 100;
-  const infiniteScroll = props.gallery.infiniteScroll !== false;
+  // The gallery setting is a ceiling; a user who prefers paging gets paging
+  // even where the gallery allows infinite scroll.
+  const infiniteScroll =
+    props.gallery.infiniteScroll !== false && profile?.infiniteScroll !== false;
   const [paginationCursor, setPaginationCursor] = useState<string | null>(null);
   const [paginationHistory, setPaginationHistory] = useState<
     Array<string | null>
@@ -177,6 +210,11 @@ export function GalleryPage(props: {
             cursor: paginationCursor,
           },
         },
+  );
+  // Only the paged layout shows a page total; infinite scroll never needs it.
+  const folderEntryCount = useQuery(
+    api.entries.countFolderEntries,
+    infiniteScroll ? "skip" : entryPageArgs,
   );
   const entries = (infiniteScroll
     ? entryPages.results
@@ -794,7 +832,7 @@ export function GalleryPage(props: {
   );
   const cardDragEnd = useStableCallback(() => endItemDrag());
 
-  if (listing === undefined) {
+  if (listing === undefined || profile === undefined) {
     return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
   }
 
@@ -1535,8 +1573,12 @@ export function GalleryPage(props: {
               Previous
             </button>
             <span>
-              Page {(paginationHistory.length + 1).toLocaleString()} ·{" "}
-              {entries.length.toLocaleString()} files
+              {paginationLabel({
+                page: paginationHistory.length + 1,
+                pageSize,
+                shown: entries.length,
+                total: folderEntryCount,
+              })}
             </span>
             <button
               type="button"

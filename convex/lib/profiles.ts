@@ -40,5 +40,6 @@ export function publicProfile(profile: Doc<"profiles">) {
     invitedAt: isPlaceholderProfile(profile) ? profile._creationTime : undefined,
     isSystemAdmin: profile.isSystemAdmin,
     lastSeenAt: profile.lastSeenAt,
+    infiniteScroll: profile.infiniteScroll !== false,
   };
 }

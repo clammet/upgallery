@@ -9,7 +9,9 @@ import {
   profileByIdentityId,
   publicProfile,
 } from "./lib/profiles";
-import { requireSystemAdmin } from "./lib/permissions";
+import { requireCurrentProfile, requireSystemAdmin } from "./lib/permissions";
+
+const MAX_DISPLAY_NAME_LENGTH = 80;
 
 const roleRank = { viewer: 1, editor: 2, owner: 3 } as const;
 
@@ -132,7 +134,9 @@ export const ensureCurrent = mutation({
       });
     } else {
       await ctx.db.patch("profiles", existing._id, {
-        displayName: result.identity?.name ?? existing.displayName,
+        displayName: existing.displayNameCustom
+          ? existing.displayName
+          : (result.identity?.name ?? existing.displayName),
         email: result.identity === null ? existing.email : email,
         image:
           result.identity === null
@@ -171,6 +175,37 @@ export const current = query({
     }
     const profile = await profileByIdentityId(ctx, identityId);
     return profile === null ? null : publicProfile(profile);
+  },
+});
+
+export const updatePreferences = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    displayName: v.optional(v.string()),
+    infiniteScroll: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
+    if (profile.isAnonymous) {
+      throw new Error("Log in to change account preferences");
+    }
+    const displayName = args.displayName?.trim();
+    if (displayName !== undefined) {
+      if (displayName.length < 1 || displayName.length > MAX_DISPLAY_NAME_LENGTH) {
+        throw new Error(
+          `Display name must be 1-${MAX_DISPLAY_NAME_LENGTH} characters`,
+        );
+      }
+    }
+    await ctx.db.patch("profiles", profile._id, {
+      ...(displayName === undefined
+        ? {}
+        : { displayName, displayNameCustom: true }),
+      ...(args.infiniteScroll === undefined
+        ? {}
+        : { infiniteScroll: args.infiniteScroll }),
+    });
+    return null;
   },
 });
 

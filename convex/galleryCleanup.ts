@@ -1,6 +1,7 @@
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { adjustFolderStatsForEntries } from "./lib/folderStats";
 
 export const queueEntries = internalMutation({
   args: { galleryId: v.id("galleries") },
@@ -27,6 +28,7 @@ export const queueEntries = internalMutation({
         availableAt: 0,
       });
     }
+    await adjustFolderStatsForEntries(ctx, entries, -1);
     if (entries.length === 32) {
       await ctx.scheduler.runAfter(0, internal.galleryCleanup.queueEntries, {
         galleryId: args.galleryId,

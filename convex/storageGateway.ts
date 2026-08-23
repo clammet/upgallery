@@ -3,6 +3,10 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sha256 } from "./lib/crypto";
 import { adjustGalleryStats } from "./lib/galleryStats";
+import {
+  adjustFolderStats,
+  settleReadyEntry,
+} from "./lib/folderStats";
 import { getFilesystemFolderSegments } from "./lib/filesystem";
 import {
   entryExistsError,
@@ -284,6 +288,12 @@ export const completeUpload = internalMutation({
         items: wasReady ? 0 : 1,
         bytes: args.size - (wasReady ? existing.size : 0),
       });
+      await settleReadyEntry(ctx, {
+        folderId: intent.folderId,
+        galleryId: gallery._id,
+        size: args.size,
+        previous: wasReady ? existing : undefined,
+      });
       await ctx.db.patch("uploadIntents", intent._id, {
         state: "complete",
         claimedAt: undefined,
@@ -333,6 +343,11 @@ export const completeUpload = internalMutation({
       downloads: 0,
     });
     await adjustGalleryStats(ctx, gallery, { items: 1, bytes: args.size });
+    await adjustFolderStats(
+      ctx,
+      { folderId: intent.folderId, galleryId: gallery._id },
+      { items: 1, bytes: args.size },
+    );
     await ctx.db.patch("uploadIntents", intent._id, {
       state: "complete",
       claimedAt: undefined,
@@ -1098,6 +1113,10 @@ export const completeEntryMove = internalMutation({
         items: -1,
         bytes: -occupant.size,
       });
+      await adjustFolderStats(ctx, occupant, {
+        items: -1,
+        bytes: -occupant.size,
+      });
       await ctx.db.insert("storageDeleteJobs", {
         entryId: occupant._id,
         storageKey: occupant.storageKey,
@@ -1154,6 +1173,13 @@ export const completeEntryMove = internalMutation({
         bytes: entry.size,
       });
     }
+    // `entry` still carries the source folder; the patch above moved it.
+    await settleReadyEntry(ctx, {
+      folderId: destinationFolder._id,
+      galleryId: destinationGallery._id,
+      size: entry.size,
+      previous: entry,
+    });
     if (sourceStorageKey !== args.storageKey) {
       await ctx.db.insert("storageDeleteJobs", {
         entryId: entry._id,

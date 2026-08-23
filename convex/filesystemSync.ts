@@ -8,6 +8,12 @@ import {
 import { createToken, sha256 } from "./lib/crypto";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import {
+  adjustFolderStats,
+  createFolderStats,
+  deleteFolderStats,
+  settleReadyEntry,
+} from "./lib/folderStats";
+import {
   getFilesystemFolderSegments,
   getFilesystemStorageKey,
 } from "./lib/filesystem";
@@ -262,7 +268,7 @@ export const reconcileFilesystemDirectory = internalMutation({
       });
       return existing._id;
     }
-    return await ctx.db.insert("folders", {
+    const folderId = await ctx.db.insert("folders", {
       galleryId: gallery._id,
       parentId: parent._id,
       ancestorIds: [...parent.ancestorIds, parent._id],
@@ -272,6 +278,8 @@ export const reconcileFilesystemDirectory = internalMutation({
       filesystemIdentity: args.identity,
       filesystemSyncId: args.syncId,
     });
+    await createFolderStats(ctx, folderId, gallery._id);
+    return folderId;
   },
 });
 
@@ -459,6 +467,12 @@ export const reconcileFilesystemFile = internalMutation({
         items: wasReady ? 0 : 1,
         bytes: args.size - (wasReady ? existing.size : 0),
       });
+      await settleReadyEntry(ctx, {
+        folderId: folder._id,
+        galleryId: gallery._id,
+        size: args.size,
+        previous: wasReady ? existing : undefined,
+      });
       await replaceMediaProcessingJob(ctx, {
         entryId: existing._id,
         storageKey: args.storageKey,
@@ -509,6 +523,11 @@ export const reconcileFilesystemFile = internalMutation({
       downloads: 0,
     });
     await adjustGalleryStats(ctx, gallery, { items: 1, bytes: args.size });
+    await adjustFolderStats(
+      ctx,
+      { folderId: folder._id, galleryId: gallery._id },
+      { items: 1, bytes: args.size },
+    );
     await replaceMediaProcessingJob(ctx, {
       entryId,
       storageKey: args.storageKey,
@@ -606,6 +625,11 @@ export const completeFilesystemSync = internalMutation({
         items: -removedItems,
         bytes: -removedBytes,
       });
+      await adjustFolderStats(
+        ctx,
+        { folderId: folder._id, galleryId: gallery._id },
+        { items: -removedItems, bytes: -removedBytes },
+      );
     }
     const now = Date.now();
     await ctx.db.patch("filesystemSyncStates", state._id, {
@@ -697,6 +721,11 @@ export const cleanupMissingFolder = internalMutation({
         items: -entries.length,
         bytes: -removedBytes,
       });
+      await adjustFolderStats(
+        ctx,
+        { folderId: folder._id, galleryId: gallery._id },
+        { items: -entries.length, bytes: -removedBytes },
+      );
       await ctx.scheduler.runAfter(
         0,
         internal.filesystemSync.cleanupMissingFolder,
@@ -754,6 +783,7 @@ export const cleanupMissingFolder = internalMutation({
     if (syncState !== null) {
       await ctx.db.delete("filesystemSyncStates", syncState._id);
     }
+    await deleteFolderStats(ctx, folder._id);
     await ctx.db.delete("folders", folder._id);
     return null;
   },
@@ -1009,6 +1039,7 @@ export const completeFilesystemOperation = internalMutation({
           previewMode: operation.previewMode,
           filesystemIdentity: args.identity,
         });
+        await createFolderStats(ctx, folderId, gallery._id);
       }
     } else if (operation.kind === "rmdir") {
       if (folderId === undefined) {

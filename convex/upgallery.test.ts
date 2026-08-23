@@ -31,6 +31,27 @@ async function seedGalleryStats(
   }
 }
 
+async function seedFolderStats(
+  ctx: Pick<MutationCtx, "db">,
+  galleryId: Id<"galleries">,
+  folderId: Id<"folders">,
+  stats: { itemCount: number; totalBytes: number },
+) {
+  const existing = await folderStatsOf(ctx, folderId);
+  if (existing === null) {
+    await ctx.db.insert("folderStats", { galleryId, folderId, ...stats });
+  } else {
+    await ctx.db.patch("folderStats", existing._id, stats);
+  }
+}
+
+function folderStatsOf(ctx: Pick<QueryCtx, "db">, folderId: Id<"folders">) {
+  return ctx.db
+    .query("folderStats")
+    .withIndex("by_folderId", (q) => q.eq("folderId", folderId))
+    .unique();
+}
+
 function galleryStatsOf(ctx: Pick<QueryCtx, "db">, galleryId: Id<"galleries">) {
   return ctx.db
     .query("galleryStats")
@@ -1045,6 +1066,51 @@ describe("upgallery backend", () => {
     await expect(
       t.query(api.profiles.current, { anonymousClaim }),
     ).resolves.toBeNull();
+  });
+
+  test("account preferences persist and a custom display name survives sign-in", async () => {
+    const t = setupTest();
+    const member = await seedProfile(t, { email: "prefs@example.com" });
+    const user = asUser(t, member.googleSubject, "prefs@example.com");
+
+    await expect(user.query(api.profiles.current, {})).resolves.toMatchObject({
+      displayName: "Test User",
+      infiniteScroll: true,
+    });
+
+    await user.mutation(api.profiles.updatePreferences, {
+      displayName: "  Preferred Name  ",
+      infiniteScroll: false,
+    });
+    await expect(user.query(api.profiles.current, {})).resolves.toMatchObject({
+      displayName: "Preferred Name",
+      infiniteScroll: false,
+    });
+
+    // Re-running sign-in must not reset the chosen name to the provider's.
+    await user.mutation(api.profiles.ensureCurrent, {});
+    await expect(user.query(api.profiles.current, {})).resolves.toMatchObject({
+      displayName: "Preferred Name",
+      infiniteScroll: false,
+    });
+
+    await user.mutation(api.profiles.updatePreferences, { infiniteScroll: true });
+    await expect(user.query(api.profiles.current, {})).resolves.toMatchObject({
+      displayName: "Preferred Name",
+      infiniteScroll: true,
+    });
+
+    await expect(
+      user.mutation(api.profiles.updatePreferences, { displayName: "   " }),
+    ).rejects.toThrow("Display name must be");
+
+    const anonymous = await seedProfile(t, { anonymous: true });
+    await expect(
+      t.mutation(api.profiles.updatePreferences, {
+        anonymousClaim: anonymous.anonymousClaim,
+        infiniteScroll: false,
+      }),
+    ).rejects.toThrow("Log in to change account preferences");
   });
 
   test("sign-in absorbs anonymous app data into an existing Google profile", async () => {
@@ -2727,6 +2793,10 @@ describe("upgallery backend", () => {
           itemCount: 175,
           totalBytes: 1_750,
         });
+        await seedFolderStats(ctx, galleryId, folderId, {
+          itemCount: 175,
+          totalBytes: 1_750,
+        });
         return folderId;
       });
 
@@ -2747,6 +2817,12 @@ describe("upgallery backend", () => {
       });
       expect(secondPage.page).toHaveLength(75);
       expect(secondPage.isDone).toBe(true);
+      await expect(
+        ownerClient.query(api.entries.countFolderEntries, {
+          galleryId,
+          folderId: rootFolderId,
+        }),
+      ).resolves.toEqual({ count: 175, exact: true });
 
       const excludedEntryId = firstPage.page[0]._id;
       const operationId = await ownerClient.mutation(
@@ -2787,6 +2863,15 @@ describe("upgallery backend", () => {
       ]);
       expect(result.deleteJobs).toHaveLength(174);
       expect(result.stats).toMatchObject({ itemCount: 1, totalBytes: 10 });
+      await expect(
+        t.run(async (ctx) => folderStatsOf(ctx, rootFolderId)),
+      ).resolves.toMatchObject({ itemCount: 1, totalBytes: 10 });
+      await expect(
+        ownerClient.query(api.entries.countFolderEntries, {
+          galleryId,
+          folderId: rootFolderId,
+        }),
+      ).resolves.toEqual({ count: 1, exact: true });
     } finally {
       vi.useRealTimers();
     }
@@ -2849,6 +2934,9 @@ describe("upgallery backend", () => {
     });
 
     await expect(
+      t.run(async (ctx) => folderStatsOf(ctx, sourceGallery!.rootFolderId!)),
+    ).resolves.toMatchObject({ itemCount: 1, totalBytes: 45 });
+    await expect(
       authed.query(api.galleries.listOwnedImageGalleries, {}),
     ).resolves.toEqual(
         expect.arrayContaining([
@@ -2894,6 +2982,8 @@ describe("upgallery backend", () => {
       entry: await ctx.db.get("entries", entryId),
       source: await galleryStatsOf(ctx, sourceGalleryId),
       destination: await galleryStatsOf(ctx, destinationGalleryId),
+      sourceFolder: await folderStatsOf(ctx, sourceGallery!.rootFolderId!),
+      destinationFolder: await folderStatsOf(ctx, destinationFolder.folderId),
       operation: await ctx.db.get("bulkOperations", operationId),
       deleteJobs: await ctx.db
         .query("storageDeleteJobs")
@@ -2909,6 +2999,11 @@ describe("upgallery backend", () => {
     expect(completed.entry?.migrationState).toBeUndefined();
     expect(completed.source).toMatchObject({ itemCount: 0, totalBytes: 0 });
     expect(completed.destination).toMatchObject({
+      itemCount: 1,
+      totalBytes: 45,
+    });
+    expect(completed.sourceFolder).toMatchObject({ itemCount: 0, totalBytes: 0 });
+    expect(completed.destinationFolder).toMatchObject({
       itemCount: 1,
       totalBytes: 45,
     });
