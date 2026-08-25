@@ -1,6 +1,7 @@
 
 .env.local
 .env.storage.local
+.env.convex.production.local
 node_modules/
 .pnpm-store/
 dist/

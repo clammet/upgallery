@@ -1,8 +1,8 @@
-name: Convex deploy
+name: Convex / Production deploy
 
-# Deploys the functions, crons, and auth config in convex/ to the hosted
-# Convex deployment identified by the CONVEX_DEPLOY_KEY secret (generate a
-# production deploy key in the Convex dashboard under Settings → Deploy keys).
+# Deploys only the functions, crons, schema, and auth config in convex/ to the
+# dedicated self-hosted production deployment. Deployment environment values
+# are managed separately; a code deploy does not rewrite them.
 #
 # Manual-only for now: the service is not live yet, so this is intentionally
 # decoupled from the Docker image build. Once a production Convex deployment
@@ -22,16 +22,26 @@ permissions:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://upgallery.nyanya.org
+    env:
+      # Keep the target visible and reviewable in source. The admin key is the
+      # only production credential this workflow needs.
+      CONVEX_SELF_HOSTED_URL: https://upgallery-convex.nyanya.org
     steps:
-      - name: Check deploy key is configured
+      - name: Check production target and admin key
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
         run: |
-          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
-            echo "::error::CONVEX_DEPLOY_KEY secret is not set." \
-              "Create a deploy key in the Convex dashboard and add it under" \
-              "Settings → Secrets and variables → Actions."
+          if [ "$CONVEX_SELF_HOSTED_URL" != "https://upgallery-convex.nyanya.org" ]; then
+            echo "::error::Refusing unexpected production target: $CONVEX_SELF_HOSTED_URL"
+            exit 1
+          fi
+          if [ -z "$CONVEX_SELF_HOSTED_ADMIN_KEY" ]; then
+            echo "::error::CONVEX_SELF_HOSTED_ADMIN_KEY is not set in the production environment."
             exit 1
           fi
 
@@ -49,5 +59,5 @@ jobs:
 
       - name: Deploy to Convex
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: pnpm exec convex deploy
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+        run: pnpm exec convex deploy --message "GitHub Actions ${GITHUB_SHA}"

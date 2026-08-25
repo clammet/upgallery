@@ -149,6 +149,39 @@ This repository does not create or manage Convex containers. The surrounding
 infrastructure must provide an accessible Convex client API and HTTP Actions
 origin, plus deployment credentials for publishing the functions in `convex/`.
 
+### Development and production separation
+
+Development and production are separate Convex backends with separate data and
+deployment environment values:
+
+| Environment | Convex target | Selector | Normal command |
+| --- | --- | --- | --- |
+| Development | Project-local Convex on ports 3210/3211 | `CONVEX_DEPLOYMENT=anonymous:...` or `local:...` in ignored `.env.local` | `pnpm devsetup`, then `pnpm dev` |
+| Production | `https://upgallery-convex.nyanya.org` | `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY` in CI or an explicitly selected ignored file | Production GitHub Actions workflow or an explicit command with `--env-file` |
+
+Never put the production self-hosted URL or admin key in `.env.local`.
+Upgallery's local setup deliberately writes `CONVEX_DEPLOYMENT` there, and the
+Convex CLI rejects mixing that local selector with the self-hosted selector.
+For an operator's local production access, copy
+`.env.convex.production.example` to `.env.convex.production.local`, insert the
+generated admin key, and pass it explicitly:
+
+```bash
+pnpm exec convex env --env-file .env.convex.production.local list --names-only
+pnpm exec convex deploy --env-file .env.convex.production.local
+```
+
+The first command is the read-only target check. Confirm that the URL in the
+file is `https://upgallery-convex.nyanya.org` before any deploy.
+Do not add `--prod`: that option selects a Convex Cloud project's production
+deployment and is not the selector for this self-hosted instance.
+
+The repository's production GitHub workflow hard-codes and checks the public
+backend URL, uses a GitHub `production` environment, and reads only
+`CONVEX_SELF_HOSTED_ADMIN_KEY` from that environment's secrets. Configure
+required reviewers and restrict deployment branches to `main` on that GitHub
+environment. The workflow also refuses to run from another branch.
+
 The Compose application consists of:
 
 - `web`: Nginx and the compiled React application.
@@ -161,60 +194,68 @@ Both storage services use the same image and mounted storage roots, but have
 separate process lifecycles, health checks, concurrency limits, and resource
 limits.
 
-1. Provision the Convex deployment using the infrastructure's normal process.
-2. Put its deployment URL and admin key in local, uncommitted Convex CLI
-   configuration.
-3. Set the application and Google OAuth values in that Convex deployment:
+For the `yuzuyu` production infrastructure:
 
-   ```text
-   SITE_URL=https://gallery.example.com
-   DEFAULT_ADMIN_EMAIL=admin@example.com
-   STORAGE_INTERNAL_SECRET=<same value used by the storage container>
-   AUTH_GOOGLE_ID=<Google OAuth client ID>
-   AUTH_GOOGLE_SECRET=<Google OAuth client secret>
+1. Edit only `inventory/group_vars/vault.yml` in `yuzuyu`. Define the
+   `vault_upgallery_convex_environment` mapping with these exact keys:
+
+   ```yaml
+   vault_upgallery_convex_environment:
+     SITE_URL: "https://upgallery.nyanya.org"
+     DEFAULT_ADMIN_EMAIL: "your-admin-email"
+     AUTH_GOOGLE_ID: "your-google-client-id"
+     AUTH_GOOGLE_SECRET: "your-google-client-secret"
+     STORAGE_INTERNAL_SECRET: "a-long-random-value"
    ```
 
    `SITE_URL` is the canonical web origin. Configured gallery hosts are also
    accepted as OAuth return origins after they have been added by an
-   administrator.
+   administrator. Generate `STORAGE_INTERNAL_SECRET` with `openssl rand -hex
+   32`.
 
-4. Copy `deploy/.env.docker.example` to an uncommitted deployment `.env`. Set:
+2. Run the `upgallery Convex / Bootstrap` workflow in `yuzuyu`. Its
+   `full_install` playbook provisions the backend and reconciles that complete
+   mapping into the Convex deployment. The same map supplies the browser's
+   Google client ID and the storage containers' internal secret, so there are
+   no duplicate values to synchronize.
 
-   - `PUBLIC_CONVEX_URL` to the browser-reachable Convex client API.
-   - `PUBLIC_CONVEX_SITE_URL` to the browser-reachable HTTP Actions origin.
-   - `STORAGE_CONVEX_SITE_URL` to the route the containers should use for that
-     same HTTP Actions service. It may be private.
-   - The mount paths, `GOOGLE_CLIENT_ID`, and a long random
-     `STORAGE_INTERNAL_SECRET`.
+3. Render nginx and issue certificates for the three Convex names so the
+   production backend and HTTP Actions origins are publicly reachable.
+
+4. Generate an admin key on the host:
+
+   ```bash
+   docker compose --project-directory /opt/upgallery-convex exec -T backend ./generate_admin_key.sh
+   ```
+
+   Store it as `CONVEX_SELF_HOSTED_ADMIN_KEY` in this repository's GitHub
+   `production` environment. This is a deployment credential, not an
+   application environment value.
 
 5. Configure this callback in Google Auth Platform:
 
    ```text
-   https://convex-actions.example.com/auth/google/callback
+   https://upgallery-convex-site.nyanya.org/auth/google/callback
    ```
 
    Development and production should use separate Google OAuth clients.
    Convex verifies Google ID tokens through its
    [custom OIDC provider support](https://docs.convex.dev/auth/advanced/custom-auth).
 
-6. Push the Convex functions to the provisioned deployment, then build the app:
+6. Run this repository's `Convex / Production deploy` workflow to publish the
+   functions, schema, crons, and auth config.
 
-   ```bash
-   pnpm exec convex deploy
-   docker compose up -d --build
-   ```
+7. Run the `upgallery / Bootstrap` workflow in `yuzuyu`. It renders the browser
+   runtime configuration and starts the storage services from the same vault
+   mapping.
 
-   The storage image compiles the pinned libvips release during the image
-   build, with Alpine's libheif decoder enabled, then compiles Sharp against
-   that libvips. Both the builder and final storage stage run
-   `scripts/check-sharp-heic.mjs`, so an image build fails instead of shipping
-   without HEIC/HEIF support. This belongs at image-build time: Compose only
-   starts immutable services and does not download compilers or mutate native
-   libraries at deployment startup.
+8. Rerender nginx and issue the Upgallery site's certificate. Preserve the
+   original Host header for gallery host/path resolution.
 
-7. Put a TLS reverse proxy in front of the public gallery domains and use the
-   infrastructure-provided Convex origins. Preserve the original Host header
-   for gallery host/path resolution.
+For deployments not managed by `yuzuyu`, `deploy/.env.docker.example` and this
+repository's `docker-compose.yml` remain the standalone reference. Such an
+operator is responsible for supplying equivalent runtime values and applying
+the five environment values to Convex.
 
 ## Runtime web configuration
 
@@ -227,14 +268,15 @@ The web container renders that file when it starts. Provide either:
 
 - The `PUBLIC_CONVEX_URL`, `PUBLIC_CONVEX_SITE_URL`, and `GOOGLE_CLIENT_ID`
   environment variables — the Compose file passes them through from the host
-  `.env` (step 4 above), and an entrypoint script renders
+  `.env` in a standalone deployment, and an entrypoint script renders
   `/usr/share/nginx/html/config.json` from them. The container refuses to
   start if one is missing.
 - A complete `config.json` bind-mounted at `/usr/share/nginx/html/config.json`,
   which takes precedence and skips rendering.
 
 Changing the values only requires recreating the container, not rebuilding
-the image.
+the image. `yuzuyu` instead renders `config.json` for the `web-dist` artifact
+from `vault_upgallery_convex_environment`.
 
 ### Serving the site without the web container (`web-dist`)
 
@@ -264,15 +306,26 @@ replicate; the load-bearing behaviors are:
 
 ## GitHub Actions configuration
 
-Configuration lives in three places, and the split matters:
+Production application values are authored in one place. Other locations are
+consumers or deployment credentials:
 
-- **Convex deployment environment** (dashboard): the server-side values from
-  step 3 above (`SITE_URL`, `DEFAULT_ADMIN_EMAIL`, `STORAGE_INTERNAL_SECRET`,
-  `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`). These never go in GitHub.
-- **Docker host `.env`** (step 4 above): runtime values read by Compose when
-  starting containers, including the web configuration above.
-- **GitHub repository → Settings → Secrets and variables → Actions**: only
-  the Convex deploy key below.
+- **Local Upgallery files**: `.env.local` and `.env.storage.local` select and
+  configure only the project-local development services.
+- **`yuzuyu` Ansible Vault**: `vault_upgallery_convex_environment` is the only
+  editable source for all five production application values. The Convex and
+  Upgallery bootstraps both consume it.
+- **Convex production deployment environment**: an applied copy reconciled by
+  `yuzuyu`; do not edit it manually.
+- **GitHub `production` environment in this repository**: only
+  `CONVEX_SELF_HOSTED_ADMIN_KEY`, used to publish application code. The target
+  URL is deliberately committed in the workflow so a target change is
+  reviewed. This credential is not application configuration.
+
+The recommended ownership boundary is: `yuzuyu` provisions the backend,
+host-side services, runtime configuration, and production secret values;
+Upgallery's workflow publishes the versioned Convex application code. Do not
+rewrite Convex environment values in the code-deploy workflow; rerun the
+`yuzuyu` Convex bootstrap after changing the vault mapping.
 
 ### Docker images (`.github/workflows/docker.yml`)
 
@@ -291,20 +344,19 @@ wanted.
 
 ### Convex deploy (`.github/workflows/convex-deploy.yml`)
 
-Run manually from the Actions tab; it pushes the functions, crons, and auth
-config in `convex/` with `convex deploy`. Under the **Secrets** tab, define:
+Run manually from the Actions tab; it pushes the functions, crons, schema, and
+auth config in `convex/` with `convex deploy`. Create a GitHub environment named
+`production` and define this environment secret:
 
 | Secret | Value |
 | --- | --- |
-| `CONVEX_DEPLOY_KEY` | Production deploy key, generated in the Convex dashboard on the production deployment's settings page (Deploy Keys) |
+| `CONVEX_SELF_HOSTED_ADMIN_KEY` | Admin key generated by `./generate_admin_key.sh` in the production backend container |
 
-The deploy key selects the target deployment, so no URL needs configuring.
-For a self-hosted Convex backend, the CLI instead reads
-`CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`; add those as a
-variable and secret respectively and pass them in the workflow's deploy step
-in place of `CONVEX_DEPLOY_KEY`. Once the production deployment is live,
-enable the commented-out `push` trigger in the workflow to deploy on every
-`main` push.
+The workflow supplies and verifies
+`CONVEX_SELF_HOSTED_URL=https://upgallery-convex.nyanya.org` itself. It does not
+accept a Convex Cloud deploy key and does not change deployment environment
+values. Once the production deployment is live, enable the commented-out
+`push` trigger to deploy on every `main` push if that release policy is wanted.
 
 ## Worker recovery and concurrency
 

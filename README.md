@@ -134,6 +134,13 @@ service is temporarily unavailable.
 Docker and Compose remain deployment-only concerns: they consume an externally
 provisioned Convex deployment and do not create or manage Convex containers.
 
+Production never shares the local selector or local data. Keep
+`CONVEX_DEPLOYMENT` in `.env.local` for development, and use the separate
+ignored `.env.convex.production.local` file (copied from
+`.env.convex.production.example`) only with an explicit `--env-file`. See
+[deployment and storage architecture](docs/deployment.md) for the production
+target guard, secret ownership, and GitHub Actions setup.
+
 Vite reads browser variables only at startup, so restart `pnpm dev` after
 changing `.env.local`. The browser origin must also exactly match `SITE_URL`;
 with the values above, open `http://localhost:5173`.

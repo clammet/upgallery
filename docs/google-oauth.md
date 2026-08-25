@@ -129,11 +129,10 @@ client ID:
 
 | Setting | Location | Development value | Production value |
 | --- | --- | --- | --- |
-| `VITE_GOOGLE_CLIENT_ID` | Browser build, normally `.env.local` | Development client ID | Not used by the Compose production build |
-| `GOOGLE_CLIENT_ID` | Uncommitted production Compose `.env` | Not normally used | Production client ID |
-| `AUTH_GOOGLE_ID` | Convex deployment environment | Development client ID | Production client ID |
-| `AUTH_GOOGLE_SECRET` | Convex deployment environment | Development client secret | Production client secret |
-| `SITE_URL` | Convex deployment environment | `http://localhost:5173` | Canonical production UI origin |
+| `VITE_GOOGLE_CLIENT_ID` | Browser build, normally `.env.local` | Development client ID | Not used by `yuzuyu` production |
+| `AUTH_GOOGLE_ID` | Local Convex env / `yuzuyu` vault map | Development client ID | Production client ID; also rendered into `/config.json` |
+| `AUTH_GOOGLE_SECRET` | Local Convex env / `yuzuyu` vault map | Development client secret | Production client secret |
+| `SITE_URL` | Local Convex env / `yuzuyu` vault map | `http://localhost:5173` | Canonical production UI origin |
 
 For local development, the two ignored files and the Convex deployment should
 contain the following:
@@ -191,13 +190,23 @@ pnpm exec convex env --prod set AUTH_GOOGLE_SECRET
 pnpm exec convex env --prod set SITE_URL 'https://gallery.example.com'
 ```
 
-For the self-hosted deployment, set those values against the selected
-self-hosted Convex deployment instead. Also put the same production client ID
-in the uncommitted Compose `.env`:
+For the `yuzuyu` self-hosted production deployment, set the OAuth values only
+inside its encrypted `inventory/group_vars/vault.yml` mapping:
 
-```text
-GOOGLE_CLIENT_ID=<production-client-id>
+```yaml
+vault_upgallery_convex_environment:
+  SITE_URL: "https://upgallery.nyanya.org"
+  DEFAULT_ADMIN_EMAIL: "your-admin-email"
+  AUTH_GOOGLE_ID: "your-production-client-id"
+  AUTH_GOOGLE_SECRET: "your-production-client-secret"
+  STORAGE_INTERNAL_SECRET: "your-existing-long-random-value"
 ```
+
+Run `playbooks/services/upgallery-convex/bootstrap/full_install.yml` after a
+change. It reconciles the mapping into Convex; the Upgallery bootstrap renders
+the same `AUTH_GOOGLE_ID` into `/config.json`. Do not also set these values with
+`convex env`, Compose, or this repository's GitHub workflow. `--prod` is a
+Convex Cloud project selector and is not used for the self-hosted target.
 
 `CONVEX_SITE_URL` is a built-in supplied by Convex and identifies the public
 HTTP Actions origin. Do not declare it in `convex/convex.config.ts` or try to
