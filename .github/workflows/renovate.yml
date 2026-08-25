@@ -33,7 +33,7 @@ env:
   # preset in the repo's Renovate config (the annotation must stay on the line
   # directly above the variable).
   # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate
-  RENOVATE_VERSION: 44.35.4
+  RENOVATE_VERSION: 44.43.0
 
 jobs:
   renovate:
@@ -53,13 +53,16 @@ jobs:
               gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${id}/enable"
             done
 
+      # Renovate's documented GitHub App permissions: Administration R,
+      # Checks RW, Commit statuses RW, Contents RW, Dependabot alerts R,
+      # Issues RW, Members R, Metadata R, Pull requests RW, and Workflows RW.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
           client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
 
-      - uses: renovatebot/github-action@e09d604f8f803bb527bd8321ed5be06c460b8682 # v46.2.2
+      - uses: renovatebot/github-action@5402b206248e5a8c8427a15102702eb9c1793efc # v46.2.4
         with:
           token: ${{ steps.app-token.outputs.token }}
           renovate-version: ${{ env.RENOVATE_VERSION }}
