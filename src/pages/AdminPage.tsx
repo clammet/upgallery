@@ -487,7 +487,13 @@ function GalleryAdmin(props: {
             }}
           >
             <select name="targetStorageKind"><option value="shared">Shared</option><option value="user">User mount</option></select>
-            <input name="targetStorageRoot" required placeholder="target/root" />
+            <input
+              key={`${gallery._id}:${gallery.storageRoot}`}
+              name="targetStorageRoot"
+              required
+              defaultValue={gallery.storageRoot}
+              placeholder="target/root"
+            />
             <button type="submit" disabled={gallery.pendingMigrationId !== undefined}>Queue migration</button>
           </form>
           {details.migrations.map((migration) => (

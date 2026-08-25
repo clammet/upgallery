@@ -157,7 +157,7 @@ run("pnpm", ["exec", "convex", "dev", "--once"], {
 });
 
 console.log("\nLocal development environment is blank and ready.");
-console.log("Run: pnpm dev");
+console.log("Run: pnpm dev (source) or pnpm dev:docker (production images)");
 if (
   googleClientId === "local-development-client-id" ||
   googleClientSecret === "local-development-secret-not-configured"

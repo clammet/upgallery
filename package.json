@@ -6,6 +6,8 @@
   "scripts": {
     "devsetup": "node scripts/devsetup.mjs",
     "dev": "concurrently -k -n convex,storage-api,storage-worker,web \"convex dev\" \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\" \"vite\"",
+    "dev:docker": "node scripts/dev-docker.mjs",
+    "dev:docker:stop": "node scripts/dev-docker.mjs --stop",
     "dev:web": "vite",
     "dev:storage": "concurrently -k -n storage-api,storage-worker \"tsx watch --env-file=.env.storage.local storage/server.ts\" \"tsx watch --env-file=.env.storage.local storage/worker.ts\"",
     "dev:storage-api": "tsx watch --env-file=.env.storage.local storage/server.ts",

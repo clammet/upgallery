@@ -60,6 +60,39 @@ After that, `pnpm dev` starts `convex dev` alongside Vite and both storage
 processes, so the local Convex backend, function deployment, code generation,
 and file watching are part of the normal development command.
 
+To exercise the production Docker images and filesystem boundaries instead,
+stop `pnpm dev`, then run:
+
+```bash
+pnpm dev:docker
+```
+
+This builds the real `storage` and `web` Dockerfile targets, starts the storage
+API and worker as the image's unprivileged user, and runs the same Nginx proxy
+and read-only media mounts used by the standalone deployment. The project-local
+Convex backend still runs on the host, using the values created by `devsetup`.
+The app remains at the `SITE_URL` in `.env.local` (normally
+`http://localhost:5173`). This image-based mode intentionally does not hot
+reload; stop and rerun it to rebuild changed application code.
+
+Press Ctrl+C once to stop it. The wrapper gracefully stops and removes its
+three development containers before returning. If a terminal or package
+manager is killed before cleanup completes, recover with:
+
+```bash
+pnpm dev:docker:stop
+```
+
+This only targets containers named `upgallery-dev-*`; it does not delete the
+user mount, app-managed storage, Docker images, or the local Convex database.
+
+The one example user-backed mount is `.user-storage/example`. It is separate
+from app-managed `.storage`, so its files survive `devsetup` resets just like an
+external user directory. In Admin, create an image gallery with **Storage** set
+to **User mount** and **Internal storage path** set to `example`. Files added,
+changed, or removed beneath `.user-storage/example` are then reconciled through
+the Docker storage worker and served through the Docker Nginx container.
+
 `devsetup` treats the ignored `.env.local` file as the source of truth for
 local configuration. On every run it preserves these settings, applies the
 server values to the local Convex deployment, and synchronizes the shared
