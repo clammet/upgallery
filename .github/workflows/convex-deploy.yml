@@ -4,14 +4,13 @@ name: Convex / Production deploy
 # dedicated self-hosted production deployment. Deployment environment values
 # are managed separately; a code deploy does not rewrite them.
 #
-# Manual-only for now: the service is not live yet, so this is intentionally
-# decoupled from the Docker image build. Once a production Convex deployment
-# exists, uncomment the push trigger below to deploy on every main push.
+# Deploy automatically whenever application code lands on main. The manual
+# trigger remains available for an explicit redeploy.
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
+  push:
+    branches: [main]
 
 concurrency:
   group: convex-deploy
