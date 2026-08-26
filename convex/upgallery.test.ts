@@ -649,6 +649,7 @@ describe("upgallery backend", () => {
 
   test("gallery availability and creation reserve internal storage paths globally", async () => {
     const t = setupTest();
+    const existingStorageRoot = "clam/gallery.nyanya.org/goodies";
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
@@ -659,7 +660,7 @@ describe("upgallery backend", () => {
       slug: "a7-existing-gallery",
       kind: "image",
       storageKind: "shared",
-      storageRoot: "a7-existing-gallery",
+      storageRoot: existingStorageRoot,
       hosts: [{ host: "existing.example.com", rootPath: "/" }],
     });
 
@@ -675,10 +676,19 @@ describe("upgallery backend", () => {
     await expect(
       authed.query(api.galleries.checkAvailability, {
         slug: "b8-new-gallery",
-        storageRoot: "a7-existing-gallery",
+        storageRoot: existingStorageRoot,
       }),
     ).resolves.toMatchObject({
       slugAvailable: true,
+      storageRootAvailable: false,
+    });
+    await expect(
+      authed.query(api.galleries.checkAvailability, {
+        slug: "b8-new-gallery",
+        storageRoot: "clam/gallery.nyanya.org/../private",
+      }),
+    ).resolves.toMatchObject({
+      normalizedStorageRoot: null,
       storageRootAvailable: false,
     });
     await expect(
@@ -687,7 +697,7 @@ describe("upgallery backend", () => {
         slug: "b8-conflicting-gallery",
         kind: "image",
         storageKind: "user",
-        storageRoot: "a7-existing-gallery",
+        storageRoot: existingStorageRoot,
         hosts: [{ host: "conflict.example.com", rootPath: "/" }],
       }),
     ).rejects.toThrow("That internal storage path is already in use");

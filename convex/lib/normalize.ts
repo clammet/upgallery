@@ -25,10 +25,10 @@ export function normalizeStorageRoot(path: string): string {
     normalized.length === 0 ||
     normalized.length > 200 ||
     normalized.split("/").some((part) => part === "" || part === "." || part === "..") ||
-    !/^[a-zA-Z0-9/_-]+$/.test(normalized)
+    !/^[a-zA-Z0-9/_.-]+$/.test(normalized)
   ) {
     throw new Error(
-      "Internal storage path must be relative and contain only letters, numbers, /, _ and -.",
+      "Internal storage path must be relative and contain only letters, numbers, /, ., _ and -.",
     );
   }
   return normalized;
