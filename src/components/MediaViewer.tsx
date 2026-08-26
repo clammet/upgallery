@@ -386,7 +386,10 @@ export function MediaViewer(props: {
         return;
       }
       if (isEditableTarget(event.target)) return;
-      if (event.key === "ArrowLeft") {
+      if (event.key === " " && activeItem !== undefined) {
+        event.preventDefault();
+        window.open(activeItem.href, "_blank", "noopener,noreferrer");
+      } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         moveBy(-1);
       } else if (event.key === "ArrowRight") {
@@ -396,7 +399,7 @@ export function MediaViewer(props: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moveBy, props.onClose, props.shortcutsSuspended]);
+  }, [activeItem, moveBy, props.onClose, props.shortcutsSuspended]);
 
   useEffect(() => {
     if (activeItem === undefined) return;
@@ -959,7 +962,7 @@ export function MediaViewer(props: {
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Open ${activeItem.title} in a new tab`}
-            title="Open in new tab"
+            title="Open in new tab (Space)"
           >
             <ExternalLink aria-hidden="true" size={17} />
           </a>

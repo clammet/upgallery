@@ -14,6 +14,8 @@ export type GalleryTheme = {
   foreground?: string;
   surface?: string;
   muted?: string;
+  headerDivider?: string;
+  cellBorder?: string;
   mode?: ThemeMode;
   radius?: number;
   density?: "compact" | "comfortable";
@@ -28,6 +30,8 @@ export type ThemeFormValues = {
   foreground: string;
   surface: string;
   muted: string;
+  headerDivider: string;
+  cellBorder: string;
   mode: ThemeMode;
   radius: number;
   density: "compact" | "comfortable";
@@ -75,6 +79,8 @@ export function buildTheme(values: ThemeFormValues): GalleryTheme {
     foreground: values.foreground.toLowerCase() || undefined,
     surface: values.surface.toLowerCase() || undefined,
     muted: values.muted.toLowerCase() || undefined,
+    headerDivider: values.headerDivider.toLowerCase() || undefined,
+    cellBorder: values.cellBorder.toLowerCase() || undefined,
     mode: values.mode,
     radius: values.radius,
     density: values.density,
@@ -96,6 +102,8 @@ export function initialThemeJson(theme: GalleryTheme): string {
       foreground: theme.foreground ?? defaults.foreground,
       surface: theme.surface ?? defaults.surface,
       muted: theme.muted ?? defaults.muted,
+      headerDivider: theme.headerDivider ?? defaults.headerDivider,
+      cellBorder: theme.cellBorder ?? defaults.cellBorder,
       mode,
       radius: theme.radius ?? 4,
       density: theme.density ?? "compact",

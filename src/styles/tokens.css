@@ -6,6 +6,8 @@
   --gallery-fg: #17201d;
   --gallery-surface: #ffffff;
   --gallery-muted: #65716c;
+  --gallery-header-divider: #d0d5d1;
+  --gallery-cell-border: #d0d5d1;
   --gallery-radius: 5px;
   --gallery-gap: 0.5rem;
   --thumbnail-frame-size: 218px;
@@ -21,6 +23,8 @@
     --gallery-fg: #e8eee9;
     --gallery-surface: #18201c;
     --gallery-muted: #9eaaa4;
+    --gallery-header-divider: #3c423f;
+    --gallery-cell-border: #3c423f;
     --border: color-mix(in srgb, var(--gallery-fg) 20%, transparent);
     --shadow: 0 8px 32px rgb(0 0 0 / 25%);
   }

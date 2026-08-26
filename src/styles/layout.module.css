@@ -1,5 +1,5 @@
 .page { background: var(--gallery-bg); color: var(--gallery-fg); display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
-.header { align-items: center; background: color-mix(in srgb, var(--gallery-bg) 92%, transparent); border-bottom: 1px solid var(--border); display: grid; gap: .75rem; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr) minmax(110px, 1fr); min-height: 44px; padding: .35rem .65rem; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px); }
+.header { align-items: center; background: color-mix(in srgb, var(--gallery-bg) 92%, transparent); border-bottom: 1px solid var(--gallery-header-divider); display: grid; gap: .75rem; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr) minmax(110px, 1fr); min-height: 44px; padding: .35rem .65rem; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px); }
 .brand { font-size: 1rem; font-weight: 700; overflow: hidden; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumb { align-items: center; display: flex; justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
 .breadcrumb a { overflow: hidden; text-overflow: ellipsis; }

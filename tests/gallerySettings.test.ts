@@ -50,6 +50,8 @@ describe("gallery settings dirty-field detection", () => {
       foreground: defaults.foreground,
       surface: defaults.surface,
       muted: defaults.muted,
+      headerDivider: defaults.headerDivider,
+      cellBorder: defaults.cellBorder,
       mode: "light",
       radius: 4,
       density: "compact",

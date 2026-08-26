@@ -1,5 +1,5 @@
 .grid { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(min(var(--thumbnail-frame-size), 100%), 1fr)); }
-.folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); min-height: 112px; overflow: hidden; text-decoration: none; }
+.folderCard, .fileCard { background: var(--gallery-surface); border: 1px solid var(--gallery-cell-border); border-radius: var(--gallery-radius); min-height: 112px; overflow: hidden; text-decoration: none; }
 .folderCard { align-content: start; display: grid; gap: .3rem; justify-items: stretch; padding: .45rem; }
 .folderCard:hover, .fileCard:hover { border-color: var(--gallery-accent); }
 .folderPreviewFrame { aspect-ratio: 4 / 3; display: block; isolation: isolate; position: relative; width: 100%; }

@@ -9,7 +9,7 @@
 .textPreview { background: var(--gallery-bg); border: 1px solid var(--border); border-radius: var(--gallery-radius); margin: 0; max-height: 320px; overflow: auto; padding: .6rem; white-space: pre-wrap; }
 .clipboardOptions { align-items: center; display: flex; justify-content: space-between; }
 .entryList { display: grid; gap: var(--gallery-gap); grid-template-columns: repeat(auto-fill, minmax(min(var(--thumbnail-frame-size), 100%), 1fr)); margin: 0 auto; max-width: 1200px; }
-.entry { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 250px; overflow: hidden; transition: border-color 120ms ease, transform 120ms ease; }
+.entry { background: var(--gallery-surface); border: 1px solid var(--gallery-cell-border); border-radius: var(--gallery-radius); display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 250px; overflow: hidden; transition: border-color 120ms ease, transform 120ms ease; }
 .entry:hover { border-color: var(--gallery-accent); transform: translateY(-1px); }
 .previewLink { align-items: center; background: color-mix(in srgb, var(--gallery-secondary) 5%, var(--gallery-bg)); display: flex; justify-content: center; min-height: 180px; overflow: hidden; padding: .75rem; position: relative; text-decoration: none; }
 .thumbnail { align-items: center; display: flex; height: 100%; justify-content: center; max-height: 210px; max-width: 100%; width: 100%; }

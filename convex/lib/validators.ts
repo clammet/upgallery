@@ -84,6 +84,8 @@ export const themeValidator = v.object({
   foreground: v.optional(v.string()),
   surface: v.optional(v.string()),
   muted: v.optional(v.string()),
+  headerDivider: v.optional(v.string()),
+  cellBorder: v.optional(v.string()),
   radius: v.optional(v.number()),
   density: v.optional(v.union(v.literal("compact"), v.literal("comfortable"))),
   thumbnailFrameSize: v.optional(v.number()),

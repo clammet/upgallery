@@ -583,6 +583,8 @@ function GallerySettingsForm(props: {
       foreground: String(data.get("foreground") || ""),
       surface: String(data.get("surface") || ""),
       muted: String(data.get("muted") || ""),
+      headerDivider: String(data.get("headerDivider") || ""),
+      cellBorder: String(data.get("cellBorder") || ""),
       mode: data.get("mode") as ThemeMode,
       radius: Number(data.get("radius") || 4),
       density: data.get("density") as "compact" | "comfortable",
@@ -707,6 +709,8 @@ function ThemeControls(props: {
     foreground?: string;
     surface?: string;
     muted?: string;
+    headerDivider?: string;
+    cellBorder?: string;
     mode?: ThemeMode;
   };
 }) {
@@ -719,23 +723,58 @@ function ThemeControls(props: {
     foreground: props.theme.foreground ?? defaults.foreground,
     surface: props.theme.surface ?? defaults.surface,
     muted: props.theme.muted ?? defaults.muted,
+    headerDivider: props.theme.headerDivider ?? defaults.headerDivider,
+    cellBorder: props.theme.cellBorder ?? defaults.cellBorder,
   });
 
-  const colorPicker = (name: keyof typeof colors, label: string) => (
-    <label>
-      {label}
-      <input
-        name={name}
-        type="color"
-        value={colors[name]}
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          setColors((current) => ({
-            ...current,
-            [name]: value,
-          }));
-        }}
-      />
+  const colorPicker = (
+    name: keyof typeof colors,
+    label: string,
+    description: string,
+  ) => (
+    <label className={styles.colorControl}>
+      <span className={styles.colorLabel} title={description}>
+        {label}
+      </span>
+      <span className={styles.colorInputs}>
+        <input
+          className={styles.colorSwatch}
+          type="color"
+          value={/^#[0-9a-f]{6}$/i.test(colors[name]) ? colors[name] : "#000000"}
+          aria-label={`${label} color picker`}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setColors((current) => ({
+              ...current,
+              [name]: value,
+            }));
+          }}
+        />
+        <input
+          className={styles.hexColor}
+          name={name}
+          type="text"
+          value={colors[name]}
+          aria-label={`${label} hex code`}
+          maxLength={7}
+          pattern="#[0-9a-fA-F]{6}"
+          placeholder="#000000"
+          required
+          spellCheck={false}
+          title="Enter a six-digit hex color, for example #126b5a"
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setColors((current) => ({ ...current, [name]: value }));
+          }}
+          onBlur={() => {
+            if (!/^#[0-9a-f]{6}$/i.test(colors[name])) return;
+            setColors((current) => ({
+              ...current,
+              [name]: current[name].toLowerCase(),
+            }));
+          }}
+        />
+      </span>
     </label>
   );
 
@@ -757,6 +796,8 @@ function ThemeControls(props: {
               foreground: nextDefaults.foreground,
               surface: nextDefaults.surface,
               muted: nextDefaults.muted,
+              headerDivider: nextDefaults.headerDivider,
+              cellBorder: nextDefaults.cellBorder,
             });
           }}
         >
@@ -764,12 +805,46 @@ function ThemeControls(props: {
           <option value="dark">Dark</option>
         </select>
       </label>
-      {colorPicker("accent", "Accent")}
-      {colorPicker("secondary", "Secondary")}
-      {colorPicker("background", "Background")}
-      {colorPicker("foreground", "Foreground")}
-      {colorPicker("surface", "Surface")}
-      {colorPicker("muted", "Muted")}
+      {colorPicker(
+        "accent",
+        "Actions & selection",
+        "Affects links, button hover and focus states, toggles, selections, drag targets, progress indicators, notices, admin highlights, metadata actions, file-type glyphs, and lightbox links and active controls.",
+      )}
+      {colorPicker(
+        "secondary",
+        "Folders & file previews",
+        "Affects folder artwork, generic file-tile backgrounds, and uploader preview backgrounds.",
+      )}
+      {colorPicker(
+        "background",
+        "Page canvas",
+        "Affects the page, sticky header tint, text preview and lightbox canvases, lightbox form fields, thumbnail action overlays, selection controls, and backgrounds mixed into file tiles and admin badges.",
+      )}
+      {colorPicker(
+        "foreground",
+        "Primary text & icons",
+        "Affects primary text and icons, form text, lightbox titles and controls, thumbnail placeholders, code and plain-text previews, switch tracks, inline code backgrounds, table heading tints, and transfer tracks.",
+      )}
+      {colorPicker(
+        "surface",
+        "Cards & panels",
+        "Affects cards, forms, buttons, inputs, dialogs, account and transfer panels, notices, folder previews, and lightbox panels and preview content.",
+      )}
+      {colorPicker(
+        "muted",
+        "Secondary text & icons",
+        "Affects descriptions, metadata, helper text, pagination and empty states, account details, footer text, secondary actions, upload status, and lightbox metadata labels.",
+      )}
+      {colorPicker(
+        "headerDivider",
+        "Header divider",
+        "Affects the horizontal divider directly below the sticky gallery header.",
+      )}
+      {colorPicker(
+        "cellBorder",
+        "Gallery cell borders",
+        "Affects the borders around folder cards, gallery file cards, and uploader item cards.",
+      )}
     </>
   );
 }

@@ -26,6 +26,12 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
     "--gallery-fg": gallery ? theme?.foreground ?? modeDefaults.foreground : undefined,
     "--gallery-surface": gallery ? theme?.surface ?? modeDefaults.surface : undefined,
     "--gallery-muted": gallery ? theme?.muted ?? modeDefaults.muted : undefined,
+    "--gallery-header-divider": gallery
+      ? theme?.headerDivider ?? modeDefaults.headerDivider
+      : undefined,
+    "--gallery-cell-border": gallery
+      ? theme?.cellBorder ?? modeDefaults.cellBorder
+      : undefined,
     "--shadow": gallery ? modeDefaults.shadow : undefined,
     "--gallery-radius": theme?.radius === undefined ? undefined : `${theme.radius}px`,
     "--gallery-gap": theme?.density === "comfortable" ? "1rem" : "0.5rem",

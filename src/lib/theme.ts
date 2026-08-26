@@ -8,6 +8,8 @@ export const THEME_MODE_DEFAULTS = {
     foreground: "#17201d",
     surface: "#ffffff",
     muted: "#65716c",
+    headerDivider: "#d0d5d1",
+    cellBorder: "#d0d5d1",
     shadow: "0 8px 32px rgb(15 28 23 / 8%)",
   },
   dark: {
@@ -17,6 +19,8 @@ export const THEME_MODE_DEFAULTS = {
     foreground: "#e8eee9",
     surface: "#18201c",
     muted: "#9eaaa4",
+    headerDivider: "#3c423f",
+    cellBorder: "#3c423f",
     shadow: "0 8px 32px rgb(0 0 0 / 25%)",
   },
 } as const satisfies Record<
@@ -28,6 +32,8 @@ export const THEME_MODE_DEFAULTS = {
     foreground: string;
     surface: string;
     muted: string;
+    headerDivider: string;
+    cellBorder: string;
     shadow: string;
   }
 >;
