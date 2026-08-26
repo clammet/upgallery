@@ -9,6 +9,7 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from "react";
@@ -63,6 +64,8 @@ export type MediaViewerItem = {
   metadataJson?: string;
   uploader?: string;
 };
+
+export type MediaViewerLinkKind = "lightbox" | "direct";
 
 type NaturalSize = {
   width: number;
@@ -216,7 +219,10 @@ export function MediaViewer(props: {
   ) => Promise<void>;
   onActiveItemChange?: (item: MediaViewerItem) => void;
   onTitleChange?: (item: MediaViewerItem, title: string) => Promise<void>;
-  onCopyLink?: (item: MediaViewerItem) => Promise<void>;
+  onCopyLink?: (
+    item: MediaViewerItem,
+    kind: MediaViewerLinkKind,
+  ) => Promise<void>;
   onMove?: (item: MediaViewerItem) => void;
   onDelete?: (item: MediaViewerItem) => void;
   // True while another dialog sits on top of the viewer, so Escape and the
@@ -687,13 +693,18 @@ export function MediaViewer(props: {
     }
   };
 
-  const copyLink = async () => {
+  const copyLink = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (props.onCopyLink === undefined || copyPending) return;
+    const kind: MediaViewerLinkKind =
+      event.metaKey || event.ctrlKey ? "direct" : "lightbox";
     setCopyPending(true);
     setTitleFeedback(null);
     try {
-      await props.onCopyLink(activeItem);
-      setTitleFeedback({ kind: "success", message: "Link copied" });
+      await props.onCopyLink(activeItem, kind);
+      setTitleFeedback({
+        kind: "success",
+        message: kind === "direct" ? "Direct link copied" : "Link copied",
+      });
     } catch (reason) {
       setTitleFeedback({
         kind: "error",
@@ -867,13 +878,13 @@ export function MediaViewer(props: {
                   <button
                     className={styles.titleTextButton}
                     type="button"
-                    onClick={() => {
+                    onClick={(event) => {
                       if (props.onTitleChange !== undefined) {
                         setTitleDraft(activeItem.title);
                         setTitleFeedback(null);
                         setEditingTitle(true);
                       } else {
-                        void copyLink();
+                        void copyLink(event);
                       }
                     }}
                     aria-label={
@@ -884,7 +895,7 @@ export function MediaViewer(props: {
                     title={
                       props.onTitleChange !== undefined
                         ? "Edit filename"
-                        : "Copy link"
+                        : "Copy lightbox link (Cmd/Ctrl-click for direct link)"
                     }
                   >
                     {activeItem.title}
@@ -898,13 +909,14 @@ export function MediaViewer(props: {
               <button
                 className={styles.titleButton}
                 type="button"
-                onClick={() => void copyLink()}
+                onClick={(event) => void copyLink(event)}
                 disabled={copyPending}
                 aria-label={`Copy link to ${activeItem.title}`}
-                title="Copy link"
+                title="Copy lightbox link (Cmd/Ctrl-click for direct link)"
               >
                 {titleFeedback?.kind === "success" &&
-                titleFeedback.message === "Link copied" ? (
+                (titleFeedback.message === "Link copied" ||
+                  titleFeedback.message === "Direct link copied") ? (
                   <Check aria-hidden="true" size={17} />
                 ) : (
                   <Link2 aria-hidden="true" size={17} />

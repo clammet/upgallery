@@ -33,6 +33,7 @@ import {
   MediaViewer,
   shouldOpenMediaViewer,
   type MediaViewerItem,
+  type MediaViewerLinkKind,
 } from "../components/MediaViewer";
 import {
   MoveIcon,
@@ -368,11 +369,17 @@ export function GalleryPage(props: {
     },
     [setSearchParams],
   );
-  const copyViewerLink = useCallback(async (item: MediaViewerItem) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("item", item.id);
-    await copyTextToClipboard(url.toString());
-  }, []);
+  const copyViewerLink = useCallback(
+    async (item: MediaViewerItem, kind: MediaViewerLinkKind) => {
+      const url = new URL(
+        kind === "direct" ? item.href : window.location.href,
+        window.location.href,
+      );
+      if (kind === "lightbox") url.searchParams.set("item", item.id);
+      await copyTextToClipboard(url.toString());
+    },
+    [],
+  );
   const changeViewerTitle = useCallback(
     async (item: MediaViewerItem, title: string) => {
       const result = await renameEntry({
