@@ -30,6 +30,8 @@
 .quietButton { background: transparent; border-color: transparent; color: var(--gallery-muted); padding: .3rem .4rem; text-decoration: none; }
 .iconButton { align-items: center; background: transparent; display: inline-flex; font-size: 1rem; height: 30px; justify-content: center; padding: 0; width: 30px; }
 .syncIndicator { align-items: center; color: var(--gallery-muted); display: inline-flex; font-size: 1.05rem; height: 30px; justify-content: center; line-height: 1; width: 24px; }
+.scanControl { align-items: center; color: var(--gallery-muted); display: inline-flex; flex: 0 0 30px; height: 30px; justify-content: center; padding: 0; width: 30px; }
+.scanQueued { opacity: .45; }
 .syncSpinner { animation: sync-spin .9s linear infinite; }
 .syncComplete { animation: sync-complete 1.6s ease both; color: var(--gallery-accent); }
 @keyframes sync-spin { to { transform: rotate(360deg); } }

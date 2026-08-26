@@ -5,6 +5,7 @@ import { ExternalLink, Plus } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
+import { FilesystemScanControl } from "../components/FilesystemScanControl";
 import { formatBytes } from "../lib/files";
 import { friendlyError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
@@ -24,8 +25,8 @@ import {
   diffGallerySettings,
   initialThemeJson,
   mibValue,
+  type Privacy,
   type SettingsSnapshot,
-  type UploaderAccess,
 } from "../lib/gallerySettings";
 import styles from "../styles/admin.module.css";
 import layout from "../styles/layout.module.css";
@@ -383,6 +384,7 @@ function GalleryAdmin(props: {
   const upsertRole = useMutation(api.roles.upsert);
   const revokeRole = useMutation(api.roles.revoke);
   const requestMigration = useMutation(api.migrations.request);
+  const setSystemPermission = useMutation(api.galleries.setSystemPermission);
   const [message, setMessage] = useState<string | null>(null);
 
   if (details === undefined) return <p>Loading gallery…</p>;
@@ -408,7 +410,22 @@ function GalleryAdmin(props: {
         )}
       </div>
       <div className={styles.stats}>
-        <Stat label="Items" value={details.stats.itemCount.toLocaleString()} />
+        <Stat
+          label="Items"
+          value={details.stats.itemCount.toLocaleString()}
+          action={
+            details.filesystemSync !== null && details.rootFolder !== null ? (
+              <FilesystemScanControl
+                galleryId={gallery._id}
+                folderId={details.rootFolder._id}
+                sync={details.filesystemSync}
+                disabled={gallery.pendingMigrationId !== undefined}
+                onQueued={() => setMessage("Scan queued")}
+                onError={(error) => setMessage(`Error: ${error}`)}
+              />
+            ) : undefined
+          }
+        />
         <Stat label="Storage" value={formatBytes(details.stats.totalBytes)} />
         <Stat label="Backend" value={`${gallery.storageKind}/${gallery.storageRoot}`} />
       </div>
@@ -419,6 +436,7 @@ function GalleryAdmin(props: {
           key={gallery._id}
           gallery={gallery}
           hosts={details.hosts}
+          rootPrivacy={details.rootFolder?.privacy ?? "public"}
           isSystemAdmin={props.isSystemAdmin}
           setMessage={setMessage}
         />
@@ -427,6 +445,32 @@ function GalleryAdmin(props: {
       <FileIconAdmin galleryId={gallery._id} setMessage={setMessage} />
 
       <Section title="Permissions">
+        <div className={styles.rows}>
+          <SystemPermissionRow
+            label="Anonymous"
+            role={gallery.anonymousRole ?? "viewer"}
+            onChange={(role) =>
+              setSystemPermission({
+                galleryId: gallery._id,
+                principal: "anonymous",
+                role,
+              })
+            }
+            setMessage={setMessage}
+          />
+          <SystemPermissionRow
+            label="Any logged-in user"
+            role={gallery.authenticatedRole ?? "viewer"}
+            onChange={(role) =>
+              setSystemPermission({
+                galleryId: gallery._id,
+                principal: "authenticated",
+                role,
+              })
+            }
+            setMessage={setMessage}
+          />
+        </div>
         <p>
           Granting access to an email that has never signed in creates an
           invite; it takes effect the first time that user signs in with
@@ -503,20 +547,9 @@ function GalleryAdmin(props: {
       ) : null}
 
       <Section title="Danger zone">
-        {props.isSystemAdmin ? (
-          <DangerToggle
-            title="Anonymous edit access"
-            description="Admin only: every anonymous visitor becomes an editor of this gallery"
-            enabled={gallery.anonymousEdit === true}
-            onChange={(enabled) =>
-              updateGallery({ galleryId: gallery._id, anonymousEdit: enabled })
-            }
-            onMessage={setMessage}
-          />
-        ) : null}
         <DangerToggle
           title="Editor bulk actions"
-          description="Editors (and anonymous visitors, when enabled) can select, move, and delete files and folders"
+          description="Editors, including system-principal editors, can select, move, and delete files and folders"
           enabled={gallery.editorBulkActions === true}
           onChange={(enabled) =>
             updateGallery({ galleryId: gallery._id, editorBulkActions: enabled })
@@ -544,6 +577,7 @@ type GalleryTheme = Doc<"galleries">["theme"];
 function GallerySettingsForm(props: {
   gallery: Doc<"galleries">;
   hosts: Array<Doc<"galleryHosts">>;
+  rootPrivacy: Privacy;
   isSystemAdmin: boolean;
   setMessage: (message: string | null) => void;
 }) {
@@ -562,7 +596,7 @@ function GallerySettingsForm(props: {
     maxFileSizeLimitMib: mibValue(
       gallery.maxFileSizeLimit ?? gallery.maxFileSize,
     ),
-    uploaderAccess: gallery.uploaderAccess,
+    privacy: props.rootPrivacy,
     folderPreviewMode: gallery.folderPreviewMode ?? "first",
     quickMove: gallery.quickMove === true,
     infiniteScroll: gallery.infiniteScroll !== false,
@@ -599,7 +633,7 @@ function GallerySettingsForm(props: {
       maxFileSizeLimitMib: props.isSystemAdmin
         ? Number(data.get("maxFileSizeLimitMib"))
         : initial.maxFileSizeLimitMib,
-      uploaderAccess: data.get("uploaderAccess") as UploaderAccess,
+      privacy: data.get("privacy") as Privacy,
       folderPreviewMode:
         gallery.kind === "image"
           ? (data.get("folderPreviewMode") as FolderPreviewMode)
@@ -645,7 +679,7 @@ function GallerySettingsForm(props: {
       {props.isSystemAdmin ? (
         <label>Max size limit <small>(MiB)</small><input name="maxFileSizeLimitMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={initial.maxFileSizeLimitMib} /></label>
       ) : null}
-      <label>Uploader access<select name="uploaderAccess" defaultValue={initial.uploaderAccess}><option value="anonymous">Anonymous</option><option value="sso">Any Google SSO user</option><option value="restricted">Granted users only</option></select></label>
+      <label>Privacy<select name="privacy" defaultValue={initial.privacy}><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
       <label>Density<select name="density" defaultValue={initialTheme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
       <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={initialTheme.thumbnailFrameSize ?? 218} /></label>
       {gallery.kind === "image" ? (
@@ -959,8 +993,54 @@ function Section(props: { title: string; children: ReactNode }) {
   return <section className={styles.section}><h3>{props.title}</h3>{props.children}</section>;
 }
 
-function Stat(props: { label: string; value: string }) {
-  return <div><small>{props.label}</small><strong>{props.value}</strong></div>;
+function Stat(props: { label: string; value: string; action?: ReactNode }) {
+  return (
+    <div>
+      <span className={styles.statHeading}>
+        <small>{props.label}</small>
+        {props.action}
+      </span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+type SystemPermissionRole = "none" | "viewer" | "editor";
+
+function SystemPermissionRow(props: {
+  label: string;
+  role: SystemPermissionRole;
+  onChange: (role: SystemPermissionRole) => Promise<unknown>;
+  setMessage: (message: string | null) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <div className={styles.row}>
+      <span>
+        {props.label}
+        <em className={styles.systemBadge}>system</em>
+      </span>
+      <span>Gallery-wide permission</span>
+      <select
+        aria-label={`${props.label} permission`}
+        value={props.role}
+        disabled={pending}
+        onChange={(event) => {
+          const role = event.target.value as SystemPermissionRole;
+          setPending(true);
+          void props
+            .onChange(role)
+            .then(() => props.setMessage(`${props.label} permission updated`))
+            .catch(showError(props.setMessage))
+            .finally(() => setPending(false));
+        }}
+      >
+        <option value="none">No access</option>
+        <option value="viewer">Viewer</option>
+        <option value="editor">Editor / upload</option>
+      </select>
+    </div>
+  );
 }
 
 function InvitedBadge(props: { invitedAt?: number }) {

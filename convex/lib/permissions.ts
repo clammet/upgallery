@@ -7,6 +7,7 @@ import { profileByIdentityId } from "./profiles";
 
 type ReadCtx = QueryCtx | MutationCtx;
 export type Role = "owner" | "editor" | "viewer";
+export type SystemRole = "none" | "editor" | "viewer";
 
 const roleRank: Record<Role, number> = {
   viewer: 1,
@@ -65,19 +66,18 @@ export async function getEffectiveRole(
   profile: Doc<"profiles"> | null,
   anonymousClaim?: string,
 ): Promise<Role | null> {
+  const gallery = await ctx.db.get("galleries", galleryId);
   if (profile === null) {
     if (!isValidAnonymousClaim(anonymousClaim)) {
       return null;
     }
-    const gallery = await ctx.db.get("galleries", galleryId);
-    return gallery?.anonymousEdit === true ? "editor" : null;
+    return systemRole(gallery?.anonymousRole);
   }
   if (profile.isSystemAdmin) {
     return "owner";
   }
   if (profile.isAnonymous) {
-    const gallery = await ctx.db.get("galleries", galleryId);
-    return gallery?.anonymousEdit === true ? "editor" : null;
+    return systemRole(gallery?.anonymousRole);
   }
   const grants = await ctx.db
     .query("galleryRoles")
@@ -86,7 +86,7 @@ export async function getEffectiveRole(
     )
     .take(128);
 
-  let best: Role | null = null;
+  let best: Role | null = systemRole(gallery?.authenticatedRole);
   for (const grant of grants) {
     const applies =
       grant.folderId === undefined ||
@@ -98,6 +98,11 @@ export async function getEffectiveRole(
     }
   }
   return best;
+}
+
+function systemRole(role: SystemRole | undefined): Role | null {
+  const effective = role ?? "viewer";
+  return effective === "none" ? null : effective;
 }
 
 export function roleAtLeast(
@@ -146,8 +151,8 @@ export async function shouldListFolder(
 }
 
 // Select mode, bulk move, and bulk delete are owner tools. The gallery-level
-// editorBulkActions switch extends them to editors, including anonymous
-// visitors admitted by anonymousEdit; gallery administration stays with owners.
+// editorBulkActions switch extends them to editors, including visitors admitted
+// by a system permission; gallery administration stays with named owners.
 export function canManageGallery(
   gallery: Doc<"galleries">,
   role: Role | null,

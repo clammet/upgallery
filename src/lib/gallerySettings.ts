@@ -4,8 +4,8 @@
 // long-open tab cannot overwrite settings that were changed elsewhere.
 import { THEME_MODE_DEFAULTS, type ThemeMode } from "./theme";
 
-export type UploaderAccess = "anonymous" | "sso" | "restricted";
 export type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+export type Privacy = "public" | "unlisted" | "private";
 
 export type GalleryTheme = {
   accent?: string;
@@ -43,7 +43,7 @@ export type SettingsSnapshot = {
   name: string;
   maxFileSizeMib: number;
   maxFileSizeLimitMib: number;
-  uploaderAccess: UploaderAccess;
+  privacy: Privacy;
   folderPreviewMode: FolderPreviewMode;
   quickMove: boolean;
   infiniteScroll: boolean;
@@ -56,7 +56,7 @@ export type GallerySettingsUpdate = {
   name?: string;
   maxFileSize?: number;
   maxFileSizeLimit?: number;
-  uploaderAccess?: UploaderAccess;
+  privacy?: Privacy;
   folderPreviewMode?: FolderPreviewMode;
   quickMove?: boolean;
   infiniteScroll?: boolean;
@@ -142,9 +142,9 @@ export function diffGallerySettings(
             current.maxFileSizeLimitMib * 1024 * 1024,
           ),
         }),
-    ...(current.uploaderAccess === initial.uploaderAccess
+    ...(current.privacy === initial.privacy
       ? {}
-      : { uploaderAccess: current.uploaderAccess }),
+      : { privacy: current.privacy }),
     ...(current.folderPreviewMode === initial.folderPreviewMode
       ? {}
       : { folderPreviewMode: current.folderPreviewMode }),

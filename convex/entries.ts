@@ -127,14 +127,7 @@ async function assertCanUpload(
     throw new Error("Not authenticated");
   }
   const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
-  const allowed =
-    gallery.kind === "image"
-      ? roleAtLeast(role, "editor")
-      : gallery.uploaderAccess === "anonymous"
-        ? true
-        : gallery.uploaderAccess === "sso"
-          ? !profile.isAnonymous
-          : roleAtLeast(role, "editor");
+  const allowed = roleAtLeast(role, "editor");
   if (!allowed) {
     throw new Error("Unauthorized");
   }

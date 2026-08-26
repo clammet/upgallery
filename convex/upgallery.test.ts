@@ -113,7 +113,6 @@ describe("upgallery backend", () => {
           storageKind: "shared",
           storageRoot: "tenant",
           maxFileSize: 1024,
-          uploaderAccess: "sso",
           theme: {},
           itemCount: 0,
           totalBytes: 0,
@@ -175,14 +174,97 @@ describe("upgallery backend", () => {
         .query("galleryHosts")
         .withIndex("by_galleryId", (q) => q.eq("galleryId", galleryId))
         .take(10);
-      return { gallery, roles, hosts };
+      const rootFolder =
+        gallery?.rootFolderId === undefined
+          ? null
+          : await ctx.db.get("folders", gallery.rootFolderId);
+      return { gallery, roles, hosts, rootFolder };
     });
 
     expect(created.gallery?.rootFolderId).toBeDefined();
+    expect(created.gallery).toMatchObject({
+      anonymousRole: "viewer",
+      authenticatedRole: "viewer",
+    });
+    expect(created.rootFolder?.privacy).toBe("public");
     expect(created.roles).toMatchObject([{ role: "owner" }]);
     expect(created.hosts).toMatchObject([
       { host: "photos.example.com", rootPath: "/" },
     ]);
+  });
+
+  test("a user-mounted gallery queues its initial scan and cannot migrate before it finishes", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Mounted gallery",
+      slug: "mounted-gallery",
+      kind: "image",
+      storageKind: "user",
+      storageRoot: "mounted-gallery",
+      hosts: [{ host: "mounted.example.com", rootPath: "/" }],
+    });
+    const details = await authed.query(api.galleries.adminDetails, {
+      galleryId,
+    });
+    expect(details?.filesystemSync).toMatchObject({
+      status: "queued",
+      isRunning: false,
+      hasError: false,
+    });
+
+    const job = await t.mutation(internal.storageJobs.claimFilesystemSync, {});
+    expect(job).toMatchObject({
+      kind: "ready",
+      galleryId,
+      folderId: details!.rootFolder!._id,
+    });
+    expect(
+      (
+        await authed.query(api.galleries.adminDetails, {
+          galleryId,
+        })
+      )?.filesystemSync,
+    ).toMatchObject({ status: "running", isRunning: true });
+    await expect(
+      authed.mutation(api.migrations.request, {
+        galleryId,
+        targetStorageKind: "shared",
+        targetStorageRoot: "mounted-gallery-shared",
+      }),
+    ).rejects.toThrow(/scan to finish/);
+    if (job.kind !== "ready") throw new Error("Expected initial scan work");
+    const sync = await t.mutation(
+      internal.filesystemSync.claimFilesystemSync,
+      { galleryId, folderId: job.folderId },
+    );
+    if (sync.kind !== "ready") throw new Error("Expected a scan lease");
+    await t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
+      galleryId,
+      folderId: job.folderId,
+      syncId: sync.syncId,
+      modifiedAt: 1000,
+    });
+    await t.mutation(internal.filesystemSync.completeFilesystemSync, {
+      galleryId,
+      folderId: job.folderId,
+      syncId: sync.syncId,
+      modifiedAt: 1000,
+    });
+    await t.mutation(internal.storageJobs.completeFilesystemSync, {
+      jobId: job.jobId,
+    });
+    await expect(
+      authed.mutation(api.migrations.request, {
+        galleryId,
+        targetStorageKind: "shared",
+        targetStorageRoot: "mounted-gallery-shared",
+      }),
+    ).resolves.toBeDefined();
   });
 
   test("gallery owners can lower the max file size but not raise it or edit system settings", async () => {
@@ -211,7 +293,6 @@ describe("upgallery backend", () => {
     const base = {
       galleryId,
       name: "Owned gallery",
-      uploaderAccess: "sso" as const,
       theme: {},
     };
 
@@ -260,6 +341,8 @@ describe("upgallery backend", () => {
       ctx.db.get("galleries", galleryId),
     );
     expect(gallery).toMatchObject({
+      anonymousRole: "viewer",
+      authenticatedRole: "viewer",
       infiniteScroll: true,
       paginationPageSize: 100,
     });
@@ -291,7 +374,6 @@ describe("upgallery backend", () => {
     expect(patched).toMatchObject({
       name: "Renamed gallery",
       maxFileSize: 32 * 1024 * 1024,
-      uploaderAccess: "sso",
       quickMove: true,
     });
 
@@ -309,6 +391,7 @@ describe("upgallery backend", () => {
       galleryId,
       infiniteScroll: false,
       paginationPageSize: 250,
+      privacy: "private",
     });
     await expect(
       ownerAuthed.mutation(api.galleries.update, {
@@ -329,9 +412,14 @@ describe("upgallery backend", () => {
       infiniteScroll: false,
       paginationPageSize: 250,
     });
+    expect(
+      await t.run(async (ctx) =>
+        ctx.db.get("folders", paginationSettings!.rootFolderId!),
+      ),
+    ).toMatchObject({ privacy: "private" });
   });
 
-  test("only system admins can grant anonymous editor access", async () => {
+  test("gallery owners can grant and revoke anonymous editor access", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
@@ -362,7 +450,7 @@ describe("upgallery backend", () => {
       folderId: rootFolderId,
     });
     expect(disabledListing.access).toMatchObject({
-      role: null,
+      role: "viewer",
       canUpload: false,
       canEditFolder: false,
       canManage: false,
@@ -388,16 +476,10 @@ describe("upgallery backend", () => {
       owner.googleSubject,
       "owner@example.com",
     );
-    await expect(
-      ownerClient.mutation(api.galleries.update, {
-        galleryId,
-        anonymousEdit: true,
-      }),
-    ).rejects.toThrow(/system administrators/);
-
-    await adminClient.mutation(api.galleries.update, {
+    await ownerClient.mutation(api.galleries.setSystemPermission, {
       galleryId,
-      anonymousEdit: true,
+      principal: "anonymous",
+      role: "editor",
     });
     const enabledListing = await t.query(api.folders.list, {
       anonymousClaim: anonymous.anonymousClaim,
@@ -544,9 +626,10 @@ describe("upgallery backend", () => {
       }),
     ).resolves.toEqual({ kind: "complete" });
 
-    await adminClient.mutation(api.galleries.update, {
+    await ownerClient.mutation(api.galleries.setSystemPermission, {
       galleryId,
-      anonymousEdit: false,
+      principal: "anonymous",
+      role: "viewer",
     });
     const disabledAgain = await t.query(api.folders.list, {
       anonymousClaim: anonymous.anonymousClaim,
@@ -554,7 +637,7 @@ describe("upgallery backend", () => {
       folderId: rootFolderId,
     });
     expect(disabledAgain.access).toMatchObject({
-      role: null,
+      role: "viewer",
       canManage: false,
     });
     await expect(
@@ -703,17 +786,18 @@ describe("upgallery backend", () => {
     ).rejects.toThrow("That internal storage path is already in use");
   });
 
-  test("anonymous uploader access creates a capability without storing its plaintext", async () => {
+  test("anonymous uploader editor access creates a capability without storing its plaintext", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
       admin: true,
     });
-    const galleryId = await asUser(
+    const adminClient = asUser(
       t,
       admin.googleSubject,
       "admin@example.com",
-    ).mutation(api.galleries.create, {
+    );
+    const galleryId = await adminClient.mutation(api.galleries.create, {
         name: "Drop box",
         slug: "drop-box",
         kind: "uploader",
@@ -724,6 +808,14 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
+    expect(
+      await t.run(async (ctx) => ctx.db.get("folders", gallery!.rootFolderId!)),
+    ).toMatchObject({ privacy: "public" });
+    await adminClient.mutation(api.galleries.setSystemPermission, {
+      galleryId,
+      principal: "anonymous",
+      role: "editor",
+    });
     const anonymousClaim = "b".repeat(64);
     await expect(
       t.query(api.profiles.current, { anonymousClaim }),
@@ -812,6 +904,11 @@ describe("upgallery backend", () => {
       storageKind: "shared",
       storageRoot: "unlisted-uploads",
       hosts: [{ host: "unlisted.example.com", rootPath: "/up" }],
+    });
+    await authed.mutation(api.galleries.setSystemPermission, {
+      galleryId,
+      principal: "anonymous",
+      role: "editor",
     });
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
@@ -1221,7 +1318,6 @@ describe("upgallery backend", () => {
         storageKind: "shared",
         storageRoot: "merged-gallery",
         maxFileSize: 1024,
-        uploaderAccess: "anonymous",
         theme: {},
         itemCount: 0,
         totalBytes: 0,
@@ -1366,7 +1462,7 @@ describe("upgallery backend", () => {
     ).rejects.toThrow("Only signed-in SSO profiles");
   });
 
-  test("a private folder is hidden from an unrelated anonymous profile", async () => {
+  test("a private folder is hidden when anonymous system access is revoked", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
@@ -1384,6 +1480,11 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
+    await authed.mutation(api.galleries.setSystemPermission, {
+      galleryId,
+      principal: "anonymous",
+      role: "none",
+    });
     const privateFolder = await authed.mutation(api.folders.create, {
       galleryId,
       parentId: gallery!.rootFolderId!,
@@ -2540,9 +2641,16 @@ describe("upgallery backend", () => {
       kind: "uploader",
       storageKind: "shared",
       storageRoot: "creator-uploads",
-      uploaderAccess: "sso",
       hosts: [{ host: "creator.example.com", rootPath: "/up" }],
     });
+    await asUser(t, admin.googleSubject, "admin@example.com").mutation(
+      api.galleries.setSystemPermission,
+      {
+        galleryId,
+        principal: "authenticated",
+        role: "editor",
+      },
+    );
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
@@ -2616,7 +2724,6 @@ describe("upgallery backend", () => {
         storageKind: "user",
         storageRoot: "durable",
         maxFileSize: 10_000,
-        uploaderAccess: "restricted",
         theme: {},
         itemCount: 1,
         totalBytes: 100,

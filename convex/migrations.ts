@@ -29,6 +29,48 @@ export const request = mutation({
     ) {
       throw new Error("The target storage location is unchanged");
     }
+    if (gallery.storageKind === "user") {
+      if (gallery.rootFolderId === undefined) {
+        throw new Error("The user-mounted gallery has no root folder");
+      }
+      const [rootSync, queuedSync, processingSync, failedSync] =
+        await Promise.all([
+          ctx.db
+            .query("filesystemSyncStates")
+            .withIndex("by_folderId", (q) =>
+              q.eq("folderId", gallery.rootFolderId!),
+            )
+            .unique(),
+          ctx.db
+            .query("filesystemSyncJobs")
+            .withIndex("by_galleryId_and_status", (q) =>
+              q.eq("galleryId", gallery._id).eq("status", "queued"),
+            )
+            .first(),
+          ctx.db
+            .query("filesystemSyncJobs")
+            .withIndex("by_galleryId_and_status", (q) =>
+              q.eq("galleryId", gallery._id).eq("status", "processing"),
+            )
+            .first(),
+          ctx.db
+            .query("filesystemSyncJobs")
+            .withIndex("by_galleryId_and_status", (q) =>
+              q.eq("galleryId", gallery._id).eq("status", "failed"),
+            )
+            .first(),
+        ]);
+      if (
+        rootSync?.lastCompletedAt === undefined ||
+        queuedSync !== null ||
+        processingSync !== null ||
+        failedSync !== null
+      ) {
+        throw new Error(
+          "Wait for the user-mounted gallery scan to finish before migrating storage",
+        );
+      }
+    }
     const migrationId = await ctx.db.insert("storageMigrations", {
       galleryId: gallery._id,
       sourceStorageKind: gallery.storageKind,

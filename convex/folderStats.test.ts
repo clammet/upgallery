@@ -24,7 +24,6 @@ async function seedGalleryWithFolders(ctx: MutationCtx) {
     storageKind: "shared",
     storageRoot: "stats",
     maxFileSize: 1024,
-    uploaderAccess: "sso",
     theme: {},
   });
   const rootId = await ctx.db.insert("folders", {

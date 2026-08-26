@@ -1,6 +1,5 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { isValidAnonymousClaim } from "@clammet/convex-googly-auth";
 import { internal } from "./_generated/api";
 import { folderPreviewMode, privacy } from "./lib/validators";
 import type { Id } from "./_generated/dataModel";
@@ -27,6 +26,7 @@ import {
   roleAtLeast,
   shouldListFolder,
 } from "./lib/permissions";
+import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { uploaderAttribution } from "./lib/profiles";
 
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
@@ -81,20 +81,10 @@ export const list = query({
     );
     const filesystemSync =
       gallery.storageKind === "user"
-        ? await ctx.db
-            .query("filesystemSyncStates")
-            .withIndex("by_folderId", (q) => q.eq("folderId", folder._id))
-            .unique()
+        ? await readFilesystemSyncStatus(ctx, folder._id)
         : null;
     const canUpload =
-      gallery.pendingMigrationId === undefined &&
-      (gallery.kind === "image"
-        ? roleAtLeast(role, "editor")
-        : gallery.uploaderAccess === "anonymous"
-          ? profile !== null || isValidAnonymousClaim(args.anonymousClaim)
-          : gallery.uploaderAccess === "sso"
-            ? profile !== null && !profile.isAnonymous
-            : roleAtLeast(role, "editor"));
+      gallery.pendingMigrationId === undefined && roleAtLeast(role, "editor");
 
     const candidateFolders = await ctx.db
       .query("folders")
@@ -283,11 +273,7 @@ export const list = query({
       breadcrumbs,
       filesystemSync:
         gallery.storageKind === "user"
-          ? {
-              isRunning: filesystemSync?.activeSyncId !== undefined,
-              lastFinishedAt: filesystemSync?.lastCheckedAt,
-              hasError: filesystemSync?.error !== undefined,
-            }
+          ? filesystemSync
           : null,
       access: {
         role,

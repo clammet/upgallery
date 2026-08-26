@@ -17,7 +17,6 @@ describe("galleryStats", () => {
         storageKind: "shared",
         storageRoot: "legacy",
         maxFileSize: 1024,
-        uploaderAccess: "sso",
         theme: {},
         itemCount: 3,
         totalBytes: 300,
@@ -70,7 +69,6 @@ describe("galleryStats", () => {
         storageKind: "shared",
         storageRoot: "fresh",
         maxFileSize: 1024,
-        uploaderAccess: "sso",
         theme: {},
       });
       const gallery = (await ctx.db.get("galleries", galleryId))!;

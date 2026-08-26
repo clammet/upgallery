@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import { adjustFolderStats } from "./lib/folderStats";
 import {
@@ -10,12 +11,13 @@ import {
   storageJobRetryDelay,
 } from "./lib/storageJobs";
 
-export const queueFilesystemSync = internalMutation({
+export async function queueFilesystemSyncJob(
+  ctx: MutationCtx,
   args: {
-    galleryId: v.id("galleries"),
-    folderId: v.id("folders"),
+    galleryId: Id<"galleries">;
+    folderId: Id<"folders">;
   },
-  handler: async (ctx, args) => {
+) {
     const [gallery, folder] = await Promise.all([
       ctx.db.get("galleries", args.galleryId),
       ctx.db.get("folders", args.folderId),
@@ -63,7 +65,14 @@ export const queueFilesystemSync = internalMutation({
       availableAt: 0,
     });
     return { queued: true, jobId };
+}
+
+export const queueFilesystemSync = internalMutation({
+  args: {
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
   },
+  handler: queueFilesystemSyncJob,
 });
 
 export const claimFilesystemSync = internalMutation({

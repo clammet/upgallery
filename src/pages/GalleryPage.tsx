@@ -27,6 +27,10 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
 import { Dialog } from "../components/Dialog";
 import { FileGlyph } from "../components/FileGlyph";
+import {
+  FilesystemScanControl,
+  type FilesystemSyncInfo,
+} from "../components/FilesystemScanControl";
 import { MediaThumbnail } from "../components/MediaThumbnail";
 import {
   isEditableTarget,
@@ -1690,15 +1694,27 @@ export function GalleryPage(props: {
         <FolderForm
           title="Folder settings"
           headerExtra={
-            listing.access.canAdminGallery ? (
-              <Link
-                className={layout.dialogHeaderLink}
-                to={`/admin?gallery=${props.gallery._id}`}
-                title="Open gallery admin settings"
-              >
-                Gallery admin <ExternalLink aria-hidden="true" size={14} />
-              </Link>
-            ) : undefined
+            <>
+              {listing.access.canAdminGallery ? (
+                <Link
+                  className={layout.dialogHeaderLink}
+                  to={`/admin?gallery=${props.gallery._id}`}
+                  title="Open gallery admin settings"
+                >
+                  Gallery admin <ExternalLink aria-hidden="true" size={14} />
+                </Link>
+              ) : null}
+              {listing.filesystemSync !== null ? (
+                <FilesystemScanControl
+                  galleryId={props.gallery._id}
+                  folderId={folderId}
+                  sync={listing.filesystemSync}
+                  disabled={props.gallery.pendingMigrationId !== undefined}
+                  onQueued={() => setNotice("Scan queued")}
+                  onError={(error) => setActionError(error)}
+                />
+              ) : null}
+            </>
           }
           initialName={listing.folder.name}
           initialPrivacy={listing.folder.privacy}
@@ -2487,33 +2503,29 @@ function MoveDialog(props: {
 }
 
 function FilesystemSyncIndicator(props: {
-  sync: {
-    isRunning: boolean;
-    lastFinishedAt?: number;
-    hasError: boolean;
-  };
+  sync: FilesystemSyncInfo;
 }) {
   const initialized = useRef(false);
   const previousFinishedAt = useRef<number | undefined>(undefined);
-  const previousRunning = useRef(false);
+  const previousActive = useRef(false);
   const [showComplete, setShowComplete] = useState(false);
 
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
       previousFinishedAt.current = props.sync.lastFinishedAt;
-      previousRunning.current = props.sync.isRunning;
+      previousActive.current = props.sync.status !== "idle";
       return;
     }
-    if (props.sync.isRunning || props.sync.hasError) {
+    if (props.sync.status !== "idle" || props.sync.hasError) {
       setShowComplete(false);
     }
     const completed =
-      !props.sync.isRunning &&
+      props.sync.status === "idle" &&
       !props.sync.hasError &&
-      (previousRunning.current ||
+      (previousActive.current ||
         props.sync.lastFinishedAt !== previousFinishedAt.current);
-    previousRunning.current = props.sync.isRunning;
+    previousActive.current = props.sync.status !== "idle";
     previousFinishedAt.current = props.sync.lastFinishedAt;
     if (!completed) return;
     setShowComplete(true);
@@ -2521,17 +2533,29 @@ function FilesystemSyncIndicator(props: {
     return () => window.clearTimeout(timer);
   }, [
     props.sync.hasError,
-    props.sync.isRunning,
+    props.sync.status,
     props.sync.lastFinishedAt,
   ]);
 
-  if (props.sync.isRunning) {
+  if (props.sync.status === "running") {
     return (
       <span
         className={`${layout.syncIndicator} ${layout.syncSpinner}`}
         role="status"
         aria-label="background update in progress"
         title="background update in progress"
+      >
+        <RefreshCw aria-hidden="true" size={18} />
+      </span>
+    );
+  }
+  if (props.sync.status === "queued") {
+    return (
+      <span
+        className={`${layout.syncIndicator} ${layout.scanQueued}`}
+        role="status"
+        aria-label="background update queued"
+        title="background update queued"
       >
         <RefreshCw aria-hidden="true" size={18} />
       </span>

@@ -26,6 +26,7 @@ import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_ensureProfile from "../lib/ensureProfile.js";
 import type * as lib_entryNames from "../lib/entryNames.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
+import type * as lib_filesystemSyncStatus from "../lib/filesystemSyncStatus.js";
 import type * as lib_folderStats from "../lib/folderStats.js";
 import type * as lib_format from "../lib/format.js";
 import type * as lib_galleryStats from "../lib/galleryStats.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ensureProfile": typeof lib_ensureProfile;
   "lib/entryNames": typeof lib_entryNames;
   "lib/filesystem": typeof lib_filesystem;
+  "lib/filesystemSyncStatus": typeof lib_filesystemSyncStatus;
   "lib/folderStats": typeof lib_folderStats;
   "lib/format": typeof lib_format;
   "lib/galleryStats": typeof lib_galleryStats;

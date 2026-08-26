@@ -14,9 +14,9 @@ import {
   mediaKind,
   privacy,
   storageKind,
+  systemGalleryRole,
   themeValidator,
   thumbnailState,
-  uploaderAccess,
   uploadState,
 } from "./lib/validators";
 
@@ -50,7 +50,10 @@ export default defineSchema({
     // lower maxFileSize below it. Absent on legacy galleries, where the
     // effective limit is the current maxFileSize.
     maxFileSizeLimit: v.optional(v.number()),
-    uploaderAccess,
+    // Special principals shown alongside ordinary gallery grants. Missing
+    // values on pre-existing galleries use the default viewer role.
+    anonymousRole: v.optional(systemGalleryRole),
+    authenticatedRole: v.optional(systemGalleryRole),
     rootFolderId: v.optional(v.id("folders")),
     folderPreviewMode: v.optional(folderPreviewMode),
     // Allows owners to drag items into folders without entering select mode.
@@ -62,9 +65,6 @@ export default defineSchema({
     infiniteScroll: v.optional(v.boolean()),
     // Gallery entry page size. Undefined means the default of 100.
     paginationPageSize: v.optional(v.number()),
-    // Grants the editor role across this gallery to anonymous profiles.
-    // Optional so galleries created before this setting default to disabled.
-    anonymousEdit: v.optional(v.boolean()),
     theme: themeValidator,
     // Legacy counters. Live counts are in galleryStats (see
     // lib/galleryStats.ts); these only seed that row for galleries created
@@ -417,7 +417,8 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_status_and_availableAt", ["status", "availableAt"])
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
-    .index("by_folderId", ["folderId"]),
+    .index("by_folderId", ["folderId"])
+    .index("by_galleryId_and_status", ["galleryId", "status"]),
 
   mediaProcessingJobs: defineTable({
     entryId: v.id("entries"),

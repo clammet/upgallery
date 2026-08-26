@@ -14,8 +14,9 @@
 .galleryHeading h2 { font-size: 1.8rem; margin: .15rem 0; }
 .eyebrow { color: var(--gallery-accent); font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .stats { display: grid; gap: .5rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: .75rem 0; }
-.stats div { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .3rem; padding: .65rem; }
+.stats > div { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .3rem; padding: .65rem; }
 .stats strong { overflow: hidden; text-overflow: ellipsis; }
+.statHeading { align-items: center; display: flex; justify-content: space-between; min-height: 30px; }
 .section { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: .75rem; }
 .section h3 { font-size: .9rem; }
 .twoColumns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -28,6 +29,7 @@
 .inlineForm { display: grid; gap: .4rem; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin-bottom: .6rem; }
 .rows { display: grid; gap: .25rem; }
 .pendingBadge { background: color-mix(in srgb, var(--gallery-accent) 12%, var(--gallery-bg)); border: 1px solid var(--border); border-radius: 999px; color: var(--gallery-accent); font-size: .65rem; font-style: normal; font-weight: 700; letter-spacing: .08em; margin-left: .45rem; padding: .1rem .45rem; text-transform: uppercase; vertical-align: middle; }
+.systemBadge { background: color-mix(in srgb, var(--gallery-muted) 12%, var(--gallery-bg)); border: 1px solid var(--border); border-radius: 999px; color: var(--gallery-muted); font-size: .65rem; font-style: normal; font-weight: 700; letter-spacing: .08em; margin-left: .45rem; padding: .1rem .45rem; text-transform: uppercase; vertical-align: middle; }
 .row { align-items: center; background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .5rem; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; padding: .45rem; }
 .iconSummary { align-items: center; display: flex; gap: .5rem; }
 .iconSummary img, .iconText { align-items: center; background: color-mix(in srgb, var(--gallery-accent) 10%, var(--gallery-bg)); border-radius: 3px; display: flex; flex: 0 0 40px; height: 40px; justify-content: center; object-fit: cover; width: 40px; }

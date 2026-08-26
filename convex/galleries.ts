@@ -4,9 +4,10 @@ import { internal } from "./_generated/api";
 import {
   folderPreviewMode,
   galleryKind,
+  privacy,
   storageKind,
+  systemGalleryRole,
   themeValidator,
-  uploaderAccess,
 } from "./lib/validators";
 import { formatBytes } from "./lib/format";
 import { createGalleryStats, readGalleryStats } from "./lib/galleryStats";
@@ -29,6 +30,8 @@ import {
 } from "./lib/permissions";
 import { publicProfile } from "./lib/profiles";
 import type { Doc, Id } from "./_generated/dataModel";
+import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
+import { queueFilesystemSyncJob } from "./storageJobs";
 
 const hostInput = v.object({
   host: v.string(),
@@ -147,7 +150,6 @@ export const create = mutation({
     storageKind,
     storageRoot: v.string(),
     maxFileSize: v.optional(v.number()),
-    uploaderAccess: v.optional(uploaderAccess),
     hosts: v.array(hostInput),
     folderPreviewMode: v.optional(folderPreviewMode),
     theme: v.optional(themeValidator),
@@ -201,8 +203,8 @@ export const create = mutation({
       storageRoot,
       maxFileSize,
       maxFileSizeLimit: maxFileSize,
-      uploaderAccess:
-        args.uploaderAccess ?? (args.kind === "uploader" ? "anonymous" : "sso"),
+      anonymousRole: "viewer",
+      authenticatedRole: "viewer",
       folderPreviewMode: args.folderPreviewMode ?? "first",
       infiniteScroll: true,
       paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
@@ -218,6 +220,9 @@ export const create = mutation({
     });
     await ctx.db.patch("galleries", galleryId, { rootFolderId });
     await createFolderStats(ctx, rootFolderId, galleryId);
+    if (args.storageKind === "user") {
+      await queueFilesystemSyncJob(ctx, { galleryId, folderId: rootFolderId });
+    }
     await ctx.db.insert("galleryRoles", {
       galleryId,
       profileId: actor._id,
@@ -521,6 +526,10 @@ export const adminDetails = query({
     return {
       gallery,
       stats: await readGalleryStats(ctx, gallery),
+      filesystemSync:
+        gallery.storageKind === "user" && rootFolder !== null
+          ? await readFilesystemSyncStatus(ctx, rootFolder._id)
+          : null,
       rootFolder,
       hosts,
       grants: enrichedGrants,
@@ -538,14 +547,13 @@ export const update = mutation({
     name: v.optional(v.string()),
     maxFileSize: v.optional(v.number()),
     maxFileSizeLimit: v.optional(v.number()),
-    uploaderAccess: v.optional(uploaderAccess),
+    privacy: v.optional(privacy),
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
     editorBulkActions: v.optional(v.boolean()),
     infiniteScroll: v.optional(v.boolean()),
     paginationPageSize: v.optional(v.number()),
-    anonymousEdit: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
   handler: async (ctx, args) => {
@@ -618,11 +626,6 @@ export const update = mutation({
         });
       }
     }
-    if (args.anonymousEdit !== undefined && !actor.isSystemAdmin) {
-      throw new Error(
-        "Only system administrators can change anonymous edit access",
-      );
-    }
     const name = args.name?.trim();
     // The limit is written when set explicitly, and pinned on legacy
     // galleries (which have none) whenever the size changes so owners
@@ -637,9 +640,6 @@ export const update = mutation({
         ? {}
         : { maxFileSize: args.maxFileSize }),
       ...(writeLimit ? { maxFileSizeLimit } : {}),
-      ...(args.uploaderAccess === undefined
-        ? {}
-        : { uploaderAccess: args.uploaderAccess }),
       ...(args.folderPreviewMode === undefined
         ? {}
         : { folderPreviewMode: args.folderPreviewMode }),
@@ -655,13 +655,15 @@ export const update = mutation({
       ...(args.paginationPageSize === undefined
         ? {}
         : { paginationPageSize: args.paginationPageSize }),
-      ...(args.anonymousEdit === undefined
-        ? {}
-        : { anonymousEdit: args.anonymousEdit ? true : undefined }),
       ...(args.theme === undefined ? {} : { theme: args.theme }),
     });
     if (name !== undefined && rootFolder !== null) {
       await ctx.db.patch("folders", rootFolder._id, { name });
+    }
+    if (args.privacy !== undefined && rootFolder !== null) {
+      await ctx.db.patch("folders", rootFolder._id, {
+        privacy: args.privacy,
+      });
     }
     if (
       gallery.storageKind === "user" &&
@@ -682,6 +684,39 @@ export const update = mutation({
       actorProfileId: actor._id,
       action: "gallery.updated",
       galleryId: gallery._id,
+      createdAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+export const setSystemPermission = mutation({
+  args: {
+    galleryId: v.id("galleries"),
+    principal: v.union(v.literal("anonymous"), v.literal("authenticated")),
+    role: systemGalleryRole,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const gallery = await ctx.db.get("galleries", args.galleryId);
+    if (gallery === null || gallery.deletedAt !== undefined) {
+      throw new Error("Gallery not found");
+    }
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    await ctx.db.patch("galleries", gallery._id, {
+      ...(args.principal === "anonymous"
+        ? { anonymousRole: args.role }
+        : { authenticatedRole: args.role }),
+    });
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "gallery.system_permission.updated",
+      galleryId: gallery._id,
+      detail: `${args.principal}:${args.role}`,
       createdAt: Date.now(),
     });
     return null;

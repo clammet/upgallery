@@ -15,7 +15,7 @@ function snapshot(): SettingsSnapshot {
     name: "Studio",
     maxFileSizeMib: 100,
     maxFileSizeLimitMib: 200,
-    uploaderAccess: "sso",
+    privacy: "public",
     folderPreviewMode: "first",
     quickMove: false,
     infiniteScroll: true,
@@ -80,6 +80,14 @@ describe("gallery settings dirty-field detection", () => {
     expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
       infiniteScroll: false,
       paginationPageSize: 250,
+    });
+  });
+
+  test("gallery privacy is sent only when changed", () => {
+    const initial = snapshot();
+    const current = { ...initial, privacy: "private" as const };
+    expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
+      privacy: "private",
     });
   });
 

@@ -22,10 +22,10 @@ export const galleryRole = v.union(
   v.literal("viewer"),
 );
 
-export const uploaderAccess = v.union(
-  v.literal("anonymous"),
-  v.literal("sso"),
-  v.literal("restricted"),
+export const systemGalleryRole = v.union(
+  v.literal("none"),
+  v.literal("viewer"),
+  v.literal("editor"),
 );
 
 export const folderPreviewMode = v.union(
