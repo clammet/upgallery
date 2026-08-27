@@ -24,7 +24,9 @@ import {
   userFilesystemStorageKey,
 } from "./paths.js";
 
-const MAX_DIRECTORY_ITEMS = 500;
+// Bounds a single scan's runtime; the backend reconciles files one call at a
+// time, so this is a worker-side safety valve rather than a data limit.
+const MAX_DIRECTORY_ITEMS = 10_000;
 const MAX_RECURSIVE_DIRECTORIES = 2_000;
 
 type SyncClaim =
@@ -36,12 +38,36 @@ type SyncClaim =
       folderSegments: string[];
       knownModifiedAt?: number;
       maxFileSize: number;
-      knownChildFolderIds: string[];
     };
 
 type FileCheck =
   | { kind: "unchanged" }
   | { kind: "metadata"; entryId?: string };
+
+type SyncTaskResult =
+  | { kind: "scanned"; childFolderIds: string[] }
+  | { kind: "unchanged" };
+
+async function listKnownChildFolderIds(
+  galleryId: string,
+  folderId: string,
+): Promise<string[]> {
+  const folderIds: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await callConvex<{
+      folderIds: string[];
+      cursor: string | null;
+    }>("/internal/storage/list-known-child-folders", {
+      galleryId,
+      folderId,
+      cursor,
+    });
+    folderIds.push(...page.folderIds);
+    cursor = page.cursor ?? undefined;
+  } while (cursor !== undefined);
+  return folderIds;
+}
 
 export async function runUserDirectorySync(
   galleryId: string,
@@ -87,7 +113,7 @@ async function syncUserDirectory(
     return;
   }
   try {
-    const childFolderIds = await runWithHeartbeat({
+    const taskResult = await runWithHeartbeat<SyncTaskResult>({
       signal,
       timeoutMs: config.workerTaskTimeoutMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
@@ -120,7 +146,7 @@ async function syncUserDirectory(
           },
         );
         if (!comparison.shouldScan) {
-          return isRequestedRoot ? [] : claim.knownChildFolderIds;
+          return { kind: "unchanged" as const };
         }
 
         const children = (await readdir(directoryPath, { withFileTypes: true }))
@@ -230,15 +256,36 @@ async function syncUserDirectory(
         if (after.mtimeMs !== before.mtimeMs) {
           throw new Error("Directory changed while it was being indexed");
         }
-        await callConvex("/internal/storage/complete-filesystem-sync", {
-          galleryId,
-          folderId,
-          syncId: claim.syncId,
-          modifiedAt: after.mtimeMs,
-        });
-        return childFolderIds;
+        // Completion sweeps stale items in bounded batches; keep calling
+        // until the backend reports the sync state finalized.
+        let sweepCursor: string | undefined;
+        for (;;) {
+          syncSignal.throwIfAborted();
+          const result = await callConvex<
+            { done: true } | { done: false; cursor: string }
+          >("/internal/storage/complete-filesystem-sync", {
+            galleryId,
+            folderId,
+            syncId: claim.syncId,
+            modifiedAt: after.mtimeMs,
+            cursor: sweepCursor,
+          });
+          if (result.done) {
+            break;
+          }
+          sweepCursor = result.cursor;
+        }
+        return { kind: "scanned" as const, childFolderIds };
       },
     });
+    // Child listing happens outside the heartbeat: after an unchanged
+    // comparison the lease is already released, so renewals would fail.
+    const childFolderIds =
+      taskResult.kind === "scanned"
+        ? taskResult.childFolderIds
+        : isRequestedRoot
+          ? []
+          : await listKnownChildFolderIds(galleryId, folderId);
     for (const childFolderId of childFolderIds) {
       try {
         await syncUserDirectory(

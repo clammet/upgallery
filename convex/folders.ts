@@ -15,6 +15,7 @@ import {
   cleanFilesystemSegment,
   MAX_FOLDER_DEPTH,
   normalizeSlug,
+  validateFilesystemSegment,
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
 import { createFolderStats } from "./lib/folderStats";
@@ -451,7 +452,9 @@ export const removeMany = mutation({
           folderId: folder._id,
           actorProfileId: actor._id,
           kind: "rmdir",
-          name: cleanFilesystemSegment(folder.name),
+          // The stored name is the on-disk name; normalizing it here would
+          // aim the delete at a path that does not exist.
+          name: validateFilesystemSegment(folder.name),
           tokenHash: await sha256(token),
           expiresAt: now + 15 * 60 * 1000,
           state: "pending",
@@ -653,7 +656,7 @@ export const moveMany = mutation({
     if (gallery.storageKind === "user") {
       const operations = [];
       for (const folder of movingFolders) {
-        cleanFilesystemSegment(folder.name);
+        validateFilesystemSegment(folder.name);
         const token = createToken();
         const operationId = await ctx.db.insert("filesystemOperations", {
           galleryId: gallery._id,

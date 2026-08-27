@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
+  internalQuery,
   type MutationCtx,
 } from "./_generated/server";
 import { createToken, sha256 } from "./lib/crypto";
@@ -24,16 +25,19 @@ import {
   storageJobRetryDelay,
 } from "./lib/storageJobs";
 import {
-  cleanFilesystemSegment,
   entryNameKey,
   fileExtensionFromName,
   filesystemSlug,
+  validateFilesystemSegment,
 } from "./lib/normalize";
 import { mediaKind } from "./lib/validators";
 
 const SYNC_LEASE_MS = STORAGE_JOB_LEASE_MS;
 const SYNC_LEASE_RENEW_THRESHOLD_MS = SYNC_LEASE_MS / 2;
-const MAX_DIRECTORY_ITEMS = 500;
+// Batch sizes keep each mutation's reads and writes bounded; directories of
+// any size are handled by continuing across calls instead of failing.
+const SYNC_SWEEP_PAGE = 200;
+const CHILD_FOLDER_PAGE = 500;
 
 async function requireUserDirectory(
   ctx: MutationCtx,
@@ -99,7 +103,7 @@ function validateFileMetadata(input: {
   identity: string;
   storageKey: string;
 }) {
-  cleanFilesystemSegment(input.name);
+  validateFilesystemSegment(input.name);
   if (
     !Number.isSafeInteger(input.size) ||
     input.size < 0 ||
@@ -130,15 +134,6 @@ export const claimFilesystemSync = internalMutation({
       .query("filesystemSyncStates")
       .withIndex("by_folderId", (q) => q.eq("folderId", folder._id))
       .unique();
-    const knownChildren = await ctx.db
-      .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q.eq("galleryId", gallery._id).eq("parentId", folder._id),
-      )
-      .take(MAX_DIRECTORY_ITEMS + 1);
-    if (knownChildren.length > MAX_DIRECTORY_ITEMS) {
-      throw new Error("Directory contains too many tracked folders");
-    }
     if (
       state?.activeSyncId !== undefined &&
       (state.leaseExpiresAt ?? 0) >= now
@@ -170,9 +165,34 @@ export const claimFilesystemSync = internalMutation({
       folderSegments: await getFilesystemFolderSegments(ctx, gallery, folder),
       knownModifiedAt: state?.knownModifiedAt,
       maxFileSize: gallery.maxFileSize,
-      knownChildFolderIds: knownChildren
+    };
+  },
+});
+
+// Pages through a directory's tracked subfolders so the worker can recurse
+// into them without any single call loading the whole set.
+export const listKnownChildFolders = internalQuery({
+  args: {
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const folder = await ctx.db.get("folders", args.folderId);
+    if (folder === null || folder.galleryId !== args.galleryId) {
+      throw new Error("User-backed directory is unavailable");
+    }
+    const page = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q.eq("galleryId", args.galleryId).eq("parentId", folder._id),
+      )
+      .paginate({ numItems: CHILD_FOLDER_PAGE, cursor: args.cursor ?? null });
+    return {
+      folderIds: page.page
         .filter((child) => child.filesystemMissingAt === undefined)
         .map((child) => child._id),
+      cursor: page.isDone ? null : page.continueCursor,
     };
   },
 });
@@ -242,22 +262,30 @@ export const reconcileFilesystemDirectory = internalMutation({
       args.parentId,
       args.syncId,
     );
-    const name = cleanFilesystemSegment(args.name);
+    const name = validateFilesystemSegment(args.name);
     if (args.identity.length < 1 || args.identity.length > 200) {
       throw new Error("Invalid filesystem identity");
     }
-    const children = await ctx.db
-      .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q.eq("galleryId", gallery._id).eq("parentId", parent._id),
-      )
-      .take(MAX_DIRECTORY_ITEMS + 1);
-    if (children.length > MAX_DIRECTORY_ITEMS) {
-      throw new Error("Directory contains too many tracked folders");
-    }
     const existing =
-      children.find((child) => child.name === name) ??
-      children.find((child) => child.filesystemIdentity === args.identity);
+      (await ctx.db
+        .query("folders")
+        .withIndex("by_galleryId_and_parentId_and_name", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", parent._id)
+            .eq("name", name),
+        )
+        .first()) ??
+      (await ctx.db
+        .query("folders")
+        .withIndex("by_galleryId_and_parentId_and_filesystemIdentity", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", parent._id)
+            .eq("filesystemIdentity", args.identity),
+        )
+        .first()) ??
+      undefined;
     if (existing !== undefined) {
       await ctx.db.patch("folders", existing._id, {
         name,
@@ -311,24 +339,17 @@ export const checkFilesystemFile = internalMutation({
       .query("entries")
       .withIndex("by_storageKey", (q) => q.eq("storageKey", args.storageKey))
       .unique();
-    const candidates =
-      exact === null
-        ? await ctx.db
-            .query("entries")
-            .withIndex("by_folderId_and_state", (q) =>
-              q.eq("folderId", folder._id).eq("state", "ready"),
-            )
-            .take(MAX_DIRECTORY_ITEMS + 1)
-        : [];
-    if (candidates.length > MAX_DIRECTORY_ITEMS) {
-      throw new Error("Directory contains too many tracked files");
-    }
     const existing =
       exact ??
-      candidates.find(
-        (candidate) => candidate.filesystemIdentity === args.identity,
-      ) ??
-      null;
+      (await ctx.db
+        .query("entries")
+        .withIndex("by_folderId_and_filesystemIdentity", (q) =>
+          q
+            .eq("folderId", folder._id)
+            .eq("filesystemIdentity", args.identity),
+        )
+        .filter((q) => q.eq(q.field("state"), "ready"))
+        .first());
     if (
       existing !== null &&
       existing.galleryId === gallery._id &&
@@ -538,12 +559,17 @@ export const reconcileFilesystemFile = internalMutation({
   },
 });
 
+// Completion sweeps the folder for entries and subfolders the scan did not
+// touch, in worker-driven batches: each call processes one page and returns a
+// continuation cursor until it can finalize the sync state. The lease stays
+// held between calls, so no competing scan can interleave with the sweep.
 export const completeFilesystemSync = internalMutation({
   args: {
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
     syncId: v.string(),
     modifiedAt: v.number(),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { gallery, folder, state } = await requireActiveSync(
@@ -552,62 +578,84 @@ export const completeFilesystemSync = internalMutation({
       args.folderId,
       args.syncId,
     );
-    const [entries, children] = await Promise.all([
-      ctx.db
+    let phase: "entries" | "folders" = "entries";
+    let innerCursor: string | null = null;
+    if (args.cursor !== undefined) {
+      const separator = args.cursor.indexOf(":");
+      const prefix = args.cursor.slice(0, separator);
+      if (separator < 0 || (prefix !== "entries" && prefix !== "folders")) {
+        throw new Error("Invalid filesystem sweep cursor");
+      }
+      phase = prefix;
+      innerCursor = args.cursor.slice(separator + 1) || null;
+    }
+    if (phase === "entries") {
+      const page = await ctx.db
         .query("entries")
         .withIndex("by_folderId_and_state", (q) =>
           q.eq("folderId", folder._id).eq("state", "ready"),
         )
-        .take(MAX_DIRECTORY_ITEMS + 1),
-      ctx.db
-        .query("folders")
-        .withIndex("by_galleryId_and_parentId", (q) =>
-          q.eq("galleryId", gallery._id).eq("parentId", folder._id),
-        )
-        .take(MAX_DIRECTORY_ITEMS + 1),
-    ]);
-    if (
-      entries.length > MAX_DIRECTORY_ITEMS ||
-      children.length > MAX_DIRECTORY_ITEMS
-    ) {
-      throw new Error("Directory contains too many tracked items");
-    }
-    let removedItems = 0;
-    let removedBytes = 0;
-    for (const entry of entries) {
-      if (
-        entry.storageKind === "user" &&
-        entry.filesystemSyncId !== args.syncId
-      ) {
-        const counter = await ctx.db
-          .query("entryCounters")
-          .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
-          .unique();
-        if (counter !== null) {
-          await ctx.db.delete("entryCounters", counter._id);
-        }
+        .paginate({ numItems: SYNC_SWEEP_PAGE, cursor: innerCursor });
+      let removedItems = 0;
+      let removedBytes = 0;
+      for (const entry of page.page) {
         if (
-          entry.thumbnailKey !== undefined ||
-          entry.previewKey !== undefined
+          entry.storageKind === "user" &&
+          entry.filesystemSyncId !== args.syncId
         ) {
-          await ctx.db.insert("storageDeleteJobs", {
-            entryId: entry._id,
-            storageKey: entry.storageKey,
-            thumbnailKey: entry.thumbnailKey,
-            previewKey: entry.previewKey,
-            deleteOriginal: false,
-            deleteEntry: false,
-            status: "queued",
-            attempts: 0,
-            availableAt: 0,
-          });
+          const counter = await ctx.db
+            .query("entryCounters")
+            .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+            .unique();
+          if (counter !== null) {
+            await ctx.db.delete("entryCounters", counter._id);
+          }
+          if (
+            entry.thumbnailKey !== undefined ||
+            entry.previewKey !== undefined
+          ) {
+            await ctx.db.insert("storageDeleteJobs", {
+              entryId: entry._id,
+              storageKey: entry.storageKey,
+              thumbnailKey: entry.thumbnailKey,
+              previewKey: entry.previewKey,
+              deleteOriginal: false,
+              deleteEntry: false,
+              status: "queued",
+              attempts: 0,
+              availableAt: 0,
+            });
+          }
+          await ctx.db.delete("entries", entry._id);
+          removedItems += 1;
+          removedBytes += entry.size;
         }
-        await ctx.db.delete("entries", entry._id);
-        removedItems += 1;
-        removedBytes += entry.size;
       }
+      if (removedItems > 0) {
+        await adjustGalleryStats(ctx, gallery, {
+          items: -removedItems,
+          bytes: -removedBytes,
+        });
+        await adjustFolderStats(
+          ctx,
+          { folderId: folder._id, galleryId: gallery._id },
+          { items: -removedItems, bytes: -removedBytes },
+        );
+      }
+      // Convex allows one .paginate() per function execution, so the folder
+      // phase always starts in a fresh call.
+      return {
+        done: false as const,
+        cursor: page.isDone ? "folders:" : `entries:${page.continueCursor}`,
+      };
     }
-    for (const child of children) {
+    const children = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q.eq("galleryId", gallery._id).eq("parentId", folder._id),
+      )
+      .paginate({ numItems: SYNC_SWEEP_PAGE, cursor: innerCursor });
+    for (const child of children.page) {
       if (child.filesystemSyncId !== args.syncId) {
         await ctx.db.patch("folders", child._id, {
           filesystemMissingAt: Date.now(),
@@ -619,16 +667,11 @@ export const completeFilesystemSync = internalMutation({
         );
       }
     }
-    if (removedItems > 0) {
-      await adjustGalleryStats(ctx, gallery, {
-        items: -removedItems,
-        bytes: -removedBytes,
-      });
-      await adjustFolderStats(
-        ctx,
-        { folderId: folder._id, galleryId: gallery._id },
-        { items: -removedItems, bytes: -removedBytes },
-      );
+    if (!children.isDone) {
+      return {
+        done: false as const,
+        cursor: `folders:${children.continueCursor}`,
+      };
     }
     const now = Date.now();
     await ctx.db.patch("filesystemSyncStates", state._id, {
@@ -639,6 +682,33 @@ export const completeFilesystemSync = internalMutation({
       lastCompletedAt: now,
       error: undefined,
     });
+    return { done: true as const };
+  },
+});
+
+// One-time repair after the verbatim-name fix: forget every directory's
+// recorded modification time so its next open runs a full rescan, which
+// re-reconciles children by inode identity and heals names that were stored
+// NFKC-normalized. Safe to run repeatedly. Run with:
+//   npx convex run filesystemSync:rescanAllDirectories
+export const rescanAllDirectories = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("filesystemSyncStates")
+      .paginate({ numItems: SYNC_SWEEP_PAGE, cursor: args.cursor ?? null });
+    for (const state of page.page) {
+      await ctx.db.patch("filesystemSyncStates", state._id, {
+        knownModifiedAt: undefined,
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.filesystemSync.rescanAllDirectories,
+        { cursor: page.continueCursor },
+      );
+    }
     return null;
   },
 });
@@ -820,7 +890,7 @@ async function filesystemOperationClaim(
     ) {
       throw new Error("File is unavailable");
     }
-    sourceSegments = [...parentSegments, cleanFilesystemSegment(entry.name)];
+    sourceSegments = [...parentSegments, validateFilesystemSegment(entry.name)];
     await ctx.db.patch("entries", entry._id, {
       filesystemOperationId: operation._id,
       migrationState: "moving",

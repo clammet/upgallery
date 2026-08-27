@@ -5,7 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import { adjustFolderStats } from "./lib/folderStats";
-import { cleanFilesystemSegment } from "./lib/normalize";
+import { validateFilesystemSegment } from "./lib/normalize";
 import {
   getCurrentProfile,
   requireCurrentProfile,
@@ -571,7 +571,7 @@ export const process = internalMutation({
       }
       if (destinationGallery.storageKind === "user") {
         try {
-          cleanFilesystemSegment(entry.name);
+          validateFilesystemSegment(entry.name);
         } catch (error) {
           failedItems += 1;
           firstError ??=

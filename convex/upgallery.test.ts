@@ -252,12 +252,21 @@ describe("upgallery backend", () => {
       syncId: sync.syncId,
       modifiedAt: 1000,
     });
-    await t.mutation(internal.filesystemSync.completeFilesystemSync, {
-      galleryId,
-      folderId: job.folderId,
-      syncId: sync.syncId,
-      modifiedAt: 1000,
-    });
+    let sweepCursor: string | undefined;
+    for (;;) {
+      const sweep = await t.mutation(
+        internal.filesystemSync.completeFilesystemSync,
+        {
+          galleryId,
+          folderId: job.folderId,
+          syncId: sync.syncId,
+          modifiedAt: 1000,
+          cursor: sweepCursor,
+        },
+      );
+      if (sweep.done) break;
+      sweepCursor = sweep.cursor;
+    }
     await t.mutation(internal.storageJobs.completeFilesystemSync, {
       jobId: job.jobId,
     });
@@ -1804,12 +1813,21 @@ describe("upgallery backend", () => {
         thumbnailKey:
           "derivatives/gallery/user/alice/photos/thumbnails/aa/aa/thumb.jpg",
     });
-    await t.mutation(internal.filesystemSync.completeFilesystemSync, {
-        galleryId,
-        folderId,
-        syncId: firstClaim.syncId,
-        modifiedAt: 1000,
-    });
+    let sweepCursor: string | undefined;
+    for (;;) {
+      const sweep = await t.mutation(
+        internal.filesystemSync.completeFilesystemSync,
+        {
+          galleryId,
+          folderId,
+          syncId: firstClaim.syncId,
+          modifiedAt: 1000,
+          cursor: sweepCursor,
+        },
+      );
+      if (sweep.done) break;
+      sweepCursor = sweep.cursor;
+    }
 
     const listing = await authed.query(api.folders.list, {
       galleryId,
@@ -1835,7 +1853,11 @@ describe("upgallery backend", () => {
     );
     if (secondClaim.kind !== "ready")
       throw new Error("Sync was unexpectedly busy");
-    expect(secondClaim.knownChildFolderIds).toContain(newFolderId);
+    const knownChildren = await t.query(
+      internal.filesystemSync.listKnownChildFolders,
+      { galleryId, folderId },
+    );
+    expect(knownChildren.folderIds).toContain(newFolderId);
     expect(
       await t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
           galleryId,

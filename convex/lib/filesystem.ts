@@ -1,6 +1,6 @@
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { cleanFilesystemSegment } from "./normalize";
+import { validateFilesystemSegment } from "./normalize";
 
 type DbCtx = QueryCtx | MutationCtx;
 
@@ -22,10 +22,10 @@ export async function getFilesystemFolderSegments(
     if (ancestor === null || ancestor.galleryId !== gallery._id) {
       throw new Error("Folder ancestry is invalid");
     }
-    segments.push(cleanFilesystemSegment(ancestor.name));
+    segments.push(validateFilesystemSegment(ancestor.name));
   }
   if (folder._id !== gallery.rootFolderId) {
-    segments.push(cleanFilesystemSegment(folder.name));
+    segments.push(validateFilesystemSegment(folder.name));
   }
   return segments;
 }
@@ -39,7 +39,7 @@ export function getFilesystemStorageKey(
     "public",
     "users",
     ...gallery.storageRoot.split("/"),
-    ...folderSegments.map(cleanFilesystemSegment),
-    cleanFilesystemSegment(fileName),
+    ...folderSegments.map(validateFilesystemSegment),
+    validateFilesystemSegment(fileName),
   ].join("/");
 }

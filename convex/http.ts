@@ -633,17 +633,46 @@ http.route({
       typeof body.galleryId !== "string" ||
       typeof body.folderId !== "string" ||
       typeof body.syncId !== "string" ||
-      typeof body.modifiedAt !== "number"
+      typeof body.modifiedAt !== "number" ||
+      (body.cursor !== undefined && typeof body.cursor !== "string")
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
-    await ctx.runMutation(internal.filesystemSync.completeFilesystemSync, {
-      galleryId: body.galleryId as Id<"galleries">,
-      folderId: body.folderId as Id<"folders">,
-      syncId: body.syncId,
-      modifiedAt: body.modifiedAt,
-    });
-    return json({ ok: true });
+    return json(
+      await ctx.runMutation(internal.filesystemSync.completeFilesystemSync, {
+        galleryId: body.galleryId as Id<"galleries">,
+        folderId: body.folderId as Id<"folders">,
+        syncId: body.syncId,
+        modifiedAt: body.modifiedAt,
+        cursor: body.cursor,
+      }),
+    );
+  }),
+});
+
+http.route({
+  path: "/internal/storage/list-known-child-folders",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const body: unknown = await request.json();
+    if (
+      !isRecord(body) ||
+      typeof body.galleryId !== "string" ||
+      typeof body.folderId !== "string" ||
+      (body.cursor !== undefined && typeof body.cursor !== "string")
+    ) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    return json(
+      await ctx.runQuery(internal.filesystemSync.listKnownChildFolders, {
+        galleryId: body.galleryId as Id<"galleries">,
+        folderId: body.folderId as Id<"folders">,
+        cursor: body.cursor,
+      }),
+    );
   }),
 });
 

@@ -93,20 +93,30 @@ export function fileExtensionFromName(
   return /^[a-z0-9]{1,16}$/.test(candidate) ? candidate : fallback;
 }
 
+// For names typed by users: normalized before they ever reach a disk, so the
+// created path and the stored name agree.
 export function cleanFilesystemSegment(value: string): string {
-  const name = value.normalize("NFKC").trim();
+  return validateFilesystemSegment(value.normalize("NFKC").trim());
+}
+
+// For names that already exist on a real filesystem: they must round-trip
+// byte-for-byte, because paths are rebuilt from stored names. NFKC folds
+// fullwidth punctuation (＜ ＞ ＝ ！) and ideographic spaces into ASCII, and
+// trimming drops edge whitespace — either produces a path that no longer
+// exists on disk.
+export function validateFilesystemSegment(value: string): string {
   if (
-    name.length === 0 ||
-    name.length > 240 ||
-    name === "." ||
-    name === ".." ||
-    /[\u0000-\u001f\u007f/\\]/.test(name)
+    value.length === 0 ||
+    value.length > 240 ||
+    value === "." ||
+    value === ".." ||
+    /[\u0000-\u001f\u007f/\\]/.test(value)
   ) {
     throw new Error(
       "Filesystem names must contain 1–240 characters and cannot contain /, \\, control characters, . or ..",
     );
   }
-  return name;
+  return value;
 }
 
 export function filesystemSlug(value: string): string {

@@ -129,6 +129,11 @@ export default defineSchema({
       "parentId",
       "slug",
     ])
+    .index("by_galleryId_and_parentId_and_filesystemIdentity", [
+      "galleryId",
+      "parentId",
+      "filesystemIdentity",
+    ])
     .index("by_galleryId", ["galleryId"]),
 
   galleryRoles: defineTable({
@@ -186,6 +191,7 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index("by_folderId_and_state", ["folderId", "state"])
+    .index("by_folderId_and_filesystemIdentity", ["folderId", "filesystemIdentity"])
     .index("by_folderId_and_state_and_nameKey", ["folderId", "state", "nameKey"])
     .index("by_folderId_and_state_and_moveJobId_and_createdAt", [
       "folderId",
