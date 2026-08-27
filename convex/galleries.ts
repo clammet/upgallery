@@ -4,7 +4,6 @@ import { internal } from "./_generated/api";
 import {
   folderPreviewMode,
   galleryKind,
-  privacy,
   storageKind,
   systemGalleryRole,
   themeValidator,
@@ -26,6 +25,7 @@ import {
   getEffectiveRole,
   requireGalleryRole,
   requireSystemAdmin,
+  resolveFolderAccess,
   roleAtLeast,
 } from "./lib/permissions";
 import { publicProfile } from "./lib/profiles";
@@ -123,7 +123,7 @@ async function galleryResult(
       ? null
       : await ctx.db.get("folders", gallery.rootFolderId);
   const profile = await getCurrentProfile(ctx, anonymousClaim);
-  const role = await getEffectiveRole(
+  const access = await resolveFolderAccess(
     ctx,
     gallery._id,
     rootFolder,
@@ -134,10 +134,10 @@ async function galleryResult(
     gallery,
     rootFolder,
     access: {
-      role,
-      canView: rootFolder?.privacy !== "private" || roleAtLeast(role, "viewer"),
-      canUpload: roleAtLeast(role, "editor"),
-      canManage: canManageGallery(gallery, role),
+      role: access.role,
+      canView: access.canView,
+      canUpload: access.canUpload,
+      canManage: canManageGallery(gallery, access.role),
     },
   };
 }
@@ -216,7 +216,8 @@ export const create = mutation({
       ancestorIds: [],
       name,
       slug: "",
-      privacy: "public",
+      accessPolicy: "inherit",
+      discoverability: "listed",
     });
     await ctx.db.patch("galleries", galleryId, { rootFolderId });
     await createFolderStats(ctx, rootFolderId, galleryId);
@@ -547,7 +548,6 @@ export const update = mutation({
     name: v.optional(v.string()),
     maxFileSize: v.optional(v.number()),
     maxFileSizeLimit: v.optional(v.number()),
-    privacy: v.optional(privacy),
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     quickMove: v.optional(v.boolean()),
@@ -659,11 +659,6 @@ export const update = mutation({
     });
     if (name !== undefined && rootFolder !== null) {
       await ctx.db.patch("folders", rootFolder._id, { name });
-    }
-    if (args.privacy !== undefined && rootFolder !== null) {
-      await ctx.db.patch("folders", rootFolder._id, {
-        privacy: args.privacy,
-      });
     }
     if (
       gallery.storageKind === "user" &&

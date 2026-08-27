@@ -347,7 +347,8 @@ describe("name conflicts", () => {
       galleryId,
       parentId: rootFolderId,
       name: "Destination",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     if (destination.kind !== "complete") throw new Error("Expected a folder");
     const occupant = await uploadFile(t, authed, {
@@ -545,7 +546,8 @@ describe("name conflicts", () => {
       galleryId,
       parentId: rootFolderId,
       name: "Target",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     if (destination.kind !== "complete") throw new Error("Expected a folder");
     await uploadFile(t, authed, {

@@ -186,7 +186,10 @@ describe("upgallery backend", () => {
       anonymousRole: "viewer",
       authenticatedRole: "viewer",
     });
-    expect(created.rootFolder?.privacy).toBe("public");
+    expect(created.rootFolder).toMatchObject({
+      accessPolicy: "inherit",
+      discoverability: "listed",
+    });
     expect(created.roles).toMatchObject([{ role: "owner" }]);
     expect(created.hosts).toMatchObject([
       { host: "photos.example.com", rootPath: "/" },
@@ -391,7 +394,6 @@ describe("upgallery backend", () => {
       galleryId,
       infiniteScroll: false,
       paginationPageSize: 250,
-      privacy: "private",
     });
     await expect(
       ownerAuthed.mutation(api.galleries.update, {
@@ -412,11 +414,6 @@ describe("upgallery backend", () => {
       infiniteScroll: false,
       paginationPageSize: 250,
     });
-    expect(
-      await t.run(async (ctx) =>
-        ctx.db.get("folders", paginationSettings!.rootFolderId!),
-      ),
-    ).toMatchObject({ privacy: "private" });
   });
 
   test("gallery owners can grant and revoke anonymous editor access", async () => {
@@ -461,7 +458,8 @@ describe("upgallery backend", () => {
         galleryId,
         parentId: rootFolderId,
         name: "Before enabled",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       }),
     ).rejects.toThrow(/Unauthorized/);
 
@@ -499,7 +497,8 @@ describe("upgallery backend", () => {
       galleryId,
       parentId: rootFolderId,
       name: "Visitor folder",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     expect(created).toMatchObject({ kind: "complete" });
     if (created.kind !== "complete") {
@@ -510,7 +509,8 @@ describe("upgallery backend", () => {
         anonymousClaim: anonymous.anonymousClaim,
         folderId: created.folderId,
         name: "Visitor renamed",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       }),
     ).resolves.toMatchObject({ kind: "complete" });
 
@@ -567,7 +567,8 @@ describe("upgallery backend", () => {
       galleryId,
       parentId: rootFolderId,
       name: "Visitor nested",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     if (nested.kind !== "complete") {
       throw new Error("Expected a shared-storage folder");
@@ -645,7 +646,8 @@ describe("upgallery backend", () => {
         anonymousClaim: anonymous.anonymousClaim,
         folderId: created.folderId,
         name: "No longer allowed",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       }),
     ).rejects.toThrow(/Unauthorized/);
     await expect(
@@ -690,7 +692,8 @@ describe("upgallery backend", () => {
         ancestorIds: [rootFolderId],
         name: "Sub",
         slug: "sub",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       }),
     );
     const owner = await seedProfile(t, { email: "owner@example.com" });
@@ -810,7 +813,10 @@ describe("upgallery backend", () => {
     );
     expect(
       await t.run(async (ctx) => ctx.db.get("folders", gallery!.rootFolderId!)),
-    ).toMatchObject({ privacy: "public" });
+    ).toMatchObject({
+      accessPolicy: "inherit",
+      discoverability: "listed",
+    });
     await adminClient.mutation(api.galleries.setSystemPermission, {
       galleryId,
       principal: "anonymous",
@@ -1462,7 +1468,7 @@ describe("upgallery backend", () => {
     ).rejects.toThrow("Only signed-in SSO profiles");
   });
 
-  test("a private folder is hidden when anonymous system access is revoked", async () => {
+  test("folder access overrides and discoverability are resolved independently", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
@@ -1480,29 +1486,123 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
-    await authed.mutation(api.galleries.setSystemPermission, {
+    const rootFolderId = gallery!.rootFolderId!;
+    const restrictedFolder = await authed.mutation(api.folders.create, {
       galleryId,
-      principal: "anonymous",
-      role: "none",
-    });
-    const privateFolder = await authed.mutation(api.folders.create, {
-      galleryId,
-      parentId: gallery!.rootFolderId!,
+      parentId: rootFolderId,
       name: "Members only",
-      privacy: "private",
+      accessPolicy: "restricted",
+      discoverability: "listed",
     });
-    if (privateFolder.kind !== "complete") {
+    if (restrictedFolder.kind !== "complete") {
       throw new Error("Shared storage folder unexpectedly required I/O");
     }
-    const stranger = await seedProfile(t, { anonymous: true });
+    const inheritedRestrictedFolder = await authed.mutation(
+      api.folders.create,
+      {
+        galleryId,
+        parentId: restrictedFolder.folderId,
+        name: "Inherited restriction",
+        accessPolicy: "inherit",
+        discoverability: "listed",
+      },
+    );
+    if (inheritedRestrictedFolder.kind !== "complete") {
+      throw new Error("Shared storage folder unexpectedly required I/O");
+    }
+    const unlistedFolder = await authed.mutation(api.folders.create, {
+      galleryId,
+      parentId: rootFolderId,
+      name: "Secret link",
+      accessPolicy: "public",
+      discoverability: "unlisted",
+    });
+    if (unlistedFolder.kind !== "complete") {
+      throw new Error("Shared storage folder unexpectedly required I/O");
+    }
+    const anonymous = await seedProfile(t, { anonymous: true });
+    const viewer = await seedProfile(t, { email: "viewer@example.com" });
+    const viewerClient = asUser(
+      t,
+      viewer.googleSubject,
+      "viewer@example.com",
+    );
+
+    const anonymousRoot = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(anonymousRoot.folders.map((folder) => folder._id)).not.toContain(
+      restrictedFolder.folderId,
+    );
+    expect(anonymousRoot.folders.map((folder) => folder._id)).not.toContain(
+      unlistedFolder.folderId,
+    );
 
     await expect(
       t.query(api.folders.list, {
-        anonymousClaim: stranger.anonymousClaim,
+        anonymousClaim: anonymous.anonymousClaim,
         galleryId,
-        folderId: privateFolder.folderId,
+        folderId: restrictedFolder.folderId,
       }),
     ).rejects.toThrow("Unauthorized");
+    await expect(
+      viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: restrictedFolder.folderId,
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: inheritedRestrictedFolder.folderId,
+      }),
+    ).rejects.toThrow("Unauthorized");
+
+    const directUnlisted = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: unlistedFolder.folderId,
+    });
+    expect(directUnlisted.folder._id).toBe(unlistedFolder.folderId);
+    expect(directUnlisted.access.role).toBe("viewer");
+
+    await authed.mutation(api.roles.upsert, {
+      galleryId,
+      folderId: restrictedFolder.folderId,
+      profileId: viewer.profileId,
+      role: "viewer",
+    });
+    await expect(
+      viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: restrictedFolder.folderId,
+      }),
+    ).resolves.toMatchObject({ access: { role: "viewer" } });
+
+    await authed.mutation(api.galleries.setSystemPermission, {
+      galleryId,
+      principal: "anonymous",
+      role: "editor",
+    });
+    const editorRoot = await t.query(api.folders.list, {
+      anonymousClaim: anonymous.anonymousClaim,
+      galleryId,
+      folderId: rootFolderId,
+    });
+    expect(editorRoot.folders.map((folder) => folder._id)).toContain(
+      unlistedFolder.folderId,
+    );
+
+    await expect(
+      authed.mutation(api.folders.update, {
+        folderId: rootFolderId,
+        name: gallery!.name,
+        accessPolicy: "public",
+        discoverability: "listed",
+      }),
+    ).rejects.toThrow("Root access is controlled by gallery permissions");
   });
 
   test("folder previews inherit gallery settings and support render-seeded overrides", async () => {
@@ -1528,7 +1628,8 @@ describe("upgallery backend", () => {
       galleryId,
       parentId: gallery!.rootFolderId!,
       name: "Album",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     if (created.kind !== "complete") {
       throw new Error("Shared storage folder unexpectedly required I/O");
@@ -1584,7 +1685,8 @@ describe("upgallery backend", () => {
     await authed.mutation(api.folders.update, {
       folderId: created.folderId,
       name: "Album",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
       previewMode: "random",
     });
     const randomNames = new Set<string>();
@@ -1603,7 +1705,8 @@ describe("upgallery backend", () => {
     await authed.mutation(api.folders.update, {
       folderId: created.folderId,
       name: "Album",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     const reset = await authed.query(api.folders.list, {
       galleryId,
@@ -1776,7 +1879,8 @@ describe("upgallery backend", () => {
       galleryId,
       parentId: gallery!.rootFolderId!,
       name: "Retouched",
-      privacy: "unlisted",
+      accessPolicy: "public",
+      discoverability: "unlisted",
       previewMode: "random3",
     });
     expect(result.kind).toBe("filesystem");
@@ -1824,7 +1928,8 @@ describe("upgallery backend", () => {
     );
     expect(folder).toMatchObject({
       name: "Retouched",
-      privacy: "unlisted",
+      accessPolicy: "public",
+      discoverability: "unlisted",
       previewMode: "random3",
       filesystemIdentity: "2:20",
     });
@@ -1862,7 +1967,8 @@ describe("upgallery backend", () => {
         galleryId,
         parentId: rootFolderId,
         name: "Trips",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       });
       if (trips.kind !== "complete") {
         throw new Error("Shared gallery unexpectedly required filesystem I/O");
@@ -1871,7 +1977,8 @@ describe("upgallery backend", () => {
         galleryId,
         parentId: trips.folderId,
         name: "Japan",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       });
       if (japan.kind !== "complete") {
         throw new Error("Shared gallery unexpectedly required filesystem I/O");
@@ -1978,7 +2085,8 @@ describe("upgallery backend", () => {
           ancestorIds: [rootFolderId],
           name: "Shoots",
           slug: "shoots",
-          privacy: "public",
+          accessPolicy: "public",
+          discoverability: "listed",
           filesystemIdentity: "3:30",
         });
         await seedGalleryStats(ctx, galleryId, {
@@ -2733,7 +2841,8 @@ describe("upgallery backend", () => {
         ancestorIds: [],
         name: "Durable jobs",
         slug: "",
-        privacy: "public",
+        accessPolicy: "public",
+        discoverability: "listed",
       });
       await ctx.db.patch("galleries", galleryId, { rootFolderId: folderId });
       const entryId = await ctx.db.insert("entries", {
@@ -3113,7 +3222,8 @@ describe("upgallery backend", () => {
       galleryId: destinationGalleryId,
       parentId: destinationGallery!.rootFolderId!,
       name: "Chosen folder",
-      privacy: "public",
+      accessPolicy: "public",
+      discoverability: "listed",
     });
     if (destinationFolder.kind !== "complete") {
       throw new Error("Shared gallery unexpectedly required filesystem I/O");
@@ -3257,7 +3367,8 @@ describe("upgallery backend", () => {
           galleryId,
           parentId,
           name,
-          privacy: "public" as const,
+          accessPolicy: "public" as const,
+          discoverability: "listed" as const,
         });
         if (result.kind !== "complete") {
           throw new Error("Shared gallery unexpectedly required filesystem I/O");
@@ -3358,7 +3469,8 @@ describe("upgallery backend", () => {
             ancestorIds: [rootFolderId],
             name: "Shoots",
             slug: "shoots",
-            privacy: "public",
+            accessPolicy: "public",
+            discoverability: "listed",
             filesystemIdentity: "4:40",
           });
           const archiveId = await ctx.db.insert("folders", {
@@ -3367,7 +3479,8 @@ describe("upgallery backend", () => {
             ancestorIds: [rootFolderId],
             name: "Archive",
             slug: "archive",
-            privacy: "public",
+            accessPolicy: "public",
+            discoverability: "listed",
             filesystemIdentity: "4:41",
           });
           const entryId = await ctx.db.insert("entries", {

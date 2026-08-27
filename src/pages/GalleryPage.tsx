@@ -70,6 +70,12 @@ import { useUploader } from "../hooks/useUpload";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
+import {
+  folderAccessPolicyOf,
+  folderDiscoverabilityOf,
+  type FolderAccessPolicy,
+  type FolderDiscoverability,
+} from "../lib/folderAccess";
 import { anonymousClaim } from "../lib/authClient";
 import {
   isHeifImage,
@@ -458,7 +464,6 @@ export function GalleryPage(props: {
 
   const uploadDropped = async (dropped: DroppedFile[]) => {
     if (!listing?.access.canUpload) return;
-    const folderPrivacy = listing.folder.privacy;
     const ensureFolder = async (
       parentId: Id<"folders">,
       name: string,
@@ -468,7 +473,8 @@ export function GalleryPage(props: {
         galleryId: props.gallery._id,
         parentId,
         name,
-        privacy: folderPrivacy,
+        accessPolicy: "inherit",
+        discoverability: "listed",
         existingOk: true,
       });
       if (result.kind === "complete") return result.folderId;
@@ -1672,16 +1678,24 @@ export function GalleryPage(props: {
         <FolderForm
           title="New folder"
           initialName=""
-          initialPrivacy="public"
+          initialAccessPolicy="inherit"
+          initialDiscoverability="listed"
+          isRoot={false}
           initialPreviewMode={undefined}
           onClose={() => setFolderDialog(null)}
-          onSubmit={async (name, privacy, previewMode) => {
+          onSubmit={async (
+            name,
+            accessPolicy,
+            discoverability,
+            previewMode,
+          ) => {
             const result = await createFolder({
               anonymousClaim: anonymousClaim(),
               galleryId: props.gallery._id,
               parentId: folderId,
               name,
-              privacy,
+              accessPolicy,
+              discoverability,
               ...(previewMode === undefined ? {} : { previewMode }),
             });
             await completeFilesystemOperation(result);
@@ -1717,15 +1731,23 @@ export function GalleryPage(props: {
             </>
           }
           initialName={listing.folder.name}
-          initialPrivacy={listing.folder.privacy}
+          initialAccessPolicy={folderAccessPolicyOf(listing.folder)}
+          initialDiscoverability={folderDiscoverabilityOf(listing.folder)}
+          isRoot={listing.folder.parentId === undefined}
           initialPreviewMode={listing.folder.previewMode}
           onClose={() => setFolderDialog(null)}
-          onSubmit={async (name, privacy, previewMode) => {
+          onSubmit={async (
+            name,
+            accessPolicy,
+            discoverability,
+            previewMode,
+          ) => {
             const result = await updateFolder({
               anonymousClaim: anonymousClaim(),
               folderId,
               name,
-              privacy,
+              accessPolicy,
+              discoverability,
               ...(previewMode === undefined ? {} : { previewMode }),
             });
             await completeFilesystemOperation(result);
@@ -2022,8 +2044,11 @@ function GalleryFolderCard(props: {
     <>
       <FolderPreview preview={props.preview} />
       <span className={styles.folderName}>{props.folder.name}</span>
-      {props.folder.privacy !== "public" ? (
-        <small>{props.folder.privacy}</small>
+      {folderAccessPolicyOf(props.folder) !== "inherit" ? (
+        <small>{folderAccessPolicyOf(props.folder)}</small>
+      ) : null}
+      {folderDiscoverabilityOf(props.folder) === "unlisted" ? (
+        <small>unlisted</small>
       ) : null}
     </>
   );
@@ -2643,23 +2668,35 @@ function FolderForm(props: {
   title: string;
   headerExtra?: ReactNode;
   initialName: string;
-  initialPrivacy: "public" | "unlisted" | "private";
+  initialAccessPolicy: FolderAccessPolicy;
+  initialDiscoverability: FolderDiscoverability;
+  isRoot: boolean;
   initialPreviewMode?: FolderPreviewMode;
   onClose: () => void;
   onSubmit: (
     name: string,
-    privacy: "public" | "unlisted" | "private",
+    accessPolicy: FolderAccessPolicy,
+    discoverability: FolderDiscoverability,
     previewMode?: FolderPreviewMode,
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(props.initialName);
-  const [privacy, setPrivacy] = useState(props.initialPrivacy);
+  const [accessPolicy, setAccessPolicy] = useState(
+    props.initialAccessPolicy,
+  );
+  const [discoverability, setDiscoverability] = useState(
+    props.initialDiscoverability,
+  );
   const [previewMode, setPreviewMode] = useState<
     FolderPreviewMode | "inherit"
   >(props.initialPreviewMode ?? "inherit");
   const [error, setError] = useState<string | null>(null);
   return (
-    <Dialog title={props.title} headerExtra={props.headerExtra} onClose={props.onClose}>
+    <Dialog
+      title={props.title}
+      headerExtra={props.headerExtra}
+      onClose={props.onClose}
+    >
       <form
         className={layout.form}
         onSubmit={(event) => {
@@ -2667,7 +2704,8 @@ function FolderForm(props: {
           void props
             .onSubmit(
               name,
-              privacy,
+              props.isRoot ? "inherit" : accessPolicy,
+              props.isRoot ? "listed" : discoverability,
               previewMode === "inherit" ? undefined : previewMode,
             )
             .catch((reason: unknown) => {
@@ -2675,15 +2713,55 @@ function FolderForm(props: {
             });
         }}
       >
-        <label>Folder name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
-        <label>Privacy
-          <select value={privacy} onChange={(event) => setPrivacy(event.target.value as typeof privacy)}>
-            <option value="public">Public</option>
-            <option value="unlisted">Unlisted</option>
-            <option value="private">Private</option>
-          </select>
+        <label>
+          Folder name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+          />
         </label>
-        <label>Folder preview
+        {props.isRoot ? (
+          <p className={layout.notice}>
+            Root access is controlled by gallery permissions.
+          </p>
+        ) : (
+          <>
+            <label>
+              Access override
+              <select
+                value={accessPolicy}
+                onChange={(event) =>
+                  setAccessPolicy(event.target.value as FolderAccessPolicy)
+                }
+              >
+                <option value="inherit">Inherit parent access</option>
+                <option value="public">Public — everyone can view</option>
+                <option value="restricted">
+                  Restricted — explicit grants only
+                </option>
+              </select>
+            </label>
+            <label>
+              Discoverability
+              <select
+                value={discoverability}
+                onChange={(event) =>
+                  setDiscoverability(
+                    event.target.value as FolderDiscoverability,
+                  )
+                }
+              >
+                <option value="listed">Listed</option>
+                <option value="unlisted">
+                  Unlisted — hidden from viewers
+                </option>
+              </select>
+            </label>
+          </>
+        )}
+        <label>
+          Folder preview
           <select
             value={previewMode}
             onChange={(event) =>

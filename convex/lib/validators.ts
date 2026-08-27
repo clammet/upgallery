@@ -16,6 +16,17 @@ export const privacy = v.union(
   v.literal("private"),
 );
 
+export const folderAccessPolicy = v.union(
+  v.literal("inherit"),
+  v.literal("public"),
+  v.literal("restricted"),
+);
+
+export const folderDiscoverability = v.union(
+  v.literal("listed"),
+  v.literal("unlisted"),
+);
+
 export const galleryRole = v.union(
   v.literal("owner"),
   v.literal("editor"),

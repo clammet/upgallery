@@ -31,7 +31,8 @@ async function seedGalleryWithFolders(ctx: MutationCtx) {
     ancestorIds: [],
     name: "Stats",
     slug: "",
-    privacy: "public",
+    accessPolicy: "public",
+    discoverability: "listed",
   });
   const childId = await ctx.db.insert("folders", {
     galleryId,
@@ -39,7 +40,8 @@ async function seedGalleryWithFolders(ctx: MutationCtx) {
     ancestorIds: [rootId],
     name: "Child",
     slug: "child",
-    privacy: "public",
+    accessPolicy: "public",
+    discoverability: "listed",
   });
   await ctx.db.patch("galleries", galleryId, { rootFolderId: rootId });
   return { galleryId, rootId, childId };

@@ -25,7 +25,6 @@ import {
   diffGallerySettings,
   initialThemeJson,
   mibValue,
-  type Privacy,
   type SettingsSnapshot,
 } from "../lib/gallerySettings";
 import styles from "../styles/admin.module.css";
@@ -436,7 +435,6 @@ function GalleryAdmin(props: {
           key={gallery._id}
           gallery={gallery}
           hosts={details.hosts}
-          rootPrivacy={details.rootFolder?.privacy ?? "public"}
           isSystemAdmin={props.isSystemAdmin}
           setMessage={setMessage}
         />
@@ -577,7 +575,6 @@ type GalleryTheme = Doc<"galleries">["theme"];
 function GallerySettingsForm(props: {
   gallery: Doc<"galleries">;
   hosts: Array<Doc<"galleryHosts">>;
-  rootPrivacy: Privacy;
   isSystemAdmin: boolean;
   setMessage: (message: string | null) => void;
 }) {
@@ -596,7 +593,6 @@ function GallerySettingsForm(props: {
     maxFileSizeLimitMib: mibValue(
       gallery.maxFileSizeLimit ?? gallery.maxFileSize,
     ),
-    privacy: props.rootPrivacy,
     folderPreviewMode: gallery.folderPreviewMode ?? "first",
     quickMove: gallery.quickMove === true,
     infiniteScroll: gallery.infiniteScroll !== false,
@@ -633,7 +629,6 @@ function GallerySettingsForm(props: {
       maxFileSizeLimitMib: props.isSystemAdmin
         ? Number(data.get("maxFileSizeLimitMib"))
         : initial.maxFileSizeLimitMib,
-      privacy: data.get("privacy") as Privacy,
       folderPreviewMode:
         gallery.kind === "image"
           ? (data.get("folderPreviewMode") as FolderPreviewMode)
@@ -679,7 +674,6 @@ function GallerySettingsForm(props: {
       {props.isSystemAdmin ? (
         <label>Max size limit <small>(MiB)</small><input name="maxFileSizeLimitMib" type="number" min="0.1" max="10240" step="0.1" required defaultValue={initial.maxFileSizeLimitMib} /></label>
       ) : null}
-      <label>Privacy<select name="privacy" defaultValue={initial.privacy}><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
       <label>Density<select name="density" defaultValue={initialTheme.density ?? "compact"}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
       <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={initialTheme.thumbnailFrameSize ?? 218} /></label>
       {gallery.kind === "image" ? (

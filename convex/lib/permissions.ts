@@ -3,11 +3,22 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { googlyAuth } from "./auth";
 import { ensureCurrentProfile } from "./ensureProfile";
+import {
+  folderAccessPolicyOf,
+  folderDiscoverabilityOf,
+} from "./folderAccess";
 import { profileByIdentityId } from "./profiles";
 
 type ReadCtx = QueryCtx | MutationCtx;
 export type Role = "owner" | "editor" | "viewer";
 export type SystemRole = "none" | "editor" | "viewer";
+
+export type FolderAccessResolution = {
+  role: Role | null;
+  canView: boolean;
+  canUpload: boolean;
+  shouldList: boolean;
+};
 
 const roleRank: Record<Role, number> = {
   viewer: 1,
@@ -66,35 +77,103 @@ export async function getEffectiveRole(
   profile: Doc<"profiles"> | null,
   anonymousClaim?: string,
 ): Promise<Role | null> {
-  const gallery = await ctx.db.get("galleries", galleryId);
-  if (profile === null) {
-    if (!isValidAnonymousClaim(anonymousClaim)) {
-      return null;
-    }
-    return systemRole(gallery?.anonymousRole);
-  }
-  if (profile.isSystemAdmin) {
-    return "owner";
-  }
-  if (profile.isAnonymous) {
-    return systemRole(gallery?.anonymousRole);
-  }
-  const grants = await ctx.db
-    .query("galleryRoles")
-    .withIndex("by_galleryId_and_profileId", (q) =>
-      q.eq("galleryId", galleryId).eq("profileId", profile._id),
+  return (
+    await resolveFolderAccess(
+      ctx,
+      galleryId,
+      folder,
+      profile,
+      anonymousClaim,
     )
-    .take(128);
+  ).role;
+}
 
-  let best: Role | null = systemRole(gallery?.authenticatedRole);
-  for (const grant of grants) {
-    const applies =
-      grant.folderId === undefined ||
-      (folder !== null &&
-        (grant.folderId === folder._id ||
-          folder.ancestorIds.includes(grant.folderId)));
-    if (applies && (best === null || roleRank[grant.role] > roleRank[best])) {
-      best = grant.role;
+export async function resolveFolderAccess(
+  ctx: ReadCtx,
+  galleryId: Id<"galleries">,
+  folder: Doc<"folders"> | null,
+  profile: Doc<"profiles"> | null,
+  anonymousClaim?: string,
+): Promise<FolderAccessResolution> {
+  const gallery = await ctx.db.get("galleries", galleryId);
+  let system: Role | null = null;
+  let granted: Role | null = null;
+
+  if (profile === null) {
+    if (isValidAnonymousClaim(anonymousClaim)) {
+      system = systemRole(gallery?.anonymousRole);
+    }
+  } else if (profile.isSystemAdmin) {
+    granted = "owner";
+  } else if (profile.isAnonymous) {
+    system = systemRole(gallery?.anonymousRole);
+  } else {
+    system = systemRole(gallery?.authenticatedRole);
+    const grants = await ctx.db
+      .query("galleryRoles")
+      .withIndex("by_galleryId_and_profileId", (q) =>
+        q.eq("galleryId", galleryId).eq("profileId", profile._id),
+      )
+      .take(128);
+
+    for (const grant of grants) {
+      const applies =
+        grant.folderId === undefined ||
+        (folder !== null &&
+          (grant.folderId === folder._id ||
+            folder.ancestorIds.includes(grant.folderId)));
+      if (
+        applies &&
+        (granted === null || roleRank[grant.role] > roleRank[granted])
+      ) {
+        granted = grant.role;
+      }
+    }
+  }
+
+  const accessPolicy = await effectiveFolderAccessPolicy(ctx, folder);
+  const discoverability =
+    folder === null ? "listed" : folderDiscoverabilityOf(folder);
+  const inheritedSystem = accessPolicy === "restricted" ? null : system;
+  const publicFloor: Role | null =
+    accessPolicy === "public" ? "viewer" : null;
+  const role = maxRole(granted, inheritedSystem, publicFloor);
+
+  return {
+    role,
+    canView: roleAtLeast(role, "viewer"),
+    canUpload: roleAtLeast(role, "editor"),
+    shouldList:
+      discoverability === "listed" ||
+      roleAtLeast(role, "editor"),
+  };
+}
+
+async function effectiveFolderAccessPolicy(
+  ctx: ReadCtx,
+  folder: Doc<"folders"> | null,
+): Promise<"inherit" | "public" | "restricted"> {
+  if (folder === null) return "inherit";
+  const ownPolicy = folderAccessPolicyOf(folder);
+  if (ownPolicy !== "inherit") return ownPolicy;
+
+  const ancestors = await Promise.all(
+    folder.ancestorIds.map((ancestorId) => ctx.db.get("folders", ancestorId)),
+  );
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const ancestor = ancestors[index];
+    if (ancestor === null || ancestor.galleryId !== folder.galleryId) continue;
+    const policy = folderAccessPolicyOf(ancestor);
+    if (policy !== "inherit") return policy;
+  }
+  return "inherit";
+}
+
+function maxRole(...roles: Array<Role | null>): Role | null {
+  let best: Role | null = null;
+  for (const role of roles) {
+    if (role !== null && (best === null || roleRank[role] > roleRank[best])) {
+      best = role;
     }
   }
   return best;
@@ -118,17 +197,14 @@ export async function canViewFolder(
   profile: Doc<"profiles"> | null,
   anonymousClaim?: string,
 ): Promise<boolean> {
-  if (folder.privacy === "public" || folder.privacy === "unlisted") {
-    return true;
-  }
-  const role = await getEffectiveRole(
+  const access = await resolveFolderAccess(
     ctx,
     folder.galleryId,
     folder,
     profile,
     anonymousClaim,
   );
-  return roleAtLeast(role, "viewer");
+  return access.canView;
 }
 
 export async function shouldListFolder(
@@ -137,17 +213,14 @@ export async function shouldListFolder(
   profile: Doc<"profiles"> | null,
   anonymousClaim?: string,
 ): Promise<boolean> {
-  if (folder.privacy === "public") {
-    return true;
-  }
-  const role = await getEffectiveRole(
+  const access = await resolveFolderAccess(
     ctx,
     folder.galleryId,
     folder,
     profile,
     anonymousClaim,
   );
-  return roleAtLeast(role, "viewer");
+  return access.shouldList && access.canView;
 }
 
 // Select mode, bulk move, and bulk delete are owner tools. The gallery-level

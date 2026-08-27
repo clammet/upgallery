@@ -17,6 +17,7 @@ import {
   getFilesystemFolderSegments,
   getFilesystemStorageKey,
 } from "./lib/filesystem";
+import { accessFieldsFromLegacyPrivacy } from "./lib/folderAccess";
 import {
   replaceMediaProcessingJob,
   STORAGE_JOB_LEASE_MS,
@@ -274,7 +275,8 @@ export const reconcileFilesystemDirectory = internalMutation({
       ancestorIds: [...parent.ancestorIds, parent._id],
       name,
       slug: filesystemSlug(name),
-      privacy: "public",
+      accessPolicy: "inherit",
+      discoverability: "listed",
       filesystemIdentity: args.identity,
       filesystemSyncId: args.syncId,
     });
@@ -967,6 +969,13 @@ export const completeFilesystemOperation = internalMutation({
     if (gallery === null || parent === null) {
       throw new Error("Filesystem operation target no longer exists");
     }
+    const legacyAccess = accessFieldsFromLegacyPrivacy(
+      operation.parentId,
+      operation.privacy,
+    );
+    const accessPolicy = operation.accessPolicy ?? legacyAccess.accessPolicy;
+    const discoverability =
+      operation.discoverability ?? legacyAccess.discoverability;
     let folderId = operation.folderId;
     if (operation.kind === "fileRename") {
       if (operation.entryId === undefined || args.modifiedAt === undefined) {
@@ -1023,7 +1032,8 @@ export const completeFilesystemOperation = internalMutation({
       if (existing !== undefined) {
         folderId = existing._id;
         await ctx.db.patch("folders", existing._id, {
-          privacy: operation.privacy,
+          accessPolicy,
+          discoverability,
           previewMode: operation.previewMode,
           filesystemIdentity: args.identity,
           filesystemMissingAt: undefined,
@@ -1035,7 +1045,8 @@ export const completeFilesystemOperation = internalMutation({
           ancestorIds: [...parent.ancestorIds, parent._id],
           name: operation.name,
           slug: filesystemSlug(operation.name),
-          privacy: operation.privacy,
+          accessPolicy,
+          discoverability,
           previewMode: operation.previewMode,
           filesystemIdentity: args.identity,
         });
@@ -1087,7 +1098,8 @@ export const completeFilesystemOperation = internalMutation({
       await ctx.db.patch("folders", folderId, {
         name: operation.name,
         slug: filesystemSlug(operation.name),
-        privacy: operation.privacy,
+        accessPolicy,
+        discoverability,
         previewMode: operation.previewMode,
         filesystemIdentity: args.identity,
         filesystemMissingAt: undefined,

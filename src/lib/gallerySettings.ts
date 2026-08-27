@@ -5,7 +5,6 @@
 import { THEME_MODE_DEFAULTS, type ThemeMode } from "./theme";
 
 export type FolderPreviewMode = "first" | "random" | "first3" | "random3";
-export type Privacy = "public" | "unlisted" | "private";
 
 export type GalleryTheme = {
   accent?: string;
@@ -43,7 +42,6 @@ export type SettingsSnapshot = {
   name: string;
   maxFileSizeMib: number;
   maxFileSizeLimitMib: number;
-  privacy: Privacy;
   folderPreviewMode: FolderPreviewMode;
   quickMove: boolean;
   infiniteScroll: boolean;
@@ -56,7 +54,6 @@ export type GallerySettingsUpdate = {
   name?: string;
   maxFileSize?: number;
   maxFileSizeLimit?: number;
-  privacy?: Privacy;
   folderPreviewMode?: FolderPreviewMode;
   quickMove?: boolean;
   infiniteScroll?: boolean;
@@ -142,9 +139,6 @@ export function diffGallerySettings(
             current.maxFileSizeLimitMib * 1024 * 1024,
           ),
         }),
-    ...(current.privacy === initial.privacy
-      ? {}
-      : { privacy: current.privacy }),
     ...(current.folderPreviewMode === initial.folderPreviewMode
       ? {}
       : { folderPreviewMode: current.folderPreviewMode }),

@@ -1,7 +1,11 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { folderPreviewMode, privacy } from "./lib/validators";
+import {
+  folderAccessPolicy,
+  folderDiscoverability,
+  folderPreviewMode,
+} from "./lib/validators";
 import type { Id } from "./_generated/dataModel";
 import {
   getFilesystemFolderSegments,
@@ -15,14 +19,18 @@ import {
 import { createToken, sha256 } from "./lib/crypto";
 import { createFolderStats } from "./lib/folderStats";
 import {
+  folderAccessPolicyOf,
+  folderDiscoverabilityOf,
+} from "./lib/folderAccess";
+import {
   assertCanManageGallery,
   canManageGallery,
-  canViewFolder,
   getCurrentProfile,
   getEffectiveRole,
   isOwningProfile,
   requireGalleryManager,
   requireGalleryRole,
+  resolveFolderAccess,
   roleAtLeast,
   shouldListFolder,
 } from "./lib/permissions";
@@ -69,16 +77,17 @@ export const list = query({
       throw new Error("Folder not found");
     }
     const profile = await getCurrentProfile(ctx, args.anonymousClaim);
-    if (!(await canViewFolder(ctx, folder, profile, args.anonymousClaim))) {
-      throw new Error("Unauthorized");
-    }
-    const role = await getEffectiveRole(
+    const folderAccess = await resolveFolderAccess(
       ctx,
       gallery._id,
       folder,
       profile,
       args.anonymousClaim,
     );
+    if (!folderAccess.canView) {
+      throw new Error("Unauthorized");
+    }
+    const role = folderAccess.role;
     const filesystemSync =
       gallery.storageKind === "user"
         ? await readFilesystemSyncStatus(ctx, folder._id)
@@ -292,7 +301,8 @@ export const create = mutation({
     galleryId: v.id("galleries"),
     parentId: v.id("folders"),
     name: v.string(),
-    privacy,
+    accessPolicy: folderAccessPolicy,
+    discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
     existingOk: v.optional(v.boolean()),
   },
@@ -349,7 +359,8 @@ export const create = mutation({
         actorProfileId: actor._id,
         kind: "mkdir",
         name,
-        privacy: args.privacy,
+        accessPolicy: args.accessPolicy,
+        discoverability: args.discoverability,
         previewMode: args.previewMode,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
@@ -368,7 +379,8 @@ export const create = mutation({
       ancestorIds: [...parent.ancestorIds, parent._id],
       name,
       slug,
-      privacy: args.privacy,
+      accessPolicy: args.accessPolicy,
+      discoverability: args.discoverability,
       previewMode: args.previewMode,
     });
     await createFolderStats(ctx, folderId, gallery._id);
@@ -445,7 +457,8 @@ export const removeMany = mutation({
           actorProfileId: actor._id,
           kind: "rmdir",
           name: cleanFilesystemSegment(folder.name),
-          privacy: folder.privacy,
+          accessPolicy: folderAccessPolicyOf(folder),
+          discoverability: folderDiscoverabilityOf(folder),
           previewMode: folder.previewMode,
           tokenHash: await sha256(token),
           expiresAt: now + 15 * 60 * 1000,
@@ -642,7 +655,8 @@ export const moveMany = mutation({
           actorProfileId: actor._id,
           kind: "move",
           name: folder.name,
-          privacy: folder.privacy,
+          accessPolicy: folderAccessPolicyOf(folder),
+          discoverability: folderDiscoverabilityOf(folder),
           previewMode: folder.previewMode,
           tokenHash: await sha256(token),
           expiresAt: now + 15 * 60 * 1000,
@@ -777,7 +791,8 @@ export const update = mutation({
     anonymousClaim: v.optional(v.string()),
     folderId: v.id("folders"),
     name: v.string(),
-    privacy,
+    accessPolicy: folderAccessPolicy,
+    discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
   },
   handler: async (ctx, args) => {
@@ -800,11 +815,11 @@ export const update = mutation({
       if (args.name.trim() !== folder.name) {
         throw new Error("Rename the root folder from gallery settings");
       }
-      if (!actor.isSystemAdmin) {
-        const role = await getEffectiveRole(ctx, gallery._id, folder, actor);
-        if (!roleAtLeast(role, "owner")) {
-          throw new Error("Only a gallery owner can change root privacy");
-        }
+      if (
+        args.accessPolicy !== "inherit" ||
+        args.discoverability !== "listed"
+      ) {
+        throw new Error("Root access is controlled by gallery permissions");
       }
     }
     const name = args.name.trim();
@@ -839,7 +854,8 @@ export const update = mutation({
         actorProfileId: actor._id,
         kind: "rename",
         name,
-        privacy: args.privacy,
+        accessPolicy: args.accessPolicy,
+        discoverability: args.discoverability,
         previewMode: args.previewMode,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
@@ -855,7 +871,8 @@ export const update = mutation({
     await ctx.db.patch("folders", folder._id, {
       name,
       slug,
-      privacy: args.privacy,
+      accessPolicy: args.accessPolicy,
+      discoverability: args.discoverability,
       previewMode: args.previewMode,
     });
     await ctx.db.insert("auditEvents", {
