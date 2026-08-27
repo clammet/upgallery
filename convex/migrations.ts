@@ -1,51 +1,8 @@
-import { Migrations } from "@convex-dev/migrations";
-import { components, internal } from "./_generated/api";
 import { mutation } from "./_generated/server";
 import { v } from "convex/values";
-import schema from "./schema";
-import { accessFieldsFromLegacyPrivacy } from "./lib/folderAccess";
 import { storageKind } from "./lib/validators";
 import { normalizeStorageRoot } from "./lib/normalize";
 import { requireSystemAdmin } from "./lib/permissions";
-
-const dataMigrations = new Migrations(components.migrations, { schema });
-
-export const migrateFolderAccess = dataMigrations.define({
-  table: "folders",
-  migrateOne: (_ctx, folder) => {
-    const legacyAccess = accessFieldsFromLegacyPrivacy(
-      folder.parentId,
-      folder.privacy,
-    );
-    return {
-      accessPolicy: folder.accessPolicy ?? legacyAccess.accessPolicy,
-      discoverability:
-        folder.discoverability ?? legacyAccess.discoverability,
-      privacy: undefined,
-    };
-  },
-});
-
-export const migrateFilesystemOperationAccess = dataMigrations.define({
-  table: "filesystemOperations",
-  migrateOne: (_ctx, operation) => {
-    const legacyAccess = accessFieldsFromLegacyPrivacy(
-      operation.parentId,
-      operation.privacy,
-    );
-    return {
-      accessPolicy: operation.accessPolicy ?? legacyAccess.accessPolicy,
-      discoverability:
-        operation.discoverability ?? legacyAccess.discoverability,
-      privacy: undefined,
-    };
-  },
-});
-
-export const runFolderAccessMigration = dataMigrations.runner([
-  internal.migrations.migrateFolderAccess,
-  internal.migrations.migrateFilesystemOperationAccess,
-]);
 
 export const request = mutation({
   args: {

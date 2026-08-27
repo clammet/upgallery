@@ -114,5 +114,4 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   googlyAuth: import("@clammet/convex-googly-auth/_generated/component.js").ComponentApi<"googlyAuth">;
-  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
 };

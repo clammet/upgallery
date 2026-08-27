@@ -11,9 +11,6 @@ importers:
       '@clammet/convex-googly-auth':
         specifier: 0.1.0
         version: 0.1.0(convex@1.45.0(react@19.2.8))(react@19.2.8)
-      '@convex-dev/migrations':
-        specifier: 0.3.6
-        version: 0.3.6(convex-helpers@0.1.123(@standard-schema/spec@1.1.0)(convex@1.45.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2))(convex@1.45.0(react@19.2.8))
       busboy:
         specifier: 1.6.0
         version: 1.6.0
@@ -130,12 +127,6 @@ packages:
     peerDependencies:
       convex: ^1.43.0
       react: ^18.3.1 || ^19.0.0
-
-  '@convex-dev/migrations@0.3.6':
-    resolution: {integrity: sha512-cURYG4uy323MDi55QWNF5HAGemS4QspSgJ4uP+gGPAJdBLBbk2KFO7toFlKhacc1NinJQiG6+D/YEFyFyBS1/A==}
-    peerDependencies:
-      convex: ^1.42.0
-      convex-helpers: ^0.1.115
 
   '@edge-runtime/primitives@6.0.0':
     resolution: {integrity: sha512-FqoxaBT+prPBHBwE1WXS1ocnu/VLTQyZ6NMUBAdbP7N2hsFTTxMC/jMu2D/8GAlMQfxeuppcPuCUk/HO3fpIvA==}
@@ -2186,11 +2177,6 @@ snapshots:
     dependencies:
       convex: 1.45.0(react@19.2.8)
       react: 19.2.8
-
-  '@convex-dev/migrations@0.3.6(convex-helpers@0.1.123(@standard-schema/spec@1.1.0)(convex@1.45.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2))(convex@1.45.0(react@19.2.8))':
-    dependencies:
-      convex: 1.45.0(react@19.2.8)
-      convex-helpers: 0.1.123(@standard-schema/spec@1.1.0)(convex@1.45.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2)
 
   '@edge-runtime/primitives@6.0.0': {}
 

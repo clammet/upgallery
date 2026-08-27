@@ -1,7 +1,6 @@
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
 import googlyAuth from "@clammet/convex-googly-auth/convex.config.js";
-import migrations from "@convex-dev/migrations/convex.config.js";
 
 const app = defineApp({
   env: {
@@ -14,6 +13,5 @@ const app = defineApp({
 });
 
 app.use(googlyAuth);
-app.use(migrations);
 
 export default app;

@@ -17,7 +17,6 @@ import {
   getFilesystemFolderSegments,
   getFilesystemStorageKey,
 } from "./lib/filesystem";
-import { accessFieldsFromLegacyPrivacy } from "./lib/folderAccess";
 import {
   replaceMediaProcessingJob,
   STORAGE_JOB_LEASE_MS,
@@ -969,13 +968,7 @@ export const completeFilesystemOperation = internalMutation({
     if (gallery === null || parent === null) {
       throw new Error("Filesystem operation target no longer exists");
     }
-    const legacyAccess = accessFieldsFromLegacyPrivacy(
-      operation.parentId,
-      operation.privacy,
-    );
-    const accessPolicy = operation.accessPolicy ?? legacyAccess.accessPolicy;
-    const discoverability =
-      operation.discoverability ?? legacyAccess.discoverability;
+    const { accessPolicy, discoverability } = operation;
     let folderId = operation.folderId;
     if (operation.kind === "fileRename") {
       if (operation.entryId === undefined || args.modifiedAt === undefined) {

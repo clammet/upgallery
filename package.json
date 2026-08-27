@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "@clammet/convex-googly-auth": "0.1.0",
-    "@convex-dev/migrations": "0.3.6",
     "busboy": "1.6.0",
     "convex": "1.45.0",
     "convex-helpers": "0.1.123",

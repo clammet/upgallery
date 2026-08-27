@@ -10,12 +10,6 @@ export const storageKind = v.union(
   v.literal("user"),
 );
 
-export const privacy = v.union(
-  v.literal("public"),
-  v.literal("unlisted"),
-  v.literal("private"),
-);
-
 export const folderAccessPolicy = v.union(
   v.literal("inherit"),
   v.literal("public"),
