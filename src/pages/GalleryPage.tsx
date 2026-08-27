@@ -70,12 +70,6 @@ import { useUploader } from "../hooks/useUpload";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
-import {
-  folderAccessPolicyOf,
-  folderDiscoverabilityOf,
-  type FolderAccessPolicy,
-  type FolderDiscoverability,
-} from "../lib/folderAccess";
 import { anonymousClaim } from "../lib/authClient";
 import {
   isHeifImage,
@@ -147,6 +141,8 @@ function paginationLabel(input: {
 }
 
 type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+type FolderAccessPolicy = Doc<"folders">["accessPolicy"];
+type FolderDiscoverability = Doc<"folders">["discoverability"];
 
 type FolderPreviewData = {
   folderId: Id<"folders">;
@@ -1731,8 +1727,8 @@ export function GalleryPage(props: {
             </>
           }
           initialName={listing.folder.name}
-          initialAccessPolicy={folderAccessPolicyOf(listing.folder)}
-          initialDiscoverability={folderDiscoverabilityOf(listing.folder)}
+          initialAccessPolicy={listing.folder.accessPolicy}
+          initialDiscoverability={listing.folder.discoverability}
           isRoot={listing.folder.parentId === undefined}
           initialPreviewMode={listing.folder.previewMode}
           onClose={() => setFolderDialog(null)}
@@ -2044,10 +2040,10 @@ function GalleryFolderCard(props: {
     <>
       <FolderPreview preview={props.preview} />
       <span className={styles.folderName}>{props.folder.name}</span>
-      {folderAccessPolicyOf(props.folder) !== "inherit" ? (
-        <small>{folderAccessPolicyOf(props.folder)}</small>
+      {props.folder.accessPolicy !== "inherit" ? (
+        <small>{props.folder.accessPolicy}</small>
       ) : null}
-      {folderDiscoverabilityOf(props.folder) === "unlisted" ? (
+      {props.folder.discoverability === "unlisted" ? (
         <small>unlisted</small>
       ) : null}
     </>

@@ -19,10 +19,6 @@ import {
 import { createToken, sha256 } from "./lib/crypto";
 import { createFolderStats } from "./lib/folderStats";
 import {
-  folderAccessPolicyOf,
-  folderDiscoverabilityOf,
-} from "./lib/folderAccess";
-import {
   assertCanManageGallery,
   canManageGallery,
   getCurrentProfile,
@@ -337,14 +333,13 @@ export const create = mutation({
       throw new Error("Folder name must contain between 1 and 120 characters");
     }
     const slug = normalizeSlug(name);
-    const siblings = await ctx.db
+    const existing = await ctx.db
       .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q.eq("galleryId", gallery._id).eq("parentId", parent._id),
+      .withIndex("by_galleryId_and_parentId_and_slug", (q) =>
+        q.eq("galleryId", gallery._id).eq("parentId", parent._id).eq("slug", slug),
       )
-      .take(256);
-    const existing = siblings.find((sibling) => sibling.slug === slug);
-    if (existing !== undefined) {
+      .first();
+    if (existing !== null) {
       if (args.existingOk === true) {
         return { kind: "complete" as const, folderId: existing._id };
       }
@@ -457,9 +452,6 @@ export const removeMany = mutation({
           actorProfileId: actor._id,
           kind: "rmdir",
           name: cleanFilesystemSegment(folder.name),
-          accessPolicy: folderAccessPolicyOf(folder),
-          discoverability: folderDiscoverabilityOf(folder),
-          previewMode: folder.previewMode,
           tokenHash: await sha256(token),
           expiresAt: now + 15 * 60 * 1000,
           state: "pending",
@@ -571,31 +563,48 @@ export const moveMany = mutation({
       return { kind: "complete" as const, moved: 0 };
     }
 
-    const siblings = await ctx.db
-      .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q.eq("galleryId", gallery._id).eq("parentId", destination._id),
-      )
-      .take(512);
+    // Exact index probes per moved folder; several matches can share one slug
+    // only through tombstoned leftovers, so a small take is exhaustive.
     const movingIds = new Set(movingFolders.map((folder) => folder._id));
-    const reserved = siblings.filter(
-      (sibling) =>
-        !movingIds.has(sibling._id) &&
-        sibling.filesystemMissingAt === undefined,
-    );
-    const reservedSlugs = new Set(reserved.map((sibling) => sibling.slug));
-    const reservedNames = new Set(reserved.map((sibling) => sibling.name));
+    const incomingSlugs = new Set<string>();
+    const incomingNames = new Set<string>();
     for (const folder of movingFolders) {
-      if (
-        reservedSlugs.has(folder.slug) ||
-        (gallery.storageKind === "user" && reservedNames.has(folder.name))
-      ) {
+      const bySlug = await ctx.db
+        .query("folders")
+        .withIndex("by_galleryId_and_parentId_and_slug", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", destination._id)
+            .eq("slug", folder.slug),
+        )
+        .take(16);
+      const byName =
+        gallery.storageKind === "user"
+          ? await ctx.db
+              .query("folders")
+              .withIndex("by_galleryId_and_parentId_and_name", (q) =>
+                q
+                  .eq("galleryId", gallery._id)
+                  .eq("parentId", destination._id)
+                  .eq("name", folder.name),
+              )
+              .take(16)
+          : [];
+      const conflict =
+        incomingSlugs.has(folder.slug) ||
+        (gallery.storageKind === "user" && incomingNames.has(folder.name)) ||
+        [...bySlug, ...byName].some(
+          (sibling) =>
+            !movingIds.has(sibling._id) &&
+            sibling.filesystemMissingAt === undefined,
+        );
+      if (conflict) {
         throw new Error(
           `A folder named ${folder.name} already exists in the destination`,
         );
       }
-      reservedSlugs.add(folder.slug);
-      reservedNames.add(folder.name);
+      incomingSlugs.add(folder.slug);
+      incomingNames.add(folder.name);
     }
 
     // The moved folder's subtree must still fit inside MAX_FOLDER_DEPTH at
@@ -655,9 +664,6 @@ export const moveMany = mutation({
           actorProfileId: actor._id,
           kind: "move",
           name: folder.name,
-          accessPolicy: folderAccessPolicyOf(folder),
-          discoverability: folderDiscoverabilityOf(folder),
-          previewMode: folder.previewMode,
           tokenHash: await sha256(token),
           expiresAt: now + 15 * 60 * 1000,
           state: "pending",
@@ -811,7 +817,9 @@ export const update = mutation({
       "editor",
       args.anonymousClaim,
     );
-    if (gallery.rootFolderId === folder._id) {
+    const isRoot =
+      gallery.rootFolderId === folder._id || folder.parentId === undefined;
+    if (isRoot) {
       if (args.name.trim() !== folder.name) {
         throw new Error("Rename the root folder from gallery settings");
       }
@@ -823,29 +831,32 @@ export const update = mutation({
       }
     }
     const name = args.name.trim();
-    const slug =
-      gallery.rootFolderId === folder._id ? "" : normalizeSlug(args.name);
-    if (gallery.rootFolderId !== folder._id) {
-      const siblings = await ctx.db
+    const slug = isRoot ? "" : normalizeSlug(args.name);
+    if (!isRoot) {
+      const conflicts = await ctx.db
         .query("folders")
-        .withIndex("by_galleryId_and_parentId", (q) =>
-          q.eq("galleryId", gallery._id).eq("parentId", folder.parentId),
+        .withIndex("by_galleryId_and_parentId_and_slug", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", folder.parentId)
+            .eq("slug", slug),
         )
-        .take(256);
-      if (
-        siblings.some(
-          (sibling) => sibling._id !== folder._id && sibling.slug === slug,
-        )
-      ) {
+        .take(2);
+      if (conflicts.some((sibling) => sibling._id !== folder._id)) {
         throw new Error("A folder with that name already exists here");
       }
     }
-    if (
-      gallery.storageKind === "user" &&
-      gallery.rootFolderId !== folder._id &&
-      name !== folder.name
-    ) {
+    if (gallery.storageKind === "user" && !isRoot && name !== folder.name) {
       cleanFilesystemSegment(name);
+      // Access settings live only in Convex, so they apply immediately; the
+      // pending operation carries just the rename. Its completion must not
+      // write settings back, or it would revert an edit made while the
+      // filesystem worker held the operation.
+      await ctx.db.patch("folders", folder._id, {
+        accessPolicy: args.accessPolicy,
+        discoverability: args.discoverability,
+        previewMode: args.previewMode,
+      });
       const token = createToken();
       const operationId = await ctx.db.insert("filesystemOperations", {
         galleryId: gallery._id,
@@ -854,9 +865,6 @@ export const update = mutation({
         actorProfileId: actor._id,
         kind: "rename",
         name,
-        accessPolicy: args.accessPolicy,
-        discoverability: args.discoverability,
-        previewMode: args.previewMode,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
         state: "pending",

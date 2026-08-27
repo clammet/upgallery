@@ -29,10 +29,6 @@ import {
   resolveLandingName,
 } from "./lib/entryNames";
 import {
-  folderAccessPolicyOf,
-  folderDiscoverabilityOf,
-} from "./lib/folderAccess";
-import {
   createPasswordHash,
   createToken,
   sha256,
@@ -949,8 +945,6 @@ export const rename = mutation({
         actorProfileId: actor._id,
         kind: "fileRename",
         name,
-        accessPolicy: folderAccessPolicyOf(folder),
-        discoverability: folderDiscoverabilityOf(folder),
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
         state: "pending",

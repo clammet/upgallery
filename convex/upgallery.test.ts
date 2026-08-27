@@ -1935,6 +1935,73 @@ describe("upgallery backend", () => {
     });
   });
 
+  test("settings edited while a folder rename is pending survive completion", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const authed = asUser(t, admin.googleSubject, "admin@example.com");
+    const galleryId = await authed.mutation(api.galleries.create, {
+      name: "Rename race gallery",
+      slug: "rename-race-gallery",
+      kind: "image",
+      storageKind: "user",
+      storageRoot: "rename-race",
+      hosts: [{ host: "rename-race.example.com", rootPath: "/" }],
+    });
+    const folderId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      const rootFolderId = gallery!.rootFolderId!;
+      return await ctx.db.insert("folders", {
+        galleryId,
+        parentId: rootFolderId,
+        ancestorIds: [rootFolderId],
+        name: "Shoots",
+        slug: "shoots",
+        accessPolicy: "public",
+        discoverability: "listed",
+      });
+    });
+
+    const rename = await authed.mutation(api.folders.update, {
+      folderId,
+      name: "Shoots 2024",
+      accessPolicy: "public",
+      discoverability: "listed",
+    });
+    expect(rename.kind).toBe("filesystem");
+    if (rename.kind !== "filesystem") {
+      throw new Error("Expected a filesystem operation");
+    }
+    // The stored name stays "Shoots" until the worker completes, so this
+    // second edit takes the direct-patch path while the rename is pending.
+    await authed.mutation(api.folders.update, {
+      folderId,
+      name: "Shoots",
+      accessPolicy: "restricted",
+      discoverability: "unlisted",
+    });
+
+    await t.mutation(internal.filesystemSync.claimFilesystemOperation, {
+      operationId: rename.operationId,
+      token: rename.token,
+    });
+    await t.mutation(internal.filesystemSync.completeFilesystemOperation, {
+      operationId: rename.operationId,
+      identity: "9:9",
+    });
+    const folder = await t.run(async (ctx) =>
+      ctx.db.get("folders", folderId),
+    );
+    expect(folder).toMatchObject({
+      name: "Shoots 2024",
+      accessPolicy: "restricted",
+      discoverability: "unlisted",
+      filesystemIdentity: "9:9",
+    });
+  });
+
   test("gallery owners can bulk delete folders with their contents", async () => {
     vi.useFakeTimers();
     try {
@@ -2841,7 +2908,7 @@ describe("upgallery backend", () => {
         ancestorIds: [],
         name: "Durable jobs",
         slug: "",
-        accessPolicy: "public",
+        accessPolicy: "inherit",
         discoverability: "listed",
       });
       await ctx.db.patch("galleries", galleryId, { rootFolderId: folderId });

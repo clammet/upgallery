@@ -5,7 +5,7 @@ One deployment can serve many galleries on different domains and path roots.
 
 The implementation is split deliberately:
 
-- Convex stores gallery metadata, users, roles, folder privacy, counters,
+- Convex stores gallery metadata, users, roles, folder access policies, counters,
   upload intents, download tickets, and storage jobs.
 - The Node storage API streams shared/protected files to hash-sharded mounts
   and stores every generated thumbnail and preview in a central derivative

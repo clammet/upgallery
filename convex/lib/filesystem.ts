@@ -12,12 +12,13 @@ export async function getFilesystemFolderSegments(
   if (gallery.rootFolderId === undefined) {
     throw new Error("Gallery root folder is not configured");
   }
+  const ancestors = await Promise.all(
+    folder.ancestorIds
+      .filter((ancestorId) => ancestorId !== gallery.rootFolderId)
+      .map((ancestorId) => ctx.db.get("folders", ancestorId)),
+  );
   const segments: string[] = [];
-  for (const ancestorId of folder.ancestorIds) {
-    if (ancestorId === gallery.rootFolderId) {
-      continue;
-    }
-    const ancestor = await ctx.db.get("folders", ancestorId);
+  for (const ancestor of ancestors) {
     if (ancestor === null || ancestor.galleryId !== gallery._id) {
       throw new Error("Folder ancestry is invalid");
     }

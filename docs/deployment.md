@@ -64,8 +64,10 @@ storage API. A storage worker claims that job with a renewable lease and:
 3. Otherwise, lists that directory, ignoring symlinks and in-progress
    application upload files, then walks its subdirectories.
 4. Adds or updates child folders and files in small Convex mutations. New
-   filesystem folders default to public privacy; an existing folder keeps its
-   privacy and grants.
+   filesystem folders are created with inherited access (`accessPolicy:
+   "inherit"`, listed), so they resolve against their parent chain and the
+   gallery's anonymous/authenticated roles; an existing folder keeps its
+   access settings and grants.
 5. Compares each file's name, size, modification time, and filesystem identity
    with its indexed entry. Unchanged files are marked as seen without reading
    their contents. New or changed files are hashed and indexed, then a separate

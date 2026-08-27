@@ -119,6 +119,16 @@ export default defineSchema({
     filesystemMissingAt: v.optional(v.number()),
   })
     .index("by_galleryId_and_parentId", ["galleryId", "parentId"])
+    .index("by_galleryId_and_parentId_and_name", [
+      "galleryId",
+      "parentId",
+      "name",
+    ])
+    .index("by_galleryId_and_parentId_and_slug", [
+      "galleryId",
+      "parentId",
+      "slug",
+    ])
     .index("by_galleryId", ["galleryId"]),
 
   galleryRoles: defineTable({
@@ -129,6 +139,7 @@ export default defineSchema({
   })
     .index("by_galleryId_and_profileId", ["galleryId", "profileId"])
     .index("by_galleryId_and_folderId", ["galleryId", "folderId"])
+    .index("by_galleryId_and_role", ["galleryId", "role"])
     .index("by_profileId", ["profileId"]),
 
   entries: defineTable({
@@ -241,8 +252,12 @@ export default defineSchema({
       v.literal("move"),
     ),
     name: v.string(),
-    accessPolicy: folderAccessPolicy,
-    discoverability: folderDiscoverability,
+    // Settings for the folder a mkdir operation creates on completion. Only
+    // mkdir carries them: every other kind targets an existing folder whose
+    // settings are edited directly, so a snapshot here would go stale while
+    // the operation is pending.
+    accessPolicy: v.optional(folderAccessPolicy),
+    discoverability: v.optional(folderDiscoverability),
     previewMode: v.optional(folderPreviewMode),
     tokenHash: v.string(),
     expiresAt: v.number(),

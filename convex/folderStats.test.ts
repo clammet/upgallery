@@ -31,7 +31,7 @@ async function seedGalleryWithFolders(ctx: MutationCtx) {
     ancestorIds: [],
     name: "Stats",
     slug: "",
-    accessPolicy: "public",
+    accessPolicy: "inherit",
     discoverability: "listed",
   });
   const childId = await ctx.db.insert("folders", {

@@ -484,15 +484,13 @@ export const reconcileFilesystemFile = internalMutation({
       return existing._id;
     }
 
-    const ownerGrant = (
-      await ctx.db
-        .query("galleryRoles")
-        .withIndex("by_galleryId_and_folderId", (q) =>
-          q.eq("galleryId", gallery._id),
-        )
-        .take(256)
-    ).find((grant) => grant.role === "owner");
-    if (ownerGrant === undefined) {
+    const ownerGrant = await ctx.db
+      .query("galleryRoles")
+      .withIndex("by_galleryId_and_role", (q) =>
+        q.eq("galleryId", gallery._id).eq("role", "owner"),
+      )
+      .first();
+    if (ownerGrant === null) {
       throw new Error("Gallery has no owner for imported filesystem entries");
     }
     const entryId = await ctx.db.insert("entries", {
@@ -968,7 +966,6 @@ export const completeFilesystemOperation = internalMutation({
     if (gallery === null || parent === null) {
       throw new Error("Filesystem operation target no longer exists");
     }
-    const { accessPolicy, discoverability } = operation;
     let folderId = operation.folderId;
     if (operation.kind === "fileRename") {
       if (operation.entryId === undefined || args.modifiedAt === undefined) {
@@ -1013,16 +1010,20 @@ export const completeFilesystemOperation = internalMutation({
         updatedAt: now,
       });
     } else if (operation.kind === "mkdir") {
-      const siblings = await ctx.db
+      const { accessPolicy, discoverability } = operation;
+      if (accessPolicy === undefined || discoverability === undefined) {
+        throw new Error("Folder create operation has no access settings");
+      }
+      const existing = await ctx.db
         .query("folders")
-        .withIndex("by_galleryId_and_parentId", (q) =>
-          q.eq("galleryId", gallery._id).eq("parentId", parent._id),
+        .withIndex("by_galleryId_and_parentId_and_name", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", parent._id)
+            .eq("name", operation.name),
         )
-        .take(256);
-      const existing = siblings.find(
-        (sibling) => sibling.name === operation.name,
-      );
-      if (existing !== undefined) {
+        .first();
+      if (existing !== null) {
         folderId = existing._id;
         await ctx.db.patch("folders", existing._id, {
           accessPolicy,
@@ -1088,12 +1089,11 @@ export const completeFilesystemOperation = internalMutation({
       if (folderId === undefined) {
         throw new Error("Rename operation has no folder");
       }
+      // The folder's settings are not touched here: they were applied when
+      // the rename was requested, and may have been edited again since.
       await ctx.db.patch("folders", folderId, {
         name: operation.name,
         slug: filesystemSlug(operation.name),
-        accessPolicy,
-        discoverability,
-        previewMode: operation.previewMode,
         filesystemIdentity: args.identity,
         filesystemMissingAt: undefined,
       });

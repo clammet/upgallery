@@ -3,10 +3,6 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { googlyAuth } from "./auth";
 import { ensureCurrentProfile } from "./ensureProfile";
-import {
-  folderAccessPolicyOf,
-  folderDiscoverabilityOf,
-} from "./folderAccess";
 import { profileByIdentityId } from "./profiles";
 
 type ReadCtx = QueryCtx | MutationCtx;
@@ -133,7 +129,7 @@ export async function resolveFolderAccess(
 
   const accessPolicy = await effectiveFolderAccessPolicy(ctx, folder);
   const discoverability =
-    folder === null ? "listed" : folderDiscoverabilityOf(folder);
+    folder === null ? "listed" : folder.discoverability;
   const inheritedSystem = accessPolicy === "restricted" ? null : system;
   const publicFloor: Role | null =
     accessPolicy === "public" ? "viewer" : null;
@@ -152,10 +148,9 @@ export async function resolveFolderAccess(
 async function effectiveFolderAccessPolicy(
   ctx: ReadCtx,
   folder: Doc<"folders"> | null,
-): Promise<"inherit" | "public" | "restricted"> {
+): Promise<Doc<"folders">["accessPolicy"]> {
   if (folder === null) return "inherit";
-  const ownPolicy = folderAccessPolicyOf(folder);
-  if (ownPolicy !== "inherit") return ownPolicy;
+  if (folder.accessPolicy !== "inherit") return folder.accessPolicy;
 
   const ancestors = await Promise.all(
     folder.ancestorIds.map((ancestorId) => ctx.db.get("folders", ancestorId)),
@@ -163,8 +158,7 @@ async function effectiveFolderAccessPolicy(
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const ancestor = ancestors[index];
     if (ancestor === null || ancestor.galleryId !== folder.galleryId) continue;
-    const policy = folderAccessPolicyOf(ancestor);
-    if (policy !== "inherit") return policy;
+    if (ancestor.accessPolicy !== "inherit") return ancestor.accessPolicy;
   }
   return "inherit";
 }
