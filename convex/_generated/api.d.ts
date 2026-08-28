@@ -10,6 +10,7 @@
 
 import type * as authMaintenance from "../authMaintenance.js";
 import type * as authOrigins from "../authOrigins.js";
+import type * as buildInfo from "../buildInfo.js";
 import type * as bulkOperations from "../bulkOperations.js";
 import type * as crons from "../crons.js";
 import type * as entries from "../entries.js";
@@ -27,7 +28,6 @@ import type * as lib_ensureProfile from "../lib/ensureProfile.js";
 import type * as lib_entryNames from "../lib/entryNames.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
 import type * as lib_filesystemSyncStatus from "../lib/filesystemSyncStatus.js";
-import type * as lib_folderAccess from "../lib/folderAccess.js";
 import type * as lib_folderStats from "../lib/folderStats.js";
 import type * as lib_format from "../lib/format.js";
 import type * as lib_galleryStats from "../lib/galleryStats.js";
@@ -41,6 +41,7 @@ import type * as profiles from "../profiles.js";
 import type * as roles from "../roles.js";
 import type * as storageGateway from "../storageGateway.js";
 import type * as storageJobs from "../storageJobs.js";
+import type * as system from "../system.js";
 import type * as ticketMaintenance from "../ticketMaintenance.js";
 
 import type {
@@ -52,6 +53,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   authMaintenance: typeof authMaintenance;
   authOrigins: typeof authOrigins;
+  buildInfo: typeof buildInfo;
   bulkOperations: typeof bulkOperations;
   crons: typeof crons;
   entries: typeof entries;
@@ -69,7 +71,6 @@ declare const fullApi: ApiFromModules<{
   "lib/entryNames": typeof lib_entryNames;
   "lib/filesystem": typeof lib_filesystem;
   "lib/filesystemSyncStatus": typeof lib_filesystemSyncStatus;
-  "lib/folderAccess": typeof lib_folderAccess;
   "lib/folderStats": typeof lib_folderStats;
   "lib/format": typeof lib_format;
   "lib/galleryStats": typeof lib_galleryStats;
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   roles: typeof roles;
   storageGateway: typeof storageGateway;
   storageJobs: typeof storageJobs;
+  system: typeof system;
   ticketMaintenance: typeof ticketMaintenance;
 }>;
 

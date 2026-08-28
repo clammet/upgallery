@@ -56,6 +56,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The deployed functions report this commit through system.deploymentStatus
+      # so the admin panel can compare it against the web and storage builds.
+      - name: Stamp deployed commit
+        run: printf 'export const GIT_COMMIT = "%s";\n' "${GITHUB_SHA}" > convex/buildInfo.ts
+
       - name: Deploy to Convex
         env:
           CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}

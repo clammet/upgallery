@@ -474,6 +474,14 @@ export default defineSchema({
     thumbnailUrl: v.optional(v.string()),
   }).index("by_galleryId_and_extension", ["galleryId", "extension"]),
 
+  // One row per storage process, refreshed on an interval, so the admin
+  // System panel can show container liveness and the running build's commit.
+  serviceHeartbeats: defineTable({
+    component: v.string(),
+    commit: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_component", ["component"]),
+
   auditEvents: defineTable({
     actorProfileId: v.optional(v.id("profiles")),
     action: v.string(),

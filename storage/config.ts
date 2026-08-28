@@ -21,6 +21,8 @@ function positiveInteger(name: string, fallback: number): number {
 }
 
 export const config = {
+  // Baked into the image by the Docker build; empty in local development.
+  gitCommit: process.env.STORAGE_GIT_COMMIT?.trim() ?? "",
   port: positiveInteger("PORT", 8787),
   workerHealthPort: positiveInteger("WORKER_HEALTH_PORT", 8788),
   convexSiteUrl: required("CONVEX_SITE_URL").replace(/\/+$/, ""),

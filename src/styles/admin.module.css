@@ -49,3 +49,8 @@
   .row { grid-template-columns: 1fr auto; }
   .row span:nth-child(2) { grid-column: 1; }
 }
+
+.buildFooter { color: var(--gallery-muted); font-size: .7rem; margin: 2rem auto 0; max-width: 1280px; text-align: center; }
+.buildFooter a { color: inherit; }
+.deploymentMismatch { color: #b72d33; font-size: .8rem; margin: 0 0 .4rem; }
+.deploymentDown { color: #b72d33; }

@@ -126,7 +126,30 @@ export function AdminPage() {
           {profile.isSystemAdmin ? <SystemSection /> : null}
         </section>
       </div>
+      <BuildFooter />
     </PageFrame>
+  );
+}
+
+// The commit is baked into the bundle by the Docker web-build stage, so this
+// answers "which push is this deployment actually serving?" at a glance.
+function BuildFooter() {
+  const commit = import.meta.env.VITE_GIT_COMMIT;
+  return (
+    <footer className={styles.buildFooter}>
+      {commit ? (
+        <a
+          href={`https://github.com/clammet/upgallery/commit/${commit}`}
+          target="_blank"
+          rel="noreferrer"
+          title={commit}
+        >
+          Build {commit.slice(0, 7)}
+        </a>
+      ) : (
+        <span>Development build</span>
+      )}
+    </footer>
   );
 }
 
@@ -884,8 +907,96 @@ function SystemSection() {
   return (
     <div className={styles.systemSection}>
       <h2 className={styles.systemHeading}>System</h2>
+      <DeploymentStatus />
       <SystemUsers />
     </div>
+  );
+}
+
+// Storage processes heartbeat their commit into Convex every minute; the
+// staleness threshold gives a couple of missed beats before alarming.
+const HEARTBEAT_STALE_MS = 3 * 60_000;
+
+function CommitLink(props: { commit: string }) {
+  return (
+    <a
+      href={`https://github.com/clammet/upgallery/commit/${props.commit}`}
+      target="_blank"
+      rel="noreferrer"
+      title={props.commit}
+    >
+      {props.commit.slice(0, 7)}
+    </a>
+  );
+}
+
+function DeploymentStatus() {
+  const status = useQuery(api.system.deploymentStatus);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (status === undefined) return null;
+  const webCommit = import.meta.env.VITE_GIT_COMMIT || null;
+  const services = [
+    { component: "storage-api", label: "Storage API" },
+    { component: "storage-worker", label: "Storage worker" },
+  ].map(({ component, label }) => {
+    const heartbeat = status.services.find(
+      (service) => service.component === component,
+    );
+    const stale =
+      heartbeat === undefined || now - heartbeat.at > HEARTBEAT_STALE_MS;
+    return {
+      label,
+      commit: heartbeat?.commit ?? null,
+      status:
+        heartbeat === undefined
+          ? "No heartbeat yet"
+          : stale
+            ? `Last seen ${new Date(heartbeat.at).toLocaleString()}`
+            : "Running",
+      alert: stale,
+    };
+  });
+  const rows = [
+    { label: "Web bundle", commit: webCommit, status: "This page", alert: false },
+    {
+      label: "Convex backend",
+      commit: status.convexCommit,
+      status: "Deployed functions",
+      alert: false,
+    },
+    ...services,
+  ];
+  const distinctCommits = new Set(
+    rows
+      .map((row) => row.commit)
+      .filter((commit): commit is string => commit !== null),
+  );
+  return (
+    <Section title="Deployment">
+      {distinctCommits.size > 1 ? (
+        <p className={styles.deploymentMismatch}>
+          Components are running different commits. A deploy may still be
+          rolling out; if this persists, check the image updater on the host.
+        </p>
+      ) : null}
+      <div className={styles.rows}>
+        {rows.map((row) => (
+          <div className={styles.row} key={row.label}>
+            <span>{row.label}</span>
+            <span>
+              {row.commit ? <CommitLink commit={row.commit} /> : <em>unknown</em>}
+            </span>
+            <span className={row.alert ? styles.deploymentDown : undefined}>
+              {row.status}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 

@@ -651,6 +651,29 @@ http.route({
 });
 
 http.route({
+  path: "/internal/storage/report-service-status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const body: unknown = await request.json();
+    if (
+      !isRecord(body) ||
+      typeof body.component !== "string" ||
+      (body.commit !== undefined && typeof body.commit !== "string")
+    ) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    await ctx.runMutation(internal.system.reportServiceStatus, {
+      component: body.component,
+      commit: body.commit,
+    });
+    return json({ ok: true });
+  }),
+});
+
+http.route({
   path: "/internal/storage/list-known-child-folders",
   method: "POST",
   handler: httpAction(async (ctx, request) => {

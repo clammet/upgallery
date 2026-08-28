@@ -7,6 +7,7 @@ import { AsyncSemaphore, CapacityError } from "./concurrency.js";
 import { callConvex } from "./convex.js";
 import { handleDownload } from "./download.js";
 import { prepareTemporaryStorage } from "./temporary.js";
+import { startServiceStatusReporter } from "./serviceStatus.js";
 import { handleUpload } from "./upload.js";
 import { runFilesystemOperation } from "./userFilesystem.js";
 
@@ -166,6 +167,7 @@ app.use(
 if (process.env.NODE_ENV !== "test") {
   await mkdir(config.storageRoot, { recursive: true });
   await prepareTemporaryStorage();
+  startServiceStatusReporter("storage-api");
   const server = app.listen(config.port, "0.0.0.0", () => {
     console.log(`upgallery storage service listening on :${config.port}`);
   });

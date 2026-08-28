@@ -12,6 +12,7 @@ import { delay, runWithHeartbeat } from "./heartbeat.js";
 import { processMaintenanceClaim } from "./maintenance.js";
 import { configureMediaConcurrency } from "./media.js";
 import { processMediaClaim } from "./mediaWorker.js";
+import { startServiceStatusReporter } from "./serviceStatus.js";
 import {
   executeFilesystemOperation,
   runUserDirectorySync,
@@ -64,6 +65,7 @@ healthServer.listen(config.workerHealthPort, "0.0.0.0", () => {
 });
 
 installShutdownHandlers();
+startServiceStatusReporter("storage-worker");
 
 await waitForConvex(shutdown.signal);
 

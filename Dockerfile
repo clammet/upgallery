@@ -71,7 +71,11 @@ RUN node scripts/check-sharp-heic.mjs
 
 # Deployment-agnostic build: Convex and OAuth values are not baked in. The web
 # stage renders /config.json from environment variables at container startup.
+# The commit is the one exception: it identifies the running build in the
+# admin footer, so it must be fixed at build time, not container startup.
 FROM dependencies AS web-build
+ARG GIT_COMMIT=
+ENV VITE_GIT_COMMIT=${GIT_COMMIT}
 COPY index.html tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts ./
 COPY src ./src
 COPY convex ./convex
@@ -139,6 +143,9 @@ COPY --from=dependencies /app/scripts/check-sharp-heic.mjs ./scripts/check-sharp
 COPY --from=storage-build /app/storage-dist ./storage-dist
 
 FROM storage-runtime AS storage
+# Identifies the running build in heartbeats to Convex for the admin panel.
+ARG GIT_COMMIT=
+ENV STORAGE_GIT_COMMIT=${GIT_COMMIT}
 RUN node scripts/check-sharp-heic.mjs --decode-smoke
 USER storage
 EXPOSE 8787 8788

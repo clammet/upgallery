@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_CLIENT_ID: string;
   readonly VITE_STORAGE_API_URL?: string;
   readonly VITE_UPLOAD_CONCURRENCY?: string;
+  readonly VITE_GIT_COMMIT?: string;
 }
 
 interface ImportMeta {
