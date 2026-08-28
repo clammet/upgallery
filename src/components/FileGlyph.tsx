@@ -20,7 +20,7 @@ export function FileGlyph(props: {
   if (resolved.thumbnailUrl) {
     return (
       <img
-        className={styles.fileThumb}
+        className={`${styles.fileThumb} ${styles.fileTypeThumb}`}
         src={resolved.thumbnailUrl}
         alt={resolved.label}
         loading="lazy"
