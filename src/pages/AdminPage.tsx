@@ -620,6 +620,7 @@ function GallerySettingsForm(props: {
     quickMove: gallery.quickMove === true,
     infiniteScroll: gallery.infiniteScroll !== false,
     paginationPageSize: gallery.paginationPageSize ?? 100,
+    friendlyFolderUrls: gallery.friendlyFolderUrls === true,
     hosts: props.hosts
       .map((host) => `${host.host}|${host.rootPath}`)
       .join("\n"),
@@ -668,6 +669,10 @@ function GallerySettingsForm(props: {
         gallery.kind === "image"
           ? Number(data.get("paginationPageSize"))
           : initial.paginationPageSize,
+      friendlyFolderUrls:
+        gallery.kind === "image"
+          ? data.get("friendlyFolderUrls") === "on"
+          : initial.friendlyFolderUrls,
       hosts: props.isSystemAdmin ? String(data.get("hosts")) : initial.hosts,
       themeJson: JSON.stringify(theme),
     };
@@ -733,6 +738,14 @@ function GallerySettingsForm(props: {
             <option value="150">150</option>
             <option value="200">200</option>
             <option value="250">250</option>
+          </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Folder URLs <small>(applies to navigation and copied links)</small>
+          <select name="friendlyFolderUrls" defaultValue={initial.friendlyFolderUrls ? "on" : "off"}>
+            <option value="off">Internal folder IDs</option>
+            <option value="on">Friendly folder paths</option>
           </select>
         </label>
       ) : null}

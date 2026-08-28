@@ -292,6 +292,54 @@ export const list = query({
   },
 });
 
+export const resolvePath = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    names: v.array(v.string()),
+  },
+  returns: v.union(v.id("folders"), v.null()),
+  handler: async (ctx, args) => {
+    if (args.names.length > MAX_FOLDER_DEPTH) return null;
+    const gallery = await ctx.db.get("galleries", args.galleryId);
+    if (
+      gallery === null ||
+      gallery.deletedAt !== undefined ||
+      gallery.rootFolderId === undefined
+    ) {
+      return null;
+    }
+
+    let folder = await ctx.db.get("folders", gallery.rootFolderId);
+    if (folder === null) return null;
+    for (const name of args.names) {
+      if (name.length === 0 || name.length > 240) return null;
+      folder = await ctx.db
+        .query("folders")
+        .withIndex("by_galleryId_and_parentId_and_name", (q) =>
+          q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", folder!._id)
+            .eq("name", name),
+        )
+        .unique();
+      if (folder === null || folder.filesystemMissingAt !== undefined) {
+        return null;
+      }
+    }
+
+    const profile = await getCurrentProfile(ctx, args.anonymousClaim);
+    const access = await resolveFolderAccess(
+      ctx,
+      gallery._id,
+      folder,
+      profile,
+      args.anonymousClaim,
+    );
+    return access.canView ? folder._id : null;
+  },
+});
+
 export const create = mutation({
   args: {
     anonymousClaim: v.optional(v.string()),

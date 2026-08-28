@@ -554,8 +554,10 @@ export const update = mutation({
     editorBulkActions: v.optional(v.boolean()),
     infiniteScroll: v.optional(v.boolean()),
     paginationPageSize: v.optional(v.number()),
+    friendlyFolderUrls: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const gallery = await ctx.db.get("galleries", args.galleryId);
     if (gallery === null || gallery.deletedAt !== undefined) {
@@ -655,6 +657,11 @@ export const update = mutation({
       ...(args.paginationPageSize === undefined
         ? {}
         : { paginationPageSize: args.paginationPageSize }),
+      ...(args.friendlyFolderUrls === undefined
+        ? {}
+        : {
+            friendlyFolderUrls: args.friendlyFolderUrls ? true : undefined,
+          }),
       ...(args.theme === undefined ? {} : { theme: args.theme }),
     });
     if (name !== undefined && rootFolder !== null) {

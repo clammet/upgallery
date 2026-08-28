@@ -66,6 +66,8 @@ export default defineSchema({
     infiniteScroll: v.optional(v.boolean()),
     // Gallery entry page size. Undefined means the default of 100.
     paginationPageSize: v.optional(v.number()),
+    // Prefer human-readable folder-name paths over ?folder=<id> URLs.
+    friendlyFolderUrls: v.optional(v.boolean()),
     theme: themeValidator,
     // Legacy counters. Live counts are in galleryStats (see
     // lib/galleryStats.ts); these only seed that row for galleries created

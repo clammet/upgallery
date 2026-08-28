@@ -8,12 +8,19 @@ import styles from "../styles/layout.module.css";
 
 type Props = {
   gallery?: Doc<"galleries">;
+  galleryRoot?: string;
   breadcrumb?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 };
 
-export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
+export function PageFrame({
+  gallery,
+  galleryRoot,
+  breadcrumb,
+  actions,
+  children,
+}: Props) {
   const theme = gallery?.theme;
   const mode = theme?.mode ?? "light";
   const modeDefaults = THEME_MODE_DEFAULTS[mode];
@@ -49,7 +56,15 @@ export function PageFrame({ gallery, breadcrumb, actions, children }: Props) {
     >
       {theme?.customCss ? <style>{theme.customCss}</style> : null}
       <header className={styles.header}>
-        <Link to={gallery ? `/${gallery.kind === "uploader" ? "up" : "g"}/${gallery.slug}` : "/"} className={styles.brand}>
+        <Link
+          to={
+            gallery
+              ? galleryRoot ??
+                `/${gallery.kind === "uploader" ? "up" : "g"}/${gallery.slug}`
+              : "/"
+          }
+          className={styles.brand}
+        >
           {gallery?.name ?? "upgallery"}
         </Link>
         <div className={styles.breadcrumb}>{breadcrumb}</div>

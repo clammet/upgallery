@@ -46,6 +46,7 @@ export type SettingsSnapshot = {
   quickMove: boolean;
   infiniteScroll: boolean;
   paginationPageSize: number;
+  friendlyFolderUrls: boolean;
   hosts: string;
   themeJson: string;
 };
@@ -58,6 +59,7 @@ export type GallerySettingsUpdate = {
   quickMove?: boolean;
   infiniteScroll?: boolean;
   paginationPageSize?: number;
+  friendlyFolderUrls?: boolean;
   hosts?: Array<{ host: string; rootPath: string }>;
   theme?: GalleryTheme;
 };
@@ -151,6 +153,9 @@ export function diffGallerySettings(
     ...(current.paginationPageSize === initial.paginationPageSize
       ? {}
       : { paginationPageSize: current.paginationPageSize }),
+    ...(current.friendlyFolderUrls === initial.friendlyFolderUrls
+      ? {}
+      : { friendlyFolderUrls: current.friendlyFolderUrls }),
     ...(current.hosts === initial.hosts
       ? {}
       : { hosts: parseHostRoutes(current.hosts) }),

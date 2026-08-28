@@ -19,6 +19,7 @@ function snapshot(): SettingsSnapshot {
     quickMove: false,
     infiniteScroll: true,
     paginationPageSize: 100,
+    friendlyFolderUrls: false,
     hosts: "photos.example.com|/",
     themeJson: initialThemeJson({}),
   };
@@ -79,6 +80,14 @@ describe("gallery settings dirty-field detection", () => {
     expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
       infiniteScroll: false,
       paginationPageSize: 250,
+    });
+  });
+
+  test("friendly folder URLs are sent only when changed", () => {
+    const initial = snapshot();
+    const current = { ...initial, friendlyFolderUrls: true };
+    expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
+      friendlyFolderUrls: true,
     });
   });
 

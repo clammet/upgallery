@@ -9,7 +9,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import {
   Check,
@@ -71,6 +76,11 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
+import {
+  galleryFolderHref,
+  galleryFolderLocation,
+  galleryFolderPathSegments,
+} from "../lib/galleryRoutes";
 import {
   isHeifImage,
   shouldUseNativeHeifPreview,
@@ -169,22 +179,51 @@ type EntrySelection =
 export function GalleryPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
+  routeRoot: string;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const requestedFolder = searchParams.get("folder");
   const viewerEntryId = searchParams.get("item");
-  const folderId = (requestedFolder ?? props.rootFolder._id) as Id<"folders">;
+  const requestedPath = galleryFolderPathSegments(
+    location.pathname,
+    props.routeRoot,
+  );
+  const pathFolderId = useQuery(
+    api.folders.resolvePath,
+    requestedFolder === null && (requestedPath?.length ?? 0) > 0
+      ? {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          names: requestedPath!,
+        }
+      : "skip",
+  );
+  const resolvingPath =
+    requestedFolder === null &&
+    (requestedPath?.length ?? 0) > 0 &&
+    pathFolderId === undefined;
+  const invalidPath = requestedPath === null || pathFolderId === null;
+  const folderId = (
+    requestedFolder ?? pathFolderId ?? props.rootFolder._id
+  ) as Id<"folders">;
   const [previewSeed] = useState(() => {
     const values = crypto.getRandomValues(new Uint32Array(1));
     return values[0];
   });
-  const listing = useQuery(api.folders.list, {
-    anonymousClaim: anonymousClaim(),
-    galleryId: props.gallery._id,
-    folderId,
-    previewSeed,
-    includeEntries: false,
-  });
+  const listing = useQuery(
+    api.folders.list,
+    resolvingPath || invalidPath
+      ? "skip"
+      : {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+          previewSeed,
+          includeEntries: false,
+        },
+  );
   const profile = useQuery(api.profiles.current, {
     anonymousClaim: anonymousClaim(),
   });
@@ -204,25 +243,25 @@ export function GalleryPage(props: {
   };
   const entryPages = usePaginatedQuery(
     api.entries.listGalleryPage,
-    infiniteScroll ? entryPageArgs : "skip",
+    infiniteScroll && !resolvingPath && !invalidPath ? entryPageArgs : "skip",
     { initialNumItems: pageSize },
   );
   const pagedEntries = useQuery(
     api.entries.listGalleryPage,
-    infiniteScroll
-      ? "skip"
-      : {
+    !resolvingPath && !invalidPath && !infiniteScroll
+      ? {
           ...entryPageArgs,
           paginationOpts: {
             numItems: pageSize,
             cursor: paginationCursor,
           },
-        },
+        }
+      : "skip",
   );
   // Only the paged layout shows a page total; infinite scroll never needs it.
   const folderEntryCount = useQuery(
     api.entries.countFolderEntries,
-    infiniteScroll ? "skip" : entryPageArgs,
+    infiniteScroll || resolvingPath || invalidPath ? "skip" : entryPageArgs,
   );
   const entries = (infiniteScroll
     ? entryPages.results
@@ -276,7 +315,7 @@ export function GalleryPage(props: {
   >(new Set());
   const selectableEntries = usePaginatedQuery(
     api.entries.listSelectableIds,
-    allEntriesSelected
+    allEntriesSelected && !resolvingPath && !invalidPath
       ? {
           anonymousClaim: anonymousClaim(),
           galleryId: props.gallery._id,
@@ -354,6 +393,37 @@ export function GalleryPage(props: {
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
+  const friendlyFolderUrls = props.gallery.friendlyFolderUrls === true;
+  const folderNames =
+    listing?.breadcrumbs.slice(1).map((crumb) => crumb.name) ?? [];
+  const currentFolderLocation =
+    listing === undefined
+      ? null
+      : galleryFolderLocation({
+          routeRoot: props.routeRoot,
+          folderId:
+            folderId === props.rootFolder._id ? null : folderId,
+          folderNames,
+          friendlyFolderUrls,
+          currentSearch: location.search,
+        });
+
+  useEffect(() => {
+    if (
+      currentFolderLocation === null ||
+      (currentFolderLocation.pathname === location.pathname &&
+        currentFolderLocation.search === location.search)
+    ) {
+      return;
+    }
+    void navigate(currentFolderLocation, { replace: true });
+  }, [
+    currentFolderLocation,
+    location.pathname,
+    location.search,
+    navigate,
+  ]);
+
   useDocumentTitle(
     viewerItem !== undefined
       ? `${props.gallery.name} - ${viewerItem.title}`
@@ -377,14 +447,30 @@ export function GalleryPage(props: {
   );
   const copyViewerLink = useCallback(
     async (item: MediaViewerItem, kind: MediaViewerLinkKind) => {
+      const folderLocation = galleryFolderLocation({
+        routeRoot: props.routeRoot,
+        folderId: folderId === props.rootFolder._id ? null : folderId,
+        folderNames,
+        friendlyFolderUrls,
+        currentSearch: location.search,
+      });
       const url = new URL(
-        kind === "direct" ? item.href : window.location.href,
-        window.location.href,
+        kind === "direct"
+          ? item.href
+          : `${folderLocation.pathname}${folderLocation.search}`,
+        window.location.origin,
       );
       if (kind === "lightbox") url.searchParams.set("item", item.id);
       await copyTextToClipboard(url.toString());
     },
-    [],
+    [
+      folderId,
+      folderNames,
+      friendlyFolderUrls,
+      location.search,
+      props.rootFolder._id,
+      props.routeRoot,
+    ],
   );
   const changeViewerTitle = useCallback(
     async (item: MediaViewerItem, title: string) => {
@@ -847,8 +933,20 @@ export function GalleryPage(props: {
   );
   const cardDragEnd = useStableCallback(() => endItemDrag());
 
-  if (listing === undefined || profile === undefined) {
-    return <PageFrame gallery={props.gallery}><p>Loading…</p></PageFrame>;
+  if (invalidPath) {
+    return (
+      <PageFrame gallery={props.gallery} galleryRoot={props.routeRoot}>
+        <h1>Folder not found</h1>
+        <p>This folder path does not exist or is not accessible.</p>
+      </PageFrame>
+    );
+  }
+  if (listing === undefined || profile === undefined || resolvingPath) {
+    return (
+      <PageFrame gallery={props.gallery} galleryRoot={props.routeRoot}>
+        <p>Loading…</p>
+      </PageFrame>
+    );
   }
 
   const canManage = listing.access.canManage;
@@ -1371,7 +1469,16 @@ export function GalleryPage(props: {
       }
     >
       {index > 0 ? <span className={layout.separator}>/</span> : null}
-      <Link to={crumb._id === props.rootFolder._id ? "?" : `?folder=${crumb._id}`}>
+      <Link
+        to={galleryFolderHref({
+          routeRoot: props.routeRoot,
+          folderId: crumb._id === props.rootFolder._id ? null : crumb._id,
+          folderNames: listing.breadcrumbs
+            .slice(1, index + 1)
+            .map((entry) => entry.name),
+          friendlyFolderUrls,
+        })}
+      >
         {crumb.name}
       </Link>
     </span>
@@ -1380,6 +1487,7 @@ export function GalleryPage(props: {
   return (
     <PageFrame
       gallery={props.gallery}
+      galleryRoot={props.routeRoot}
       breadcrumb={breadcrumbs}
       actions={
         <>
@@ -1494,6 +1602,12 @@ export function GalleryPage(props: {
           <GalleryFolderCard
             key={folder._id}
             folder={folder}
+            href={galleryFolderHref({
+              routeRoot: props.routeRoot,
+              folderId: folder._id,
+              folderNames: [...folderNames, folder.name],
+              friendlyFolderUrls,
+            })}
             preview={folderPreviews.get(folder._id)}
             selectMode={selectMode}
             selected={selectedFolderIds.has(folder._id)}
@@ -2022,6 +2136,7 @@ function FolderPreview(props: { preview?: FolderPreviewData }) {
 
 function GalleryFolderCard(props: {
   folder: Doc<"folders">;
+  href: string;
   preview?: FolderPreviewData;
   selectMode: boolean;
   selected: boolean;
@@ -2056,7 +2171,7 @@ function GalleryFolderCard(props: {
     return (
       <Link
         className={`${styles.folderCard} ${dropTargetClass} ${dragOverClass}`}
-        to={`?folder=${props.folder._id}`}
+        to={props.href}
         draggable={props.draggable}
         onDragStart={props.onDragStart}
         onDragEnd={props.onDragEnd}

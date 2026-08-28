@@ -19,7 +19,7 @@ export function App() {
       <Routes>
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route path="/admin/*" element={<AdminPage />} />
-        <Route path="/g/:slug" element={<SlugGallery expectedKind="image" />} />
+        <Route path="/g/:slug/*" element={<SlugGallery expectedKind="image" />} />
         <Route
           path="/up/:slug/files/:entryId/:fileName?"
           element={<SlugUploaderFile />}
@@ -67,7 +67,11 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
     return <NotFound />;
   }
   return resolved.gallery.kind === "image" ? (
-    <GalleryPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
+    <GalleryPage
+      gallery={resolved.gallery}
+      rootFolder={resolved.rootFolder}
+      routeRoot={`/g/${resolved.gallery.slug}`}
+    />
   ) : (
     <UploaderPage
       gallery={resolved.gallery}
@@ -123,7 +127,11 @@ function HostGallery() {
     );
   }
   return resolved.gallery.kind === "image" ? (
-    <GalleryPage gallery={resolved.gallery} rootFolder={resolved.rootFolder} />
+    <GalleryPage
+      gallery={resolved.gallery}
+      rootFolder={resolved.rootFolder}
+      routeRoot={resolved.routeRoot}
+    />
   ) : (
     <UploaderPage
       gallery={resolved.gallery}
