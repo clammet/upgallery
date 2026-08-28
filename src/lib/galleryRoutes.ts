@@ -3,6 +3,25 @@ export type GalleryFolderLocation = {
   search: string;
 };
 
+export type GalleryRoute = {
+  origin: string;
+  routeRoot: string;
+};
+
+export function publicGalleryRoute(
+  route: { host: string; rootPath: string },
+  current: { protocol: string; host: string },
+): GalleryRoute {
+  const currentHostname = current.host
+    .toLocaleLowerCase()
+    .replace(/:\d+$/, "");
+  const origin =
+    route.host === currentHostname
+      ? `${current.protocol}//${current.host}`
+      : `${current.protocol}//${route.host}`;
+  return { origin, routeRoot: route.rootPath };
+}
+
 function normalizedRouteRoot(routeRoot: string): string {
   if (routeRoot === "/") return "";
   return routeRoot.replace(/\/+$/, "");

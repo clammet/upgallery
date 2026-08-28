@@ -180,6 +180,8 @@ export function GalleryPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
   routeRoot: string;
+  canonicalOrigin?: string;
+  canonicalRouteRoot?: string;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -394,13 +396,35 @@ export function GalleryPage(props: {
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
   const friendlyFolderUrls = props.gallery.friendlyFolderUrls === true;
-  const folderNames =
-    listing?.breadcrumbs.slice(1).map((crumb) => crumb.name) ?? [];
+  const canonicalOrigin = props.canonicalOrigin ?? window.location.origin;
+  const canonicalRouteRoot = props.canonicalRouteRoot ?? props.routeRoot;
+  const canonicalGalleryRoot =
+    canonicalOrigin === window.location.origin
+      ? canonicalRouteRoot
+      : new URL(canonicalRouteRoot, canonicalOrigin).toString();
+  const canonicalFolderHref = (
+    targetFolderId: Id<"folders"> | null,
+    targetFolderNames: string[],
+  ) => {
+    const href = galleryFolderHref({
+      routeRoot: canonicalRouteRoot,
+      folderId: targetFolderId,
+      folderNames: targetFolderNames,
+      friendlyFolderUrls,
+    });
+    return canonicalOrigin === window.location.origin
+      ? href
+      : new URL(href, canonicalOrigin).toString();
+  };
+  const folderNames = useMemo(
+    () => listing?.breadcrumbs.slice(1).map((crumb) => crumb.name) ?? [],
+    [listing?.breadcrumbs],
+  );
   const currentFolderLocation =
     listing === undefined
       ? null
       : galleryFolderLocation({
-          routeRoot: props.routeRoot,
+          routeRoot: canonicalRouteRoot,
           folderId:
             folderId === props.rootFolder._id ? null : folderId,
           folderNames,
@@ -409,16 +433,25 @@ export function GalleryPage(props: {
         });
 
   useEffect(() => {
-    if (
-      currentFolderLocation === null ||
-      (currentFolderLocation.pathname === location.pathname &&
-        currentFolderLocation.search === location.search)
-    ) {
+    if (currentFolderLocation === null) return;
+    const destination = new URL(
+      `${currentFolderLocation.pathname}${currentFolderLocation.search}`,
+      canonicalOrigin,
+    );
+    destination.hash = location.hash;
+    if (destination.href === window.location.href) return;
+    if (destination.origin !== window.location.origin) {
+      window.location.replace(destination.href);
       return;
     }
-    void navigate(currentFolderLocation, { replace: true });
+    void navigate(
+      { ...currentFolderLocation, hash: location.hash },
+      { replace: true },
+    );
   }, [
+    canonicalOrigin,
     currentFolderLocation,
+    location.hash,
     location.pathname,
     location.search,
     navigate,
@@ -448,7 +481,7 @@ export function GalleryPage(props: {
   const copyViewerLink = useCallback(
     async (item: MediaViewerItem, kind: MediaViewerLinkKind) => {
       const folderLocation = galleryFolderLocation({
-        routeRoot: props.routeRoot,
+        routeRoot: canonicalRouteRoot,
         folderId: folderId === props.rootFolder._id ? null : folderId,
         folderNames,
         friendlyFolderUrls,
@@ -458,7 +491,7 @@ export function GalleryPage(props: {
         kind === "direct"
           ? item.href
           : `${folderLocation.pathname}${folderLocation.search}`,
-        window.location.origin,
+        canonicalOrigin,
       );
       if (kind === "lightbox") url.searchParams.set("item", item.id);
       await copyTextToClipboard(url.toString());
@@ -467,9 +500,10 @@ export function GalleryPage(props: {
       folderId,
       folderNames,
       friendlyFolderUrls,
+      canonicalOrigin,
+      canonicalRouteRoot,
       location.search,
       props.rootFolder._id,
-      props.routeRoot,
     ],
   );
   const changeViewerTitle = useCallback(
@@ -935,7 +969,7 @@ export function GalleryPage(props: {
 
   if (invalidPath) {
     return (
-      <PageFrame gallery={props.gallery} galleryRoot={props.routeRoot}>
+      <PageFrame gallery={props.gallery} galleryRoot={canonicalGalleryRoot}>
         <h1>Folder not found</h1>
         <p>This folder path does not exist or is not accessible.</p>
       </PageFrame>
@@ -943,7 +977,7 @@ export function GalleryPage(props: {
   }
   if (listing === undefined || profile === undefined || resolvingPath) {
     return (
-      <PageFrame gallery={props.gallery} galleryRoot={props.routeRoot}>
+      <PageFrame gallery={props.gallery} galleryRoot={canonicalGalleryRoot}>
         <p>Loading…</p>
       </PageFrame>
     );
@@ -1470,14 +1504,12 @@ export function GalleryPage(props: {
     >
       {index > 0 ? <span className={layout.separator}>/</span> : null}
       <Link
-        to={galleryFolderHref({
-          routeRoot: props.routeRoot,
-          folderId: crumb._id === props.rootFolder._id ? null : crumb._id,
-          folderNames: listing.breadcrumbs
+        to={canonicalFolderHref(
+          crumb._id === props.rootFolder._id ? null : crumb._id,
+          listing.breadcrumbs
             .slice(1, index + 1)
             .map((entry) => entry.name),
-          friendlyFolderUrls,
-        })}
+        )}
       >
         {crumb.name}
       </Link>
@@ -1487,7 +1519,7 @@ export function GalleryPage(props: {
   return (
     <PageFrame
       gallery={props.gallery}
-      galleryRoot={props.routeRoot}
+      galleryRoot={canonicalGalleryRoot}
       breadcrumb={breadcrumbs}
       actions={
         <>
@@ -1602,12 +1634,10 @@ export function GalleryPage(props: {
           <GalleryFolderCard
             key={folder._id}
             folder={folder}
-            href={galleryFolderHref({
-              routeRoot: props.routeRoot,
-              folderId: folder._id,
-              folderNames: [...folderNames, folder.name],
-              friendlyFolderUrls,
-            })}
+            href={canonicalFolderHref(folder._id, [
+              ...folderNames,
+              folder.name,
+            ])}
             preview={folderPreviews.get(folder._id)}
             selectMode={selectMode}
             selected={selectedFolderIds.has(folder._id)}

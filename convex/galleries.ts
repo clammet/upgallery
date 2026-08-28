@@ -309,6 +309,41 @@ export const resolveBySlug = query({
   },
 });
 
+export const canonicalRouteBySlug = query({
+  args: {
+    slug: v.string(),
+    currentHost: v.string(),
+  },
+  returns: v.union(
+    v.object({ host: v.string(), rootPath: v.string() }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const gallery = await ctx.db
+      .query("galleries")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .unique();
+    if (gallery === null || gallery.deletedAt !== undefined) return null;
+
+    const routes = await ctx.db
+      .query("galleryHosts")
+      .withIndex("by_galleryId", (q) => q.eq("galleryId", gallery._id))
+      .take(MAX_HOSTS_PER_GALLERY);
+    const currentHost = normalizeHost(args.currentHost);
+    const currentHostRoutes = routes.filter(
+      (route) => route.host === currentHost,
+    );
+    const candidates =
+      currentHostRoutes.length > 0 ? currentHostRoutes : routes;
+    const route =
+      candidates.find((candidate) => candidate.rootPath === "/") ??
+      candidates[0];
+    return route === undefined
+      ? null
+      : { host: route.host, rootPath: route.rootPath };
+  },
+});
+
 export const resolveByHost = query({
   args: {
     anonymousClaim: v.optional(v.string()),

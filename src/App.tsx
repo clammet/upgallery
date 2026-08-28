@@ -5,6 +5,7 @@ import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { anonymousClaim, authClient } from "./lib/authClient";
 import { uploaderFileEntryId } from "./lib/uploaderRoutes";
+import { publicGalleryRoute } from "./lib/galleryRoutes";
 import { GalleryPage } from "./pages/GalleryPage";
 import { UploaderFilePage } from "./pages/UploaderFilePage";
 import { UploaderPage } from "./pages/UploaderPage";
@@ -58,7 +59,13 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
     slug,
     anonymousClaim: anonymousClaim(),
   });
-  if (resolved === undefined) return <Loading />;
+  const canonicalHostRoute = useQuery(api.galleries.canonicalRouteBySlug, {
+    slug,
+    currentHost: window.location.host,
+  });
+  if (resolved === undefined || canonicalHostRoute === undefined) {
+    return <Loading />;
+  }
   if (
     resolved === null ||
     resolved.rootFolder === null ||
@@ -66,11 +73,20 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
   ) {
     return <NotFound />;
   }
+  const canonicalRoute =
+    canonicalHostRoute === null
+      ? null
+      : publicGalleryRoute(canonicalHostRoute, {
+          protocol: window.location.protocol,
+          host: window.location.host,
+        });
   return resolved.gallery.kind === "image" ? (
     <GalleryPage
       gallery={resolved.gallery}
       rootFolder={resolved.rootFolder}
       routeRoot={`/g/${resolved.gallery.slug}`}
+      canonicalOrigin={canonicalRoute?.origin}
+      canonicalRouteRoot={canonicalRoute?.routeRoot}
     />
   ) : (
     <UploaderPage

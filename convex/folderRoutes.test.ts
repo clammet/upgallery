@@ -78,4 +78,48 @@ describe("friendly folder route resolution", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  test("selects a gallery's public route for an internal slug URL", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const galleryId = await ctx.db.insert("galleries", {
+        name: "Gallery",
+        slug: "gallery",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "gallery",
+        maxFileSize: 1024,
+        theme: {},
+      });
+      await ctx.db.insert("galleryHosts", {
+        galleryId,
+        host: "photos.example.com",
+        rootPath: "/gallery",
+      });
+      await ctx.db.insert("galleryHosts", {
+        galleryId,
+        host: "alternate.example.com",
+        rootPath: "/album",
+      });
+    });
+
+    await expect(
+      t.query(api.galleries.canonicalRouteBySlug, {
+        slug: "gallery",
+        currentHost: "photos.example.com:4173",
+      }),
+    ).resolves.toEqual({
+      host: "photos.example.com",
+      rootPath: "/gallery",
+    });
+    await expect(
+      t.query(api.galleries.canonicalRouteBySlug, {
+        slug: "gallery",
+        currentHost: "app.example.com",
+      }),
+    ).resolves.toEqual({
+      host: "photos.example.com",
+      rootPath: "/gallery",
+    });
+  });
 });

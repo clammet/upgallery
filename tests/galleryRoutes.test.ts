@@ -3,6 +3,7 @@ import {
   galleryFolderHref,
   galleryFolderLocation,
   galleryFolderPathSegments,
+  publicGalleryRoute,
 } from "../src/lib/galleryRoutes";
 
 describe("gallery folder routes", () => {
@@ -57,6 +58,27 @@ describe("gallery folder routes", () => {
     ).toEqual({
       pathname: "/gallery",
       search: "?item=image-id&folder=folder-id",
+    });
+  });
+
+  test("builds the configured public route and preserves a local dev port", () => {
+    expect(
+      publicGalleryRoute(
+        { host: "gallery.example.com", rootPath: "/gallery" },
+        { protocol: "https:", host: "gallery.example.com:4173" },
+      ),
+    ).toEqual({
+      origin: "https://gallery.example.com:4173",
+      routeRoot: "/gallery",
+    });
+    expect(
+      publicGalleryRoute(
+        { host: "photos.example.com", rootPath: "/family" },
+        { protocol: "https:", host: "app.example.com" },
+      ),
+    ).toEqual({
+      origin: "https://photos.example.com",
+      routeRoot: "/family",
     });
   });
 });
