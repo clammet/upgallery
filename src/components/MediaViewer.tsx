@@ -873,30 +873,17 @@ export function MediaViewer(props: {
               </form>
             ) : (
               <h2 id="media-viewer-title" title={activeItem.title}>
-                {props.onTitleChange !== undefined ||
-                props.onCopyLink !== undefined ? (
+                {props.onTitleChange !== undefined ? (
                   <button
                     className={styles.titleTextButton}
                     type="button"
-                    onClick={(event) => {
-                      if (props.onTitleChange !== undefined) {
-                        setTitleDraft(activeItem.title);
-                        setTitleFeedback(null);
-                        setEditingTitle(true);
-                      } else {
-                        void copyLink(event);
-                      }
+                    onClick={() => {
+                      setTitleDraft(activeItem.title);
+                      setTitleFeedback(null);
+                      setEditingTitle(true);
                     }}
-                    aria-label={
-                      props.onTitleChange !== undefined
-                        ? `Rename ${activeItem.title}`
-                        : `Copy link to ${activeItem.title}`
-                    }
-                    title={
-                      props.onTitleChange !== undefined
-                        ? "Edit filename"
-                        : "Copy lightbox link (Cmd/Ctrl-click for direct link)"
-                    }
+                    aria-label={`Rename ${activeItem.title}`}
+                    title="Edit filename"
                   >
                     {activeItem.title}
                   </button>
@@ -905,7 +892,7 @@ export function MediaViewer(props: {
                 )}
               </h2>
             )}
-            {props.onTitleChange !== undefined && !editingTitle ? (
+            {props.onCopyLink !== undefined && !editingTitle ? (
               <button
                 className={styles.titleButton}
                 type="button"

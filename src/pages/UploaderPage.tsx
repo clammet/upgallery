@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Eye, EyeOff, Info, LockKeyhole } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -18,6 +19,7 @@ import {
   MediaViewer,
   shouldOpenMediaViewer,
   type MediaViewerItem,
+  type MediaViewerLinkKind,
 } from "../components/MediaViewer";
 import { TrashIcon } from "../components/ActionIcons";
 import { MarkdownToggle } from "../components/MarkdownToggle";
@@ -36,6 +38,7 @@ import {
 } from "../lib/metadata";
 import { uploaderFileUrl } from "../lib/uploaderRoutes";
 import { friendlyError } from "../lib/errors";
+import { copyTextToClipboard } from "../lib/clipboard";
 import {
   canToggleTextMarkdown,
   fileNameWithMarkdownMode,
@@ -50,7 +53,10 @@ export function UploaderPage(props: {
   gallery: Doc<"galleries">;
   rootFolder: Doc<"folders">;
   routeRoot: string;
+  canonicalOrigin?: string;
+  canonicalRouteRoot?: string;
 }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const listing = useQuery(api.folders.list, {
     anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
@@ -69,7 +75,7 @@ export function UploaderPage(props: {
   const [metadataEntryId, setMetadataEntryId] =
     useState<Id<"entries"> | null>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
-  const [viewerEntryId, setViewerEntryId] = useState<string | null>(null);
+  const viewerEntryId = searchParams.get("item");
   const thumbnailRequest = useRef("");
   const createThumbnailTickets = useMutation(
     api.entries.createThumbnailTickets,
@@ -203,6 +209,35 @@ export function UploaderPage(props: {
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
+  const setViewerEntry = useCallback(
+    (entryId: string | null, replace: boolean) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (entryId === null) next.delete("item");
+          else next.set("item", entryId);
+          return next;
+        },
+        { replace },
+      );
+    },
+    [setSearchParams],
+  );
+  const copyViewerLink = useCallback(
+    async (item: MediaViewerItem, kind: MediaViewerLinkKind) => {
+      const canonicalOrigin = props.canonicalOrigin ?? window.location.origin;
+      const canonicalRouteRoot = props.canonicalRouteRoot ?? props.routeRoot;
+      const url = new URL(
+        kind === "direct"
+          ? uploaderFileUrl(canonicalRouteRoot, item.id, item.title)
+          : canonicalRouteRoot,
+        canonicalOrigin,
+      );
+      if (kind === "lightbox") url.searchParams.set("item", item.id);
+      await copyTextToClipboard(url.toString());
+    },
+    [props.canonicalOrigin, props.canonicalRouteRoot, props.routeRoot],
+  );
   useDocumentTitle(
     viewerItem !== undefined
       ? `${props.gallery.name} - ${viewerItem.title}`
@@ -324,14 +359,15 @@ export function UploaderPage(props: {
               password,
               removeLocationData,
               unlisted,
-            }).then(() => {
+            }).then((result) => {
               setFile(null);
               setDescription("");
               setPassword("");
               setRemoveLocationData(false);
               setUnlisted(false);
               setTextPreview(null);
-            });
+              setViewerEntry(result.entryId, false);
+            }).catch(() => undefined);
           }}
         >
           <label className={styles.filePicker}>
@@ -422,7 +458,7 @@ export function UploaderPage(props: {
             entry={entry}
             routeRoot={props.routeRoot}
             thumbnailUrl={thumbnailUrls[entry._id]}
-            onOpen={() => setViewerEntryId(entry._id)}
+            onOpen={() => setViewerEntry(entry._id, false)}
             onMetadata={() => setMetadataEntryId(entry._id)}
           />
         ))}
@@ -452,10 +488,11 @@ export function UploaderPage(props: {
           items={viewerItems}
           initialIndex={viewerIndex}
           themeMode={props.gallery.theme.mode ?? "light"}
-          onActiveItemChange={(item) => setViewerEntryId(item.id)}
+          onActiveItemChange={(item) => setViewerEntry(item.id, true)}
+          onCopyLink={copyViewerLink}
           onMarkdownModeChange={changeViewerMarkdownMode}
           resolveSource={resolveViewerSource}
-          onClose={() => setViewerEntryId(null)}
+          onClose={() => setViewerEntry(null, true)}
         />
       ) : null}
     </PageFrame>

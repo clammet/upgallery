@@ -93,6 +93,8 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
       gallery={resolved.gallery}
       rootFolder={resolved.rootFolder}
       routeRoot={`/up/${resolved.gallery.slug}`}
+      canonicalOrigin={canonicalRoute?.origin}
+      canonicalRouteRoot={canonicalRoute?.routeRoot}
     />
   );
 }

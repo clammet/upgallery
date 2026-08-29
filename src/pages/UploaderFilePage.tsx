@@ -142,11 +142,23 @@ export function UploaderFilePage(props: {
     <PageFrame gallery={props.gallery}>
       {sourceUrl ? (
         <section className={styles.fileViewer}>
-          <iframe
-            src={sourceUrl}
-            title={entry.name}
-            sandbox="allow-downloads"
-          />
+          {entry.mimeType.startsWith("image/") ? (
+            <img src={sourceUrl} alt={entry.name} />
+          ) : entry.mimeType.startsWith("video/") ? (
+            <video src={sourceUrl} controls playsInline>
+              Your browser does not support video playback.
+            </video>
+          ) : entry.mimeType.startsWith("audio/") ? (
+            <audio src={sourceUrl} controls>
+              Your browser does not support audio playback.
+            </audio>
+          ) : (
+            <iframe
+              src={sourceUrl}
+              title={entry.name}
+              sandbox="allow-downloads"
+            />
+          )}
         </section>
       ) : entry.passwordProtected ? (
         <form

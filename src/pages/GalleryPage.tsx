@@ -76,6 +76,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
+import { copyTextToClipboard } from "../lib/clipboard";
 import {
   galleryFolderHref,
   galleryFolderLocation,
@@ -2782,27 +2783,6 @@ async function completeFilesystemOperation(result: {
         ? body.folderId
         : null,
   };
-}
-
-async function copyTextToClipboard(value: string) {
-  if (navigator.clipboard !== undefined) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return;
-    } catch {
-      // Fall through for browsers that expose the API but deny it here.
-    }
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.append(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("Clipboard access is not available");
 }
 
 function FolderForm(props: {
