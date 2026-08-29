@@ -367,6 +367,7 @@ export function GalleryPage(props: {
           title: entry.name,
           href: sourceUrl,
           sourceUrl: viewerSourceUrl,
+          downloadUrl: sourceUrl,
           mediaKind: entry.mediaKind,
           mimeType: entry.mimeType,
           previewReady:

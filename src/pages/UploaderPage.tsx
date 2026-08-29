@@ -276,6 +276,21 @@ export function UploaderPage(props: {
     },
     [createDownloadTicket, props.gallery._id, requestPreview],
   );
+  const resolveViewerDownload = useCallback(
+    async (item: MediaViewerItem, suppliedPassword?: string) => {
+      const { token } = await createDownloadTicket({
+        anonymousClaim: anonymousClaim(),
+        galleryId: props.gallery._id,
+        entryId: item.id as Id<"entries">,
+        password: suppliedPassword || undefined,
+        disposition: "attachment",
+      });
+      return storageApi(
+        `/api/storage/files/${item.id}?ticket=${encodeURIComponent(token)}`,
+      );
+    },
+    [createDownloadTicket, props.gallery._id],
+  );
   const changeViewerMarkdownMode = useCallback(
     async (item: MediaViewerItem, markdown: boolean) => {
       await setEntryMarkdownMode({
@@ -492,6 +507,7 @@ export function UploaderPage(props: {
           onCopyLink={copyViewerLink}
           onMarkdownModeChange={changeViewerMarkdownMode}
           resolveSource={resolveViewerSource}
+          resolveDownload={resolveViewerDownload}
           onClose={() => setViewerEntry(null, true)}
         />
       ) : null}

@@ -17,6 +17,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   Info,
   Link2,
@@ -57,6 +58,7 @@ export type MediaViewerItem = {
     | "other";
   mimeType: string;
   sourceUrl?: string;
+  downloadUrl?: string;
   passwordProtected?: boolean;
   canToggleMarkdown?: boolean;
   previewReady?: boolean;
@@ -213,6 +215,10 @@ export function MediaViewer(props: {
     item: MediaViewerItem,
     password?: string,
   ) => Promise<string | null>;
+  resolveDownload?: (
+    item: MediaViewerItem,
+    password?: string,
+  ) => Promise<string>;
   onMarkdownModeChange?: (
     item: MediaViewerItem,
     markdown: boolean,
@@ -259,6 +265,7 @@ export function MediaViewer(props: {
     message: string;
   } | null>(null);
   const [copyPending, setCopyPending] = useState(false);
+  const [downloadPending, setDownloadPending] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoContentHeight, setInfoContentHeight] = useState(0);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -428,6 +435,7 @@ export function MediaViewer(props: {
       setTitlePending(false);
       setTitleFeedback(null);
       setCopyPending(false);
+      setDownloadPending(false);
     }
     setNaturalSize(null);
     setScale(1);
@@ -715,6 +723,35 @@ export function MediaViewer(props: {
     }
   };
 
+  const download = async () => {
+    if (downloadPending) return;
+    setDownloadPending(true);
+    setTitleFeedback(null);
+    try {
+      const url =
+        activeItem.downloadUrl ??
+        (await props.resolveDownload?.(
+          activeItem,
+          unlockedPasswords.current.get(activeItem.id),
+        ));
+      if (url === undefined) return;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = activeItem.title;
+      link.hidden = true;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    } catch (reason) {
+      setTitleFeedback({
+        kind: "error",
+        message: friendlyError(reason, "Could not download the file"),
+      });
+    } finally {
+      setDownloadPending(false);
+    }
+  };
+
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!canZoom || naturalSize === null) return;
     event.preventDefault();
@@ -942,6 +979,23 @@ export function MediaViewer(props: {
               title="Delete"
             >
               <TrashIcon />
+            </button>
+          ) : null}
+          {activeItem.downloadUrl !== undefined ||
+          props.resolveDownload !== undefined ? (
+            <button
+              className={styles.titleButton}
+              type="button"
+              onClick={() => void download()}
+              disabled={
+                downloadPending ||
+                (activeItem.passwordProtected === true &&
+                  !unlockedPasswords.current.has(activeItem.id))
+              }
+              aria-label={`Download ${activeItem.title}`}
+              title="Download"
+            >
+              <Download aria-hidden="true" size={18} />
             </button>
           ) : null}
           <button
