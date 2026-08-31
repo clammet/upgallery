@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ExternalLink, Plus, X } from "lucide-react";
+import { ExternalLink, Plus, RotateCcw, X } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -417,7 +417,9 @@ function GalleryAdmin(props: {
   );
   const requestMigration = useMutation(api.migrations.request);
   const setSystemPermission = useMutation(api.galleries.setSystemPermission);
+  const resetFolderAccess = useMutation(api.folders.resetAccessPolicySubtree);
   const [message, setMessage] = useState<string | null>(null);
+  const [resettingFolderAccess, setResettingFolderAccess] = useState(false);
   const [takingUnknownGrantId, setTakingUnknownGrantId] =
     useState<Id<"galleryRoles"> | null>(null);
 
@@ -502,7 +504,35 @@ function GalleryAdmin(props: {
 
       <FileIconAdmin galleryId={gallery._id} setMessage={setMessage} />
 
-      <Section title="Permissions">
+      <Section
+        title="Permissions"
+        action={
+          details.rootFolder === null ? undefined : (
+            <button
+              className={layout.iconButton}
+              type="button"
+              aria-label="Reset children folders to inherit"
+              title="Reset children folders to inherit"
+              disabled={resettingFolderAccess}
+              onClick={() => {
+                setResettingFolderAccess(true);
+                void resetFolderAccess({
+                  folderId: details.rootFolder!._id,
+                })
+                  .then(() => setMessage("Folder access reset queued"))
+                  .catch(showError(setMessage))
+                  .finally(() => setResettingFolderAccess(false));
+              }}
+            >
+              <RotateCcw
+                aria-hidden="true"
+                className={resettingFolderAccess ? layout.syncSpinner : undefined}
+                size={18}
+              />
+            </button>
+          )
+        }
+      >
         <div className={styles.rows}>
           <SystemPermissionRow
             label="Anonymous"
@@ -1228,8 +1258,20 @@ function FileIconAdmin(props: {
   );
 }
 
-function Section(props: { title: string; children: ReactNode }) {
-  return <section className={styles.section}><h3>{props.title}</h3>{props.children}</section>;
+function Section(props: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionHeading}>
+        <h3>{props.title}</h3>
+        {props.action}
+      </div>
+      {props.children}
+    </section>
+  );
 }
 
 function Stat(props: { label: string; value: string; action?: ReactNode }) {

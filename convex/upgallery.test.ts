@@ -1726,6 +1726,104 @@ describe("upgallery backend", () => {
     ).rejects.toThrow("Root access is controlled by gallery permissions");
   });
 
+  test("gallery owners can reset a folder subtree to inherited access", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const admin = await seedProfile(t, {
+        email: "admin@example.com",
+        admin: true,
+      });
+      const editor = await seedProfile(t, { email: "editor@example.com" });
+      const authed = asUser(t, admin.googleSubject, "admin@example.com");
+      const editorClient = asUser(
+        t,
+        editor.googleSubject,
+        "editor@example.com",
+      );
+      const galleryId = await authed.mutation(api.galleries.create, {
+        name: "Reset access",
+        slug: "reset-access",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "reset-access",
+        hosts: [{ host: "reset-access.example.com", rootPath: "/" }],
+      });
+      const gallery = await t.run(async (ctx) =>
+        ctx.db.get("galleries", galleryId),
+      );
+      const rootFolderId = gallery!.rootFolderId!;
+      const branch = await authed.mutation(api.folders.create, {
+        galleryId,
+        parentId: rootFolderId,
+        name: "Branch",
+        accessPolicy: "restricted",
+        discoverability: "listed",
+      });
+      const sibling = await authed.mutation(api.folders.create, {
+        galleryId,
+        parentId: rootFolderId,
+        name: "Sibling",
+        accessPolicy: "public",
+        discoverability: "listed",
+      });
+      if (branch.kind !== "complete" || sibling.kind !== "complete") {
+        throw new Error("Shared storage folder unexpectedly required I/O");
+      }
+      const child = await authed.mutation(api.folders.create, {
+        galleryId,
+        parentId: branch.folderId,
+        name: "Child",
+        accessPolicy: "public",
+        discoverability: "listed",
+      });
+      if (child.kind !== "complete") {
+        throw new Error("Shared storage folder unexpectedly required I/O");
+      }
+      const grandchild = await authed.mutation(api.folders.create, {
+        galleryId,
+        parentId: child.folderId,
+        name: "Grandchild",
+        accessPolicy: "restricted",
+        discoverability: "listed",
+      });
+      if (grandchild.kind !== "complete") {
+        throw new Error("Shared storage folder unexpectedly required I/O");
+      }
+
+      await authed.mutation(api.roles.upsert, {
+        galleryId,
+        profileId: editor.profileId,
+        role: "editor",
+      });
+      await expect(
+        editorClient.mutation(api.folders.resetAccessPolicySubtree, {
+          folderId: branch.folderId,
+        }),
+      ).rejects.toThrow("Unauthorized");
+
+      await authed.mutation(api.folders.resetAccessPolicySubtree, {
+        folderId: branch.folderId,
+      });
+      const immediate = await t.run(async (ctx) =>
+        ctx.db.get("folders", branch.folderId),
+      );
+      expect(immediate?.accessPolicy).toBe("inherit");
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const reset = await t.run(async (ctx) => ({
+        child: await ctx.db.get("folders", child.folderId),
+        grandchild: await ctx.db.get("folders", grandchild.folderId),
+        sibling: await ctx.db.get("folders", sibling.folderId),
+      }));
+      expect(reset.child?.accessPolicy).toBe("inherit");
+      expect(reset.grandchild?.accessPolicy).toBe("inherit");
+      expect(reset.sibling?.accessPolicy).toBe("public");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("folder previews inherit gallery settings and support render-seeded overrides", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {

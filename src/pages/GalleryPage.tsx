@@ -23,6 +23,7 @@ import {
   FolderPlus,
   Info,
   RefreshCw,
+  RotateCcw,
   Settings,
   Upload,
   X,
@@ -277,6 +278,7 @@ export function GalleryPage(props: {
     : (pagedEntries?.page ?? [])) as GalleryEntry[];
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
+  const resetFolderAccess = useMutation(api.folders.resetAccessPolicySubtree);
   const removeFolders = useMutation(api.folders.removeMany);
   const moveFolders = useMutation(api.folders.moveMany);
   const startBulkDelete = useMutation(api.bulkOperations.startDelete);
@@ -1890,6 +1892,17 @@ export function GalleryPage(props: {
           isRoot={listing.folder.parentId === undefined}
           initialPreviewMode={listing.folder.previewMode}
           initialPreviewSource={listing.folder.previewSource}
+          onResetAccess={
+            listing.access.canAdminGallery
+              ? async () => {
+                  await resetFolderAccess({
+                    anonymousClaim: anonymousClaim(),
+                    folderId,
+                  });
+                  setNotice("Folder access reset queued");
+                }
+              : undefined
+          }
           onClose={() => setFolderDialog(null)}
           onSubmit={async (
             name,
@@ -2818,6 +2831,7 @@ function FolderForm(props: {
   isRoot: boolean;
   initialPreviewMode?: FolderPreviewMode;
   initialPreviewSource?: string;
+  onResetAccess?: () => Promise<void>;
   onClose: () => void;
   onSubmit: (
     name: string,
@@ -2854,10 +2868,43 @@ function FolderForm(props: {
       : "skip",
   );
   const [error, setError] = useState<string | null>(null);
+  const [resetPending, setResetPending] = useState(false);
   return (
     <Dialog
       title={props.title}
-      headerExtra={props.headerExtra}
+      headerExtra={
+        <>
+          {props.onResetAccess === undefined ? null : (
+            <button
+              className={layout.iconButton}
+              type="button"
+              aria-label="Reset this and children folders to inherit"
+              title="Reset this and children folders to inherit"
+              disabled={resetPending}
+              onClick={() => {
+                setError(null);
+                setResetPending(true);
+                void props
+                  .onResetAccess!()
+                  .then(() => setAccessPolicy("inherit"))
+                  .catch((reason: unknown) => {
+                    setError(
+                      friendlyError(reason, "Could not reset folder access"),
+                    );
+                  })
+                  .finally(() => setResetPending(false));
+              }}
+            >
+              <RotateCcw
+                aria-hidden="true"
+                className={resetPending ? layout.syncSpinner : undefined}
+                size={18}
+              />
+            </button>
+          )}
+          {props.headerExtra}
+        </>
+      }
       onClose={props.onClose}
     >
       <form

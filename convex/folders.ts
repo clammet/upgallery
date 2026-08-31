@@ -43,6 +43,7 @@ type FolderPreviewMode =
   | "custom";
 
 const MAX_BULK_FOLDERS = 128;
+const ACCESS_RESET_BATCH_SIZE = 128;
 const MAX_PREVIEW_SOURCE_LENGTH = 2_048;
 const MAX_PREVIEW_SUGGESTIONS = 10;
 
@@ -1088,5 +1089,98 @@ export const update = mutation({
       createdAt: Date.now(),
     });
     return { kind: "complete" as const, folderId: folder._id };
+  },
+});
+
+export const resetAccessPolicySubtree = mutation({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    folderId: v.id("folders"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const folder = await ctx.db.get("folders", args.folderId);
+    if (folder === null || folder.filesystemMissingAt !== undefined) {
+      throw new Error("Folder not found");
+    }
+    const gallery = await ctx.db.get("galleries", folder.galleryId);
+    if (gallery === null || gallery.deletedAt !== undefined) {
+      throw new Error("Gallery not found");
+    }
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    const actor = await requireGalleryRole(
+      ctx,
+      gallery,
+      rootFolder,
+      "owner",
+      args.anonymousClaim,
+    );
+
+    if (folder.accessPolicy !== "inherit") {
+      await ctx.db.patch("folders", folder._id, { accessPolicy: "inherit" });
+    }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.folders.resetChildAccessPolicies,
+      { folderId: folder._id, cursor: null },
+    );
+    await ctx.db.insert("auditEvents", {
+      actorProfileId: actor._id,
+      action: "folder.access_subtree_reset",
+      galleryId: gallery._id,
+      detail: folder.name,
+      createdAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+export const resetChildAccessPolicies = internalMutation({
+  args: {
+    folderId: v.id("folders"),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const folder = await ctx.db.get("folders", args.folderId);
+    if (folder === null || folder.filesystemMissingAt !== undefined) {
+      return null;
+    }
+    const gallery = await ctx.db.get("galleries", folder.galleryId);
+    if (gallery === null || gallery.deletedAt !== undefined) {
+      return null;
+    }
+    const page = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q.eq("galleryId", gallery._id).eq("parentId", folder._id),
+      )
+      .paginate({
+        numItems: ACCESS_RESET_BATCH_SIZE,
+        cursor: args.cursor,
+      });
+
+    for (const child of page.page) {
+      if (child.filesystemMissingAt !== undefined) continue;
+      if (child.accessPolicy !== "inherit") {
+        await ctx.db.patch("folders", child._id, { accessPolicy: "inherit" });
+      }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.folders.resetChildAccessPolicies,
+        { folderId: child._id, cursor: null },
+      );
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.folders.resetChildAccessPolicies,
+        { folderId: folder._id, cursor: page.continueCursor },
+      );
+    }
+    return null;
   },
 });
