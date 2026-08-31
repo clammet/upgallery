@@ -6,13 +6,14 @@ import {
   folderDiscoverability,
   folderPreviewMode,
 } from "./lib/validators";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   getFilesystemFolderSegments,
   getFilesystemStorageKey,
 } from "./lib/filesystem";
 import {
   cleanFilesystemSegment,
+  entryNameKey,
   MAX_FOLDER_DEPTH,
   normalizeSlug,
   validateFilesystemSegment,
@@ -34,9 +35,16 @@ import {
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { uploaderAttribution } from "./lib/profiles";
 
-type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+type FolderPreviewMode =
+  | "first"
+  | "random"
+  | "first3"
+  | "random3"
+  | "custom";
 
 const MAX_BULK_FOLDERS = 128;
+const MAX_PREVIEW_SOURCE_LENGTH = 2_048;
+const MAX_PREVIEW_SUGGESTIONS = 10;
 
 function randomPreviewThreshold(
   seed: number,
@@ -49,6 +57,97 @@ function randomPreviewThreshold(
   }
   return (hash >>> 0).toString(16).padStart(8, "0").padEnd(64, "0");
 }
+
+function normalizePreviewSource(value: string | null | undefined) {
+  const source = value?.trim();
+  if (source === undefined || source.length === 0) return undefined;
+  if (source.length > MAX_PREVIEW_SOURCE_LENGTH) {
+    throw new Error(
+      `Folder preview filename or URL cannot exceed ${MAX_PREVIEW_SOURCE_LENGTH} characters`,
+    );
+  }
+  return source;
+}
+
+function isPreviewUrl(source: string) {
+  return (
+    source.includes("/") ||
+    /^[a-z][a-z\d+.-]*:/i.test(source)
+  );
+}
+
+export const previewFilenameSuggestions = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.optional(v.id("folders")),
+    search: v.string(),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const gallery = await ctx.db.get("galleries", args.galleryId);
+    if (gallery === null || gallery.deletedAt !== undefined) {
+      throw new Error("Gallery not found");
+    }
+    const search = entryNameKey(args.search.trim());
+    if (search.length === 0 || search.length > 240) return [];
+
+    if (args.folderId !== undefined) {
+      const folder = await ctx.db.get("folders", args.folderId);
+      if (folder === null || folder.galleryId !== gallery._id) {
+        throw new Error("Folder not found");
+      }
+      const profile = await getCurrentProfile(ctx, args.anonymousClaim);
+      const access = await resolveFolderAccess(
+        ctx,
+        gallery._id,
+        folder,
+        profile,
+        args.anonymousClaim,
+      );
+      if (!access.canView) throw new Error("Unauthorized");
+      const matches = await ctx.db
+        .query("entries")
+        .withIndex("by_folderId_and_state_and_nameKey", (q) =>
+          q
+            .eq("folderId", folder._id)
+            .eq("state", "ready")
+            .gte("nameKey", search)
+            .lt("nameKey", `${search}\uffff`),
+        )
+        .take(MAX_PREVIEW_SUGGESTIONS * 2);
+      return matches
+        .filter((entry) => entry.moveJobId === undefined)
+        .slice(0, MAX_PREVIEW_SUGGESTIONS)
+        .map((entry) => entry.name);
+    }
+
+    const rootFolder =
+      gallery.rootFolderId === undefined
+        ? null
+        : await ctx.db.get("folders", gallery.rootFolderId);
+    await requireGalleryManager(
+      ctx,
+      gallery,
+      rootFolder,
+      args.anonymousClaim,
+    );
+    const candidates = await ctx.db
+      .query("entries")
+      .withIndex("by_galleryId_and_state", (q) =>
+        q.eq("galleryId", gallery._id).eq("state", "ready"),
+      )
+      .take(512);
+    return candidates
+      .filter(
+        (entry) =>
+          entry.moveJobId === undefined && entry.nameKey.startsWith(search),
+      )
+      .sort((left, right) => left.nameKey.localeCompare(right.nameKey))
+      .slice(0, MAX_PREVIEW_SUGGESTIONS)
+      .map((entry) => entry.name);
+  },
+});
 
 export const list = query({
   args: {
@@ -116,13 +215,41 @@ export const list = query({
       folders.map(async (child) => {
         const mode =
           child.previewMode ?? gallery.folderPreviewMode ?? "first";
+        const previewSource =
+          child.previewMode === "custom"
+            ? child.previewSource
+            : child.previewMode === undefined && mode === "custom"
+              ? gallery.folderPreviewSource
+              : undefined;
         const count = mode === "first3" || mode === "random3" ? 3 : 1;
-        let candidates;
-        if (mode === "first" || mode === "first3") {
+        let candidates: Array<Doc<"entries">>;
+        let customUrl: string | undefined;
+        if (mode === "custom") {
+          const source = normalizePreviewSource(previewSource);
+          if (source === undefined) {
+            candidates = [];
+          } else if (isPreviewUrl(source)) {
+            customUrl = source;
+            candidates = [];
+          } else {
+            const matches = await ctx.db
+              .query("entries")
+              .withIndex("by_folderId_and_state_and_nameKey", (q) =>
+                q
+                  .eq("folderId", child._id)
+                  .eq("state", "ready")
+                  .eq("nameKey", entryNameKey(source)),
+              )
+              .take(4);
+            candidates = matches.filter(
+              (entry) => entry.moveJobId === undefined,
+            ).slice(0, 1);
+          }
+        } else if (mode === "first" || mode === "first3") {
           candidates = await ctx.db
             .query("entries")
             .withIndex(
-              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_name",
+              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_nameKey",
               (q) =>
                 q
                   .eq("folderId", child._id)
@@ -170,6 +297,7 @@ export const list = query({
         return {
           folderId: child._id,
           mode,
+          ...(customUrl === undefined ? {} : { customUrl }),
           entries: candidates.map((entry) => ({
             _id: entry._id,
             name: entry.name,
@@ -349,6 +477,7 @@ export const create = mutation({
     accessPolicy: folderAccessPolicy,
     discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
+    previewSource: v.optional(v.union(v.string(), v.null())),
     existingOk: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -382,6 +511,10 @@ export const create = mutation({
       throw new Error("Folder name must contain between 1 and 120 characters");
     }
     const slug = normalizeSlug(name);
+    const previewSource = normalizePreviewSource(args.previewSource);
+    if (args.previewMode === "custom" && previewSource === undefined) {
+      throw new Error("Custom folder previews require a filename or URL");
+    }
     const existing = await ctx.db
       .query("folders")
       .withIndex("by_galleryId_and_parentId_and_slug", (q) =>
@@ -406,6 +539,8 @@ export const create = mutation({
         accessPolicy: args.accessPolicy,
         discoverability: args.discoverability,
         previewMode: args.previewMode,
+        previewSource:
+          args.previewMode === "custom" ? previewSource : undefined,
         tokenHash: await sha256(token),
         expiresAt: Date.now() + 15 * 60 * 1000,
         state: "pending",
@@ -426,6 +561,8 @@ export const create = mutation({
       accessPolicy: args.accessPolicy,
       discoverability: args.discoverability,
       previewMode: args.previewMode,
+      previewSource:
+        args.previewMode === "custom" ? previewSource : undefined,
     });
     await createFolderStats(ctx, folderId, gallery._id);
     await ctx.db.insert("auditEvents", {
@@ -851,6 +988,7 @@ export const update = mutation({
     accessPolicy: folderAccessPolicy,
     discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
+    previewSource: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
     const folder = await ctx.db.get("folders", args.folderId);
@@ -882,6 +1020,10 @@ export const update = mutation({
       }
     }
     const name = args.name.trim();
+    const previewSource = normalizePreviewSource(args.previewSource);
+    if (args.previewMode === "custom" && previewSource === undefined) {
+      throw new Error("Custom folder previews require a filename or URL");
+    }
     const slug = isRoot ? "" : normalizeSlug(args.name);
     if (!isRoot) {
       const conflicts = await ctx.db
@@ -907,6 +1049,8 @@ export const update = mutation({
         accessPolicy: args.accessPolicy,
         discoverability: args.discoverability,
         previewMode: args.previewMode,
+        previewSource:
+          args.previewMode === "custom" ? previewSource : undefined,
       });
       const token = createToken();
       const operationId = await ctx.db.insert("filesystemOperations", {
@@ -933,6 +1077,8 @@ export const update = mutation({
       accessPolicy: args.accessPolicy,
       discoverability: args.discoverability,
       previewMode: args.previewMode,
+      previewSource:
+        args.previewMode === "custom" ? previewSource : undefined,
     });
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,

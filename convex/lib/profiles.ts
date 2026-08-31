@@ -21,12 +21,42 @@ export async function profileByIdentityId(
 // itself begin with the sentinel.
 const PLACEHOLDER_IDENTITY_PREFIX = "PLACEHOLDER:";
 
+// Files discovered directly on a user mount have no authenticated uploader.
+// Real auth identity ids cannot contain a colon, so this profile can never be
+// claimed by a signed-in user.
+const UNKNOWN_UPLOADER_IDENTITY_ID = "SYSTEM:UNKNOWN_UPLOADER";
+
 export function placeholderIdentityId(normalizedEmail: string): string {
   return PLACEHOLDER_IDENTITY_PREFIX + normalizedEmail;
 }
 
 export function isPlaceholderProfile(profile: Doc<"profiles">): boolean {
   return profile.identityId.startsWith(PLACEHOLDER_IDENTITY_PREFIX);
+}
+
+export function isUnknownUploaderProfile(profile: Doc<"profiles">): boolean {
+  return profile.identityId === UNKNOWN_UPLOADER_IDENTITY_ID;
+}
+
+export async function ensureUnknownUploaderProfile(
+  ctx: MutationCtx,
+): Promise<Doc<"profiles">> {
+  const existing = await profileByIdentityId(
+    ctx,
+    UNKNOWN_UPLOADER_IDENTITY_ID,
+  );
+  if (existing !== null) return existing;
+
+  const profileId = await ctx.db.insert("profiles", {
+    identityId: UNKNOWN_UPLOADER_IDENTITY_ID,
+    displayName: "Unknown",
+    isAnonymous: false,
+    isSystemAdmin: false,
+    lastSeenAt: 0,
+  });
+  const profile = await ctx.db.get("profiles", profileId);
+  if (profile === null) throw new Error("Could not create Unknown uploader");
+  return profile;
 }
 
 export function publicProfile(profile: Doc<"profiles">) {

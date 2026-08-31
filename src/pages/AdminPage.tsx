@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ExternalLink, Plus } from "lucide-react";
+import { ExternalLink, Plus, X } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { PageFrame } from "../components/PageFrame";
@@ -32,7 +32,14 @@ import layout from "../styles/layout.module.css";
 
 type GalleryKind = "image" | "uploader";
 type StorageKind = "shared" | "user";
-type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+type FolderPreviewMode =
+  | "first"
+  | "random"
+  | "first3"
+  | "random3"
+  | "custom";
+
+const ADMIN_NOTICE_TIMEOUT_MS = 8_000;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -405,9 +412,23 @@ function GalleryAdmin(props: {
   const remove = useMutation(api.galleries.remove);
   const upsertRole = useMutation(api.roles.upsert);
   const revokeRole = useMutation(api.roles.revoke);
+  const takeUnknownUploaderItems = useMutation(
+    api.roles.takeUnknownUploaderItems,
+  );
   const requestMigration = useMutation(api.migrations.request);
   const setSystemPermission = useMutation(api.galleries.setSystemPermission);
   const [message, setMessage] = useState<string | null>(null);
+  const [takingUnknownGrantId, setTakingUnknownGrantId] =
+    useState<Id<"galleryRoles"> | null>(null);
+
+  useEffect(() => {
+    if (message === null || message.startsWith("Error:")) return;
+    const timeout = window.setTimeout(
+      () => setMessage(null),
+      ADMIN_NOTICE_TIMEOUT_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [message]);
 
   if (details === undefined) return <p>Loading gallery…</p>;
   if (details === null) return <p>Gallery no longer exists.</p>;
@@ -451,7 +472,23 @@ function GalleryAdmin(props: {
         <Stat label="Storage" value={formatBytes(details.stats.totalBytes)} />
         <Stat label="Backend" value={`${gallery.storageKind}/${gallery.storageRoot}`} />
       </div>
-      {message ? <p className={message.startsWith("Error") ? layout.errorNotice : layout.notice}>{message}</p> : null}
+      {message ? (
+        <div
+          className={`${message.startsWith("Error:") ? layout.errorNotice : layout.notice} ${layout.noticeBar}`}
+          role={message.startsWith("Error:") ? "alert" : "status"}
+        >
+          <span>{message}</span>
+          <button
+            type="button"
+            className={layout.iconButton}
+            aria-label="Dismiss message"
+            title="Dismiss"
+            onClick={() => setMessage(null)}
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
+        </div>
+      ) : null}
 
       <Section title="Settings">
         <GallerySettingsForm
@@ -501,7 +538,8 @@ function GalleryAdmin(props: {
           className={styles.inlineForm}
           onSubmit={(event) => {
             event.preventDefault();
-            const data = new FormData(event.currentTarget);
+            const form = event.currentTarget;
+            const data = new FormData(form);
             void upsertRole({
               galleryId: gallery._id,
               email: String(data.get("email")),
@@ -512,7 +550,7 @@ function GalleryAdmin(props: {
               role: data.get("role") as "owner" | "editor" | "viewer",
             })
               .then(() => {
-                event.currentTarget.reset();
+                form.reset();
                 setMessage("Permission saved");
               })
               .catch(showError(setMessage));
@@ -531,7 +569,41 @@ function GalleryAdmin(props: {
                 {grant.profile?.isPlaceholder ? <InvitedBadge invitedAt={grant.profile.invitedAt} /> : null}
               </span>
               <span>{grant.role}{grant.folderId ? " · folder scope" : " · gallery scope"}</span>
-              <button type="button" onClick={() => void revokeRole({ grantId: grant._id }).catch(showError(setMessage))}>Revoke</button>
+              <span className={styles.rowActions}>
+                {gallery.storageKind === "user" &&
+                grant.role === "owner" &&
+                (grant.folderId === undefined ||
+                  grant.folderId === gallery.rootFolderId) ? (
+                  <button
+                    type="button"
+                    title="Take ownership of Unknown's uploader items"
+                    disabled={takingUnknownGrantId !== null}
+                    onClick={() => {
+                      setTakingUnknownGrantId(grant._id);
+                      void takeUnknownUploaderItems({ grantId: grant._id })
+                        .then(() =>
+                          setMessage("Unknown ownership transfer queued"),
+                        )
+                        .catch(showError(setMessage))
+                        .finally(() => setTakingUnknownGrantId(null));
+                    }}
+                  >
+                    {takingUnknownGrantId === grant._id
+                      ? "Taking…"
+                      : "Take Unknown"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() =>
+                    void revokeRole({ grantId: grant._id }).catch(
+                      showError(setMessage),
+                    )
+                  }
+                >
+                  Revoke
+                </button>
+              </span>
             </div>
           ))}
         </div>
@@ -617,6 +689,7 @@ function GallerySettingsForm(props: {
       gallery.maxFileSizeLimit ?? gallery.maxFileSize,
     ),
     folderPreviewMode: gallery.folderPreviewMode ?? "first",
+    folderPreviewSource: gallery.folderPreviewSource ?? "",
     quickMove: gallery.quickMove === true,
     infiniteScroll: gallery.infiniteScroll !== false,
     paginationPageSize: gallery.paginationPageSize ?? 100,
@@ -626,6 +699,25 @@ function GallerySettingsForm(props: {
       .join("\n"),
     themeJson: initialThemeJson(gallery.theme),
   }));
+  const [folderPreviewMode, setFolderPreviewMode] = useState(
+    initial.folderPreviewMode,
+  );
+  const [folderPreviewSource, setFolderPreviewSource] = useState(
+    initial.folderPreviewSource,
+  );
+  const debouncedPreviewSource = useDebouncedValue(folderPreviewSource, 150);
+  const previewFilenameSuggestions = useQuery(
+    api.folders.previewFilenameSuggestions,
+    gallery.kind === "image" &&
+      folderPreviewMode === "custom" &&
+      debouncedPreviewSource.trim() !== ""
+      ? {
+          anonymousClaim: anonymousClaim(),
+          galleryId: gallery._id,
+          search: debouncedPreviewSource,
+        }
+      : "skip",
+  );
 
   const updateSettings = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -657,6 +749,10 @@ function GallerySettingsForm(props: {
         gallery.kind === "image"
           ? (data.get("folderPreviewMode") as FolderPreviewMode)
           : initial.folderPreviewMode,
+      folderPreviewSource:
+        gallery.kind === "image"
+          ? String(data.get("folderPreviewSource") ?? initial.folderPreviewSource)
+          : initial.folderPreviewSource,
       quickMove:
         gallery.kind === "image"
           ? data.get("quickMove") === "on"
@@ -706,12 +802,36 @@ function GallerySettingsForm(props: {
       <label>Thumbnail frame width <small>(pixels)</small><input name="thumbnailFrameSize" type="number" min="96" max="512" step="1" defaultValue={initialTheme.thumbnailFrameSize ?? 218} /></label>
       {gallery.kind === "image" ? (
         <label>Folder preview default
-          <select name="folderPreviewMode" defaultValue={initial.folderPreviewMode}>
+          <select
+            name="folderPreviewMode"
+            value={folderPreviewMode}
+            onChange={(event) =>
+              setFolderPreviewMode(event.target.value as FolderPreviewMode)
+            }
+          >
             <option value="first">First image</option>
             <option value="random">Random</option>
             <option value="first3">First 3</option>
             <option value="random3">Random 3</option>
+            <option value="custom">Custom</option>
           </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" && folderPreviewMode === "custom" ? (
+        <label>Filename/URL
+          <input
+            name="folderPreviewSource"
+            value={folderPreviewSource}
+            onChange={(event) => setFolderPreviewSource(event.target.value)}
+            list="gallery-folder-preview-filenames"
+            maxLength={2048}
+            required
+          />
+          <datalist id="gallery-folder-preview-filenames">
+            {(previewFilenameSuggestions ?? []).map((name) => (
+              <option value={name} key={name} />
+            ))}
+          </datalist>
         </label>
       ) : null}
       {gallery.kind === "image" ? (
@@ -1057,7 +1177,8 @@ function FileIconAdmin(props: {
         className={styles.inlineForm}
         onSubmit={(event) => {
           event.preventDefault();
-          const data = new FormData(event.currentTarget);
+          const form = event.currentTarget;
+          const data = new FormData(form);
           void upsert({
             galleryId: props.galleryId,
             extension: String(data.get("extension")),
@@ -1066,7 +1187,7 @@ function FileIconAdmin(props: {
             thumbnailUrl: String(data.get("thumbnailUrl") || "") || undefined,
           })
             .then(() => {
-              event.currentTarget.reset();
+              form.reset();
               props.setMessage("File-type override saved");
             })
             .catch(showError(props.setMessage));

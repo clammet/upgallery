@@ -48,6 +48,18 @@ const galleryAvailability = v.object({
 const MIN_THUMBNAIL_FRAME_SIZE = 96;
 const MAX_THUMBNAIL_FRAME_SIZE = 512;
 const DEFAULT_GALLERY_PAGE_SIZE = 100;
+const MAX_FOLDER_PREVIEW_SOURCE_LENGTH = 2_048;
+
+function normalizeFolderPreviewSource(value: string | null | undefined) {
+  const source = value?.trim();
+  if (source === undefined || source.length === 0) return undefined;
+  if (source.length > MAX_FOLDER_PREVIEW_SOURCE_LENGTH) {
+    throw new Error(
+      `Folder preview filename or URL cannot exceed ${MAX_FOLDER_PREVIEW_SOURCE_LENGTH} characters`,
+    );
+  }
+  return source;
+}
 const MIN_GALLERY_PAGE_SIZE = 50;
 const MAX_GALLERY_PAGE_SIZE = 250;
 const GALLERY_PAGE_SIZE_STEP = 50;
@@ -152,6 +164,7 @@ export const create = mutation({
     maxFileSize: v.optional(v.number()),
     hosts: v.array(hostInput),
     folderPreviewMode: v.optional(folderPreviewMode),
+    folderPreviewSource: v.optional(v.string()),
     theme: v.optional(themeValidator),
   },
   returns: v.id("galleries"),
@@ -193,6 +206,15 @@ export const create = mutation({
       rootPath: normalizeRootPath(route.rootPath),
     }));
     validateThumbnailFrameSize(args.theme ?? {});
+    const folderPreviewSource = normalizeFolderPreviewSource(
+      args.folderPreviewSource,
+    );
+    if (
+      args.folderPreviewMode === "custom" &&
+      folderPreviewSource === undefined
+    ) {
+      throw new Error("Custom folder previews require a filename or URL");
+    }
     await assertHostsAvailable(ctx, hosts);
 
     const galleryId = await ctx.db.insert("galleries", {
@@ -206,6 +228,9 @@ export const create = mutation({
       anonymousRole: "viewer",
       authenticatedRole: "viewer",
       folderPreviewMode: args.folderPreviewMode ?? "first",
+      ...(args.folderPreviewMode === "custom"
+        ? { folderPreviewSource }
+        : {}),
       infiniteScroll: true,
       paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
       theme: args.theme ?? {},
@@ -585,6 +610,7 @@ export const update = mutation({
     maxFileSizeLimit: v.optional(v.number()),
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
+    folderPreviewSource: v.optional(v.union(v.string(), v.null())),
     quickMove: v.optional(v.boolean()),
     editorBulkActions: v.optional(v.boolean()),
     infiniteScroll: v.optional(v.boolean()),
@@ -608,6 +634,18 @@ export const update = mutation({
     }
     if (args.paginationPageSize !== undefined) {
       validatePaginationPageSize(args.paginationPageSize);
+    }
+    const folderPreviewSource =
+      args.folderPreviewSource === undefined
+        ? gallery.folderPreviewSource
+        : normalizeFolderPreviewSource(args.folderPreviewSource);
+    const effectiveFolderPreviewMode =
+      args.folderPreviewMode ?? gallery.folderPreviewMode ?? "first";
+    if (
+      effectiveFolderPreviewMode === "custom" &&
+      folderPreviewSource === undefined
+    ) {
+      throw new Error("Custom folder previews require a filename or URL");
     }
     if (
       args.maxFileSize !== undefined &&
@@ -680,6 +718,9 @@ export const update = mutation({
       ...(args.folderPreviewMode === undefined
         ? {}
         : { folderPreviewMode: args.folderPreviewMode }),
+      ...(args.folderPreviewSource === undefined
+        ? {}
+        : { folderPreviewSource }),
       ...(args.quickMove === undefined
         ? {}
         : { quickMove: args.quickMove ? true : undefined }),

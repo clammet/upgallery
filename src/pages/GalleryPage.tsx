@@ -151,13 +151,19 @@ function paginationLabel(input: {
   );
 }
 
-type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+type FolderPreviewMode =
+  | "first"
+  | "random"
+  | "first3"
+  | "random3"
+  | "custom";
 type FolderAccessPolicy = Doc<"folders">["accessPolicy"];
 type FolderDiscoverability = Doc<"folders">["discoverability"];
 
 type FolderPreviewData = {
   folderId: Id<"folders">;
   mode: FolderPreviewMode;
+  customUrl?: string;
   entries: Array<{
     _id: Id<"entries">;
     name: string;
@@ -1819,17 +1825,20 @@ export function GalleryPage(props: {
       {folderDialog === "create" ? (
         <FolderForm
           title="New folder"
+          galleryId={props.gallery._id}
           initialName=""
           initialAccessPolicy="inherit"
           initialDiscoverability="listed"
           isRoot={false}
           initialPreviewMode={undefined}
+          initialPreviewSource={undefined}
           onClose={() => setFolderDialog(null)}
           onSubmit={async (
             name,
             accessPolicy,
             discoverability,
             previewMode,
+            previewSource,
           ) => {
             const result = await createFolder({
               anonymousClaim: anonymousClaim(),
@@ -1839,6 +1848,7 @@ export function GalleryPage(props: {
               accessPolicy,
               discoverability,
               ...(previewMode === undefined ? {} : { previewMode }),
+              previewSource: previewSource ?? null,
             });
             await completeFilesystemOperation(result);
             setFolderDialog(null);
@@ -1849,6 +1859,8 @@ export function GalleryPage(props: {
       {folderDialog === "settings" ? (
         <FolderForm
           title="Folder settings"
+          galleryId={props.gallery._id}
+          previewFolderId={folderId}
           headerExtra={
             <>
               {listing.access.canAdminGallery ? (
@@ -1877,12 +1889,14 @@ export function GalleryPage(props: {
           initialDiscoverability={listing.folder.discoverability}
           isRoot={listing.folder.parentId === undefined}
           initialPreviewMode={listing.folder.previewMode}
+          initialPreviewSource={listing.folder.previewSource}
           onClose={() => setFolderDialog(null)}
           onSubmit={async (
             name,
             accessPolicy,
             discoverability,
             previewMode,
+            previewSource,
           ) => {
             const result = await updateFolder({
               anonymousClaim: anonymousClaim(),
@@ -1891,6 +1905,7 @@ export function GalleryPage(props: {
               accessPolicy,
               discoverability,
               ...(previewMode === undefined ? {} : { previewMode }),
+              previewSource: previewSource ?? null,
             });
             await completeFilesystemOperation(result);
             setFolderDialog(null);
@@ -2141,6 +2156,12 @@ function FolderPreview(props: { preview?: FolderPreviewData }) {
         aria-hidden="true"
         strokeWidth={1.1}
       />
+      {props.preview?.customUrl !== undefined ? (
+        <MediaThumbnail
+          className={styles.folderPreviewSingle}
+          src={props.preview.customUrl}
+        />
+      ) : null}
       {entries.map((entry, index) => (
         <MediaThumbnail
           className={
@@ -2789,17 +2810,21 @@ async function completeFilesystemOperation(result: {
 function FolderForm(props: {
   title: string;
   headerExtra?: ReactNode;
+  galleryId: Id<"galleries">;
+  previewFolderId?: Id<"folders">;
   initialName: string;
   initialAccessPolicy: FolderAccessPolicy;
   initialDiscoverability: FolderDiscoverability;
   isRoot: boolean;
   initialPreviewMode?: FolderPreviewMode;
+  initialPreviewSource?: string;
   onClose: () => void;
   onSubmit: (
     name: string,
     accessPolicy: FolderAccessPolicy,
     discoverability: FolderDiscoverability,
     previewMode?: FolderPreviewMode,
+    previewSource?: string,
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(props.initialName);
@@ -2812,6 +2837,22 @@ function FolderForm(props: {
   const [previewMode, setPreviewMode] = useState<
     FolderPreviewMode | "inherit"
   >(props.initialPreviewMode ?? "inherit");
+  const [previewSource, setPreviewSource] = useState(
+    props.initialPreviewSource ?? "",
+  );
+  const previewFilenameSuggestions = useQuery(
+    api.folders.previewFilenameSuggestions,
+    previewMode === "custom" &&
+      props.previewFolderId !== undefined &&
+      previewSource.trim() !== ""
+      ? {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.galleryId,
+          folderId: props.previewFolderId,
+          search: previewSource,
+        }
+      : "skip",
+  );
   const [error, setError] = useState<string | null>(null);
   return (
     <Dialog
@@ -2829,6 +2870,7 @@ function FolderForm(props: {
               props.isRoot ? "inherit" : accessPolicy,
               props.isRoot ? "listed" : discoverability,
               previewMode === "inherit" ? undefined : previewMode,
+              previewMode === "custom" ? previewSource.trim() : undefined,
             )
             .catch((reason: unknown) => {
               setError(friendlyError(reason, "Could not save"));
@@ -2897,8 +2939,28 @@ function FolderForm(props: {
             <option value="random">Random</option>
             <option value="first3">First 3</option>
             <option value="random3">Random 3</option>
+            <option value="custom">Custom</option>
           </select>
         </label>
+        {previewMode === "custom" ? (
+          <label>
+            Filename/URL
+            <input
+              value={previewSource}
+              onChange={(event) => setPreviewSource(event.target.value)}
+              list={`folder-preview-filenames-${props.previewFolderId ?? "new"}`}
+              maxLength={2048}
+              required
+            />
+            <datalist
+              id={`folder-preview-filenames-${props.previewFolderId ?? "new"}`}
+            >
+              {(previewFilenameSuggestions ?? []).map((filename) => (
+                <option value={filename} key={filename} />
+              ))}
+            </datalist>
+          </label>
+        ) : null}
         {error ? <p className={layout.formError}>{error}</p> : null}
         <button type="submit">Save</button>
       </form>

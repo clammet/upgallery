@@ -4,6 +4,7 @@ import { googlyAuth } from "./lib/auth";
 import { ensureCurrentProfile } from "./lib/ensureProfile";
 import {
   isPlaceholderProfile,
+  isUnknownUploaderProfile,
   profileByIdentityId,
   publicProfile,
 } from "./lib/profiles";
@@ -67,7 +68,9 @@ export const listForAdmin = query({
   handler: async (ctx) => {
     await requireSystemAdmin(ctx);
     const profiles = await ctx.db.query("profiles").order("desc").take(200);
-    return profiles.map(publicProfile);
+    return profiles
+      .filter((profile) => !isUnknownUploaderProfile(profile))
+      .map(publicProfile);
   },
 });
 
@@ -79,7 +82,12 @@ export const setSystemAdmin = mutation({
   handler: async (ctx, args) => {
     const actor = await requireSystemAdmin(ctx);
     const target = await ctx.db.get("profiles", args.profileId);
-    if (target === null || target.isAnonymous || isPlaceholderProfile(target)) {
+    if (
+      target === null ||
+      target.isAnonymous ||
+      isPlaceholderProfile(target) ||
+      isUnknownUploaderProfile(target)
+    ) {
       throw new Error("Only signed-in SSO profiles can be system admins");
     }
     if (actor._id === target._id && !args.enabled) {

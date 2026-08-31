@@ -56,7 +56,7 @@
 .dialogHeaderActions { align-items: center; display: inline-flex; gap: .5rem; }
 .dialogHeaderLink { align-items: center; color: var(--gallery-accent); display: inline-flex; font-size: .8rem; gap: .3rem; white-space: nowrap; }
 .form { display: grid; gap: .7rem; }
-.form label { display: grid; font-size: .78rem; gap: .25rem; }
+.form label { display: grid; font-size: .875rem; gap: .25rem; }
 .formError { font-size: .8rem; margin: 0; }
 .buttonRow { display: flex; gap: .5rem; }
 @media (max-width: 650px) {

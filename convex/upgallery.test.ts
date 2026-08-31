@@ -675,6 +675,118 @@ describe("upgallery backend", () => {
     ).resolves.toEqual([]);
   });
 
+  test("user-mount items backfill to Unknown and can be adopted by an owner", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const admin = await seedProfile(t, {
+        email: "admin@example.com",
+        admin: true,
+      });
+      const authed = asUser(
+        t,
+        admin.googleSubject,
+        "admin@example.com",
+      );
+      const galleryId = await authed.mutation(api.galleries.create, {
+        name: "Mounted gallery",
+        slug: "mounted-ownership",
+        kind: "image",
+        storageKind: "user",
+        storageRoot: "mounted-ownership",
+        hosts: [{ host: "mounted-ownership.example.com", rootPath: "/" }],
+      });
+      const details = await authed.query(api.galleries.adminDetails, {
+        galleryId,
+      });
+      const rootFolderId = details!.rootFolder!._id;
+      const ownerGrant = details!.grants.find(
+        (grant) =>
+          grant.profileId === admin.profileId && grant.role === "owner",
+      );
+      if (ownerGrant === undefined) throw new Error("Owner grant not found");
+      const editor = await seedProfile(t, { email: "editor@example.com" });
+      const editorClient = asUser(
+        t,
+        editor.googleSubject,
+        "editor@example.com",
+      );
+      await authed.mutation(api.roles.upsert, {
+        galleryId,
+        profileId: editor.profileId,
+        role: "editor",
+      });
+      await expect(
+        editorClient.mutation(api.roles.takeUnknownUploaderItems, {
+          grantId: ownerGrant._id,
+        }),
+      ).rejects.toThrow("Unauthorized");
+
+      const [legacyEntryId, claimedEntryId] = await t.run(async (ctx) => {
+        const base = {
+          galleryId,
+          folderId: rootFolderId,
+          ownerProfileId: admin.profileId,
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image" as const,
+          size: 12,
+          sha256: "b".repeat(64),
+          storageKind: "user" as const,
+          state: "ready" as const,
+          createdAt: 1,
+          updatedAt: 1,
+        };
+        return await Promise.all([
+          ctx.db.insert("entries", {
+            ...base,
+            name: "legacy.jpg",
+            nameKey: "legacy.jpg",
+            storageKey: "public/users/mounted-ownership/legacy.jpg",
+            filesystemIdentity: "1:1",
+          }),
+          ctx.db.insert("entries", {
+            ...base,
+            name: "claimed.jpg",
+            nameKey: "claimed.jpg",
+            storageKey: "public/users/mounted-ownership/claimed.jpg",
+            filesystemIdentity: "1:2",
+            filesystemOwnershipClaimed: true,
+          }),
+        ]);
+      });
+
+      await t.mutation(internal.roles.backfillUnknownUploaderOwnership, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const backfilled = await t.run(async (ctx) => {
+        const legacy = await ctx.db.get("entries", legacyEntryId);
+        const claimed = await ctx.db.get("entries", claimedEntryId);
+        const uploader =
+          legacy === null
+            ? null
+            : await ctx.db.get("profiles", legacy.ownerProfileId);
+        return { legacy, claimed, uploader };
+      });
+      expect(backfilled.uploader?.displayName).toBe("Unknown");
+      expect(backfilled.legacy?.ownerProfileId).not.toBe(admin.profileId);
+      expect(backfilled.claimed?.ownerProfileId).toBe(admin.profileId);
+
+      await authed.mutation(api.roles.takeUnknownUploaderItems, {
+        grantId: ownerGrant._id,
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const adopted = await t.run(async (ctx) =>
+        ctx.db.get("entries", legacyEntryId),
+      );
+      expect(adopted).toMatchObject({
+        ownerProfileId: admin.profileId,
+        filesystemOwnershipClaimed: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("gallery admin access requires a gallery-wide owner grant", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {
@@ -1645,10 +1757,10 @@ describe("upgallery backend", () => {
     }
     await t.run(async (ctx) => {
       for (const [index, name] of [
-        "charlie.jpg",
+        "Charlie.jpg",
         "alpha.jpg",
         "delta.jpg",
-        "bravo.jpg",
+        "Bravo.jpg",
       ].entries()) {
         // Spread the hashes across the hex range so seeded random previews
         // pick different entries regardless of how the folder id hashes.
@@ -1685,11 +1797,59 @@ describe("upgallery backend", () => {
         mode: "first3",
         entries: [
           { name: "alpha.jpg" },
-          { name: "bravo.jpg" },
-          { name: "charlie.jpg" },
+          { name: "Bravo.jpg" },
+          { name: "Charlie.jpg" },
         ],
       },
     ]);
+
+    const suggestions = await authed.query(
+      api.folders.previewFilenameSuggestions,
+      {
+        galleryId,
+        folderId: created.folderId,
+        search: "br",
+      },
+    );
+    expect(suggestions).toEqual(["Bravo.jpg"]);
+
+    await authed.mutation(api.folders.update, {
+      folderId: created.folderId,
+      name: "Album",
+      accessPolicy: "public",
+      discoverability: "listed",
+      previewMode: "custom",
+      previewSource: "DELTA.JPG",
+    });
+    const customFilename = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      previewSeed: 11,
+    });
+    expect(customFilename.folderPreviews[0]).toMatchObject({
+      mode: "custom",
+      entries: [{ name: "delta.jpg" }],
+    });
+
+    const customUrl = "https://images.example.com/folder-cover.jpg";
+    await authed.mutation(api.folders.update, {
+      folderId: created.folderId,
+      name: "Album",
+      accessPolicy: "public",
+      discoverability: "listed",
+      previewMode: "custom",
+      previewSource: customUrl,
+    });
+    const customUrlListing = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      previewSeed: 11,
+    });
+    expect(customUrlListing.folderPreviews[0]).toMatchObject({
+      mode: "custom",
+      customUrl,
+      entries: [],
+    });
 
     await authed.mutation(api.folders.update, {
       folderId: created.folderId,
@@ -1723,6 +1883,21 @@ describe("upgallery backend", () => {
       previewSeed: 11,
     });
     expect(reset.folderPreviews[0]?.mode).toBe("first3");
+
+    await authed.mutation(api.galleries.update, {
+      galleryId,
+      folderPreviewMode: "custom",
+      folderPreviewSource: "bravo.JPG",
+    });
+    const customDefault = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: gallery!.rootFolderId!,
+      previewSeed: 11,
+    });
+    expect(customDefault.folderPreviews[0]).toMatchObject({
+      mode: "custom",
+      entries: [{ name: "Bravo.jpg" }],
+    });
   });
 
   test("a user-backed directory is reconciled incrementally and skips an unchanged mtime", async () => {

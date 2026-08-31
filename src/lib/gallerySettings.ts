@@ -4,7 +4,12 @@
 // long-open tab cannot overwrite settings that were changed elsewhere.
 import { THEME_MODE_DEFAULTS, type ThemeMode } from "./theme";
 
-export type FolderPreviewMode = "first" | "random" | "first3" | "random3";
+export type FolderPreviewMode =
+  | "first"
+  | "random"
+  | "first3"
+  | "random3"
+  | "custom";
 
 export type GalleryTheme = {
   accent?: string;
@@ -43,6 +48,7 @@ export type SettingsSnapshot = {
   maxFileSizeMib: number;
   maxFileSizeLimitMib: number;
   folderPreviewMode: FolderPreviewMode;
+  folderPreviewSource: string;
   quickMove: boolean;
   infiniteScroll: boolean;
   paginationPageSize: number;
@@ -56,6 +62,7 @@ export type GallerySettingsUpdate = {
   maxFileSize?: number;
   maxFileSizeLimit?: number;
   folderPreviewMode?: FolderPreviewMode;
+  folderPreviewSource?: string;
   quickMove?: boolean;
   infiniteScroll?: boolean;
   paginationPageSize?: number;
@@ -144,6 +151,9 @@ export function diffGallerySettings(
     ...(current.folderPreviewMode === initial.folderPreviewMode
       ? {}
       : { folderPreviewMode: current.folderPreviewMode }),
+    ...(current.folderPreviewSource === initial.folderPreviewSource
+      ? {}
+      : { folderPreviewSource: current.folderPreviewSource }),
     ...(current.quickMove === initial.quickMove
       ? {}
       : { quickMove: current.quickMove }),

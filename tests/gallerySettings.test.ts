@@ -16,6 +16,7 @@ function snapshot(): SettingsSnapshot {
     maxFileSizeMib: 100,
     maxFileSizeLimitMib: 200,
     folderPreviewMode: "first",
+    folderPreviewSource: "",
     quickMove: false,
     infiniteScroll: true,
     paginationPageSize: 100,
@@ -67,6 +68,19 @@ describe("gallery settings dirty-field detection", () => {
     expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
       name: "Renamed",
       quickMove: true,
+    });
+  });
+
+  test("custom folder preview settings are sent together", () => {
+    const initial = snapshot();
+    const current = {
+      ...initial,
+      folderPreviewMode: "custom" as const,
+      folderPreviewSource: "cover.JPG",
+    };
+    expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
+      folderPreviewMode: "custom",
+      folderPreviewSource: "cover.JPG",
     });
   });
 

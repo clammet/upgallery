@@ -57,6 +57,7 @@ export default defineSchema({
     authenticatedRole: v.optional(systemGalleryRole),
     rootFolderId: v.optional(v.id("folders")),
     folderPreviewMode: v.optional(folderPreviewMode),
+    folderPreviewSource: v.optional(v.string()),
     // Allows owners to drag items into folders without entering select mode.
     quickMove: v.optional(v.boolean()),
     // Lets editors use the owner-only select, move, and delete tools.
@@ -116,6 +117,7 @@ export default defineSchema({
     accessPolicy: folderAccessPolicy,
     discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
+    previewSource: v.optional(v.string()),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
     filesystemMissingAt: v.optional(v.number()),
@@ -154,6 +156,9 @@ export default defineSchema({
     folderId: v.id("folders"),
     ownerProfileId: v.id("profiles"),
     uploadIntentId: v.optional(v.id("uploadIntents")),
+    // Set when a gallery owner adopts a filesystem-discovered item. The
+    // one-off Unknown-uploader backfill leaves claimed items untouched.
+    filesystemOwnershipClaimed: v.optional(v.boolean()),
     name: v.string(),
     // Lower-cased name; image galleries keep it unique within a folder.
     nameKey: v.string(),
@@ -212,6 +217,10 @@ export default defineSchema({
       ["folderId", "state", "mediaKind", "moveJobId", "name"],
     )
     .index(
+      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_nameKey",
+      ["folderId", "state", "mediaKind", "moveJobId", "nameKey"],
+    )
+    .index(
       "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
       ["folderId", "state", "mediaKind", "moveJobId", "sha256"],
     )
@@ -267,6 +276,7 @@ export default defineSchema({
     accessPolicy: v.optional(folderAccessPolicy),
     discoverability: v.optional(folderDiscoverability),
     previewMode: v.optional(folderPreviewMode),
+    previewSource: v.optional(v.string()),
     tokenHash: v.string(),
     expiresAt: v.number(),
     state: uploadState,

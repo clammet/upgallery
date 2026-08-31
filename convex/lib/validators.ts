@@ -38,6 +38,7 @@ export const folderPreviewMode = v.union(
   v.literal("random"),
   v.literal("first3"),
   v.literal("random3"),
+  v.literal("custom"),
 );
 
 export const entryState = v.union(

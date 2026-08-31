@@ -1,5 +1,5 @@
 .uploadForm { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .65rem; margin: 0 auto 1rem; max-width: 700px; padding: .75rem; }
-.uploadForm label { display: grid; font-size: .78rem; gap: .25rem; }
+.uploadForm label { display: grid; font-size: .875rem; gap: .25rem; }
 .uploadForm .checkboxLabel { align-items: center; display: flex; gap: .45rem; }
 .checkboxLabel input { flex: 0 0 auto; margin: 0; width: auto; }
 .locationCheck { color: var(--gallery-muted); }
@@ -50,7 +50,7 @@
 .fileViewer audio { max-width: min(520px, 100%); width: 100%; }
 .viewerStatus { align-self: center; color: var(--gallery-muted); justify-self: center; text-align: center; }
 .viewerForm { align-self: center; background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .75rem; justify-self: center; max-width: 420px; padding: 1rem; width: 100%; }
-.viewerForm label { display: grid; font-size: .78rem; gap: .25rem; }
+.viewerForm label { display: grid; font-size: .875rem; gap: .25rem; }
 @media (max-width: 520px) {
   .entryList { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .entry { min-height: 205px; }

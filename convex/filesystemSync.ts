@@ -31,6 +31,7 @@ import {
   validateFilesystemSegment,
 } from "./lib/normalize";
 import { mediaKind } from "./lib/validators";
+import { ensureUnknownUploaderProfile } from "./lib/profiles";
 
 const SYNC_LEASE_MS = STORAGE_JOB_LEASE_MS;
 const SYNC_LEASE_RENEW_THRESHOLD_MS = SYNC_LEASE_MS / 2;
@@ -505,19 +506,11 @@ export const reconcileFilesystemFile = internalMutation({
       return existing._id;
     }
 
-    const ownerGrant = await ctx.db
-      .query("galleryRoles")
-      .withIndex("by_galleryId_and_role", (q) =>
-        q.eq("galleryId", gallery._id).eq("role", "owner"),
-      )
-      .first();
-    if (ownerGrant === null) {
-      throw new Error("Gallery has no owner for imported filesystem entries");
-    }
+    const unknownUploader = await ensureUnknownUploaderProfile(ctx);
     const entryId = await ctx.db.insert("entries", {
       galleryId: gallery._id,
       folderId: folder._id,
-      ownerProfileId: ownerGrant.profileId,
+      ownerProfileId: unknownUploader._id,
       name: args.name,
       nameKey: entryNameKey(args.name),
       mimeType: args.mimeType,
@@ -1099,6 +1092,7 @@ export const completeFilesystemOperation = internalMutation({
           accessPolicy,
           discoverability,
           previewMode: operation.previewMode,
+          previewSource: operation.previewSource,
           filesystemIdentity: args.identity,
           filesystemMissingAt: undefined,
         });
@@ -1112,6 +1106,7 @@ export const completeFilesystemOperation = internalMutation({
           accessPolicy,
           discoverability,
           previewMode: operation.previewMode,
+          previewSource: operation.previewSource,
           filesystemIdentity: args.identity,
         });
         await createFolderStats(ctx, folderId, gallery._id);

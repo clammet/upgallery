@@ -212,8 +212,19 @@ describe("filesystem scanner", () => {
         sha256: "b".repeat(64),
       },
     );
-    const entry = await t.run(async (ctx) => ctx.db.get("entries", entryId));
-    expect(entry).toMatchObject({ name: fileName, storageKey });
+    const imported = await t.run(async (ctx) => {
+      const entry = await ctx.db.get("entries", entryId);
+      const uploader =
+        entry === null ? null : await ctx.db.get("profiles", entry.ownerProfileId);
+      return { entry, uploader };
+    });
+    expect(imported.entry).toMatchObject({ name: fileName, storageKey });
+    expect(imported.entry?.ownerProfileId).not.toBe(admin.profileId);
+    expect(imported.uploader).toMatchObject({
+      displayName: "Unknown",
+      isAnonymous: false,
+      isSystemAdmin: false,
+    });
 
     await completeSync(t, {
       galleryId,
