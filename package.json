@@ -27,7 +27,7 @@
     "convex:deploy": "convex deploy"
   },
   "dependencies": {
-    "@clammet/convex-googly-auth": "1.0.0",
+    "@clammet/convex-googly-auth": "1.0.1",
     "busboy": "1.6.0",
     "convex": "1.45.0",
     "convex-helpers": "0.1.123",
@@ -52,7 +52,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/supertest": "7.2.1",
-    "@vitejs/plugin-react": "6.1.0",
+    "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
     "convex-test": "0.0.56",
     "node-addon-api": "8.9.2",

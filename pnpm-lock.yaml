@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@clammet/convex-googly-auth':
-        specifier: 1.0.0
-        version: 1.0.0(convex@1.45.0(react@19.2.8))(react@19.2.8)
+        specifier: 1.0.1
+        version: 1.0.1(convex@1.45.0(react@19.2.8))(react@19.2.8)
       busboy:
         specifier: 1.6.0
         version: 1.6.0
@@ -79,8 +79,8 @@ importers:
         specifier: 7.2.1
         version: 7.2.1
       '@vitejs/plugin-react':
-        specifier: 6.1.0
-        version: 6.1.0(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.12))
+        specifier: 6.1.1
+        version: 6.1.1(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.12))
       concurrently:
         specifier: 10.0.5
         version: 10.0.5
@@ -122,8 +122,8 @@ packages:
     resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
     engines: {node: '>=6.9.0'}
 
-  '@clammet/convex-googly-auth@1.0.0':
-    resolution: {integrity: sha512-uaG2aZ2yH/GkfCGAQwcAjTmQ5AFP2ltpofYiq0vwUWXd5LTuOV+/Em7gpOMCsryVNL5i8yEuOfzMwcdJ9SfZ8g==}
+  '@clammet/convex-googly-auth@1.0.1':
+    resolution: {integrity: sha512-d/UdXmspETcpPt87YbHRTm7Ztv3tXJLtrjN8qxLh6KSEA1ghLJlreL6Wp6yP0LhgoZ5ChMnGP9c/4/X3aTQawg==}
     peerDependencies:
       convex: ^1.43.0
       react: ^18.3.1 || ^19.0.0
@@ -941,8 +941,8 @@ packages:
   '@ungap/structured-clone@1.3.3':
     resolution: {integrity: sha512-60YRaenCQcVjYEKOcG824+DRGGIQ3VKErcBoAEDJZz5bKIs2ZG+X/H9Nk+Q6EVkwJk5QNApxbrc5QtBSwtrXAg==}
 
-  '@vitejs/plugin-react@6.1.0':
-    resolution: {integrity: sha512-qd2BzUBehkov86WFhg0JkEFEYyCLG9uPCe6qWTY/kRlss9OvJrOF2UbIWT7p+8IzZHkEu0DNGHc4HSv+JdDLsw==}
+  '@vitejs/plugin-react@6.1.1':
+    resolution: {integrity: sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     peerDependencies:
       '@rolldown/plugin-babel': ^0.1.7 || ^0.2.0
@@ -2173,7 +2173,7 @@ snapshots:
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@clammet/convex-googly-auth@1.0.0(convex@1.45.0(react@19.2.8))(react@19.2.8)':
+  '@clammet/convex-googly-auth@1.0.1(convex@1.45.0(react@19.2.8))(react@19.2.8)':
     dependencies:
       convex: 1.45.0(react@19.2.8)
       react: 19.2.8
@@ -2678,7 +2678,7 @@ snapshots:
 
   '@ungap/structured-clone@1.3.3': {}
 
-  '@vitejs/plugin-react@6.1.0(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.12))':
+  '@vitejs/plugin-react@6.1.1(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.12))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.12)
