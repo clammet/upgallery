@@ -3,8 +3,9 @@ html, body, #root { min-height: 100%; margin: 0; }
 body { background: var(--gallery-bg); color: var(--gallery-fg); font-size: 14px; }
 a { color: inherit; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
 button, input, textarea, select { font: inherit; }
-form label { font-size: .875rem; font-weight: 700; }
-form label :is(button, input, textarea, select, small) { font-weight: 400; }
+form label { color: var(--gallery-muted); font-size: .875rem; font-weight: 700; }
+form label :is(button, input, textarea, select) { color: var(--gallery-fg); font-weight: 400; }
+form label small { font-weight: 400; }
 button, select, input, textarea {
   border: 1px solid var(--border);
   border-radius: var(--gallery-radius);
