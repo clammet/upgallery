@@ -71,4 +71,18 @@ describe("media viewer information layout", () => {
     expect(tall.height).toBe(600);
     expect(overflowing.height).toBe(804);
   });
+
+  test("uses the available viewport width for text previews", () => {
+    const geometry = mediaViewerGeometry(
+      null,
+      "text",
+      { width: 1920, height: 1080 },
+      1,
+      false,
+      0,
+    );
+
+    expect(geometry.width).toBe(1886);
+    expect(geometry.viewerWidth).toBe(1888);
+  });
 });

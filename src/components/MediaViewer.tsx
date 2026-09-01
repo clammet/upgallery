@@ -156,7 +156,7 @@ export function mediaViewerGeometry(
     };
   } else {
     preview = {
-      width: Math.min(1120, maxWidth),
+      width: mediaKind === "text" ? maxWidth : Math.min(1120, maxWidth),
       height: maxHeight,
       fitScale: 1,
     };
