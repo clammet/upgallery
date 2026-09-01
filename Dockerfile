@@ -85,6 +85,14 @@ FROM dependencies AS storage-build
 COPY storage ./storage
 RUN pnpm exec tsc -p storage/tsconfig.json
 
+# Keep the custom Sharp binary built in the shared dependency stage, but strip
+# build, test, and frontend tooling before node_modules enters the storage
+# runtime image. The decode check proves pruning did not disturb the native
+# module or its link to the custom libvips build.
+FROM dependencies AS storage-dependencies
+RUN pnpm prune --prod \
+  && node scripts/check-sharp-heic.mjs
+
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS web
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --chmod=755 deploy/render-config.sh /docker-entrypoint.d/40-render-config.sh
@@ -137,9 +145,9 @@ ENV NODE_ENV=production
 ENV LD_LIBRARY_PATH=/opt/vips/lib
 ENV PATH=/opt/vips/bin:$PATH
 COPY --from=libvips-build /opt/vips /opt/vips
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=dependencies /app/package.json ./package.json
-COPY --from=dependencies /app/scripts/check-sharp-heic.mjs ./scripts/check-sharp-heic.mjs
+COPY --from=storage-dependencies /app/node_modules ./node_modules
+COPY --from=storage-dependencies /app/package.json ./package.json
+COPY --from=storage-dependencies /app/scripts/check-sharp-heic.mjs ./scripts/check-sharp-heic.mjs
 COPY --from=storage-build /app/storage-dist ./storage-dist
 
 FROM storage-runtime AS storage
