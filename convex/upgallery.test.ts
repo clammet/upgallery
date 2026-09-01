@@ -3419,6 +3419,108 @@ describe("upgallery backend", () => {
     expect(deleted.jobs).toHaveLength(1);
   });
 
+  test("gallery and folder settings control every supported thumbnail order", async () => {
+    const t = setupTest();
+    const owner = await seedProfile(t, {
+      email: "sort-owner@example.com",
+      admin: true,
+    });
+    const ownerClient = asUser(
+      t,
+      owner.googleSubject,
+      "sort-owner@example.com",
+    );
+    const galleryId = await ownerClient.mutation(api.galleries.create, {
+      name: "Sorted gallery",
+      slug: "sorted-gallery",
+      kind: "image",
+      storageKind: "shared",
+      storageRoot: "sorted-gallery",
+      hosts: [{ host: "sorted.example.com", rootPath: "/" }],
+    });
+    const rootFolderId = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      const folderId = gallery!.rootFolderId!;
+      for (const entry of [
+        { name: "beta.jpg", size: 30, sortTimestamp: 300 },
+        { name: "Alpha.jpg", size: 20, sortTimestamp: 100 },
+        { name: "charlie.jpg", size: 10, sortTimestamp: 200 },
+      ]) {
+        await ctx.db.insert("entries", {
+          galleryId,
+          folderId,
+          ownerProfileId: owner.profileId,
+          name: entry.name,
+          nameKey: entry.name.toLowerCase(),
+          mimeType: "image/jpeg",
+          extension: "jpg",
+          mediaKind: "image",
+          size: entry.size,
+          sha256: entry.sortTimestamp.toString(16).padStart(64, "0"),
+          storageKind: "shared",
+          storageKey: `public/shared/sorted-gallery/${entry.name}`,
+          sortTimestamp: entry.sortTimestamp,
+          state: "ready",
+          createdAt: entry.sortTimestamp,
+          updatedAt: entry.sortTimestamp,
+        });
+      }
+      return folderId;
+    });
+    const names = async () =>
+      (
+        await ownerClient.query(api.entries.listGalleryPage, {
+          galleryId,
+          folderId: rootFolderId,
+          paginationOpts: { numItems: 10, cursor: null },
+        })
+      ).page.map((entry) => entry.name);
+
+    await expect(names()).resolves.toEqual([
+      "Alpha.jpg",
+      "beta.jpg",
+      "charlie.jpg",
+    ]);
+    for (const [sortOrder, expected] of [
+      ["nameDesc", ["charlie.jpg", "beta.jpg", "Alpha.jpg"]],
+      ["sizeAsc", ["charlie.jpg", "Alpha.jpg", "beta.jpg"]],
+      ["sizeDesc", ["beta.jpg", "Alpha.jpg", "charlie.jpg"]],
+      ["dateAsc", ["Alpha.jpg", "charlie.jpg", "beta.jpg"]],
+      ["dateDesc", ["beta.jpg", "charlie.jpg", "Alpha.jpg"]],
+    ] as const) {
+      await ownerClient.mutation(api.galleries.update, {
+        galleryId,
+        sortOrder,
+      });
+      await expect(names()).resolves.toEqual(expected);
+    }
+
+    await ownerClient.mutation(api.folders.update, {
+      folderId: rootFolderId,
+      name: "Sorted gallery",
+      accessPolicy: "inherit",
+      discoverability: "listed",
+      sortOrder: "nameAsc",
+    });
+    await expect(names()).resolves.toEqual([
+      "Alpha.jpg",
+      "beta.jpg",
+      "charlie.jpg",
+    ]);
+    await ownerClient.mutation(api.folders.update, {
+      folderId: rootFolderId,
+      name: "Sorted gallery",
+      accessPolicy: "inherit",
+      discoverability: "listed",
+      sortOrder: null,
+    });
+    await expect(names()).resolves.toEqual([
+      "beta.jpg",
+      "charlie.jpg",
+      "Alpha.jpg",
+    ]);
+  });
+
   test("gallery pagination and durable select-all deletion cross the old 128 item limit", async () => {
     vi.useFakeTimers();
     try {

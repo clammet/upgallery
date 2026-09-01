@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
   paginationOptsValidator,
@@ -41,18 +41,53 @@ import {
   adjustFolderStatsForEntries,
   readFolderStats,
 } from "./lib/folderStats";
-import { conflictPolicy, disposition } from "./lib/validators";
+import {
+  conflictPolicy,
+  disposition,
+  gallerySortOrder,
+} from "./lib/validators";
 import {
   markThumbnailPendingIfNeeded,
   MEDIA_METADATA_VERSION,
   requestMediaPreview,
 } from "./lib/storageJobs";
 import { uploaderAttribution } from "./lib/profiles";
+import schema from "./schema";
 
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
 const MAX_BULK_ENTRIES = 128;
 const MAX_GALLERY_PAGE_SIZE = 250;
+
+const galleryEntryValidator = schema
+  .doc("entries")
+  .omit("passwordSalt", "passwordHash", "passwordIterations")
+  .extend({
+    uploader: v.string(),
+    passwordProtected: v.boolean(),
+    canDelete: v.boolean(),
+    views: v.number(),
+  });
+
+function galleryEntryForViewer(
+  entry: Doc<"entries">,
+  uploader: string,
+  views: number,
+) {
+  const locked = entry.passwordHash !== undefined;
+  return {
+    ...entry,
+    uploader,
+    description: locked ? undefined : entry.description,
+    metadataJson: locked ? undefined : entry.metadataJson,
+    passwordSalt: undefined,
+    passwordHash: undefined,
+    passwordIterations: undefined,
+    passwordProtected: locked,
+    canDelete: false,
+    views,
+  };
+}
 
 function validateGalleryPaginationSize(numItems: number) {
   if (
@@ -162,7 +197,10 @@ async function loadViewableImageFolder(
 
 // The entries a gallery folder shows: ready, and not hidden by an in-flight
 // bulk move.
-function listedFolderEntries(ctx: QueryCtx, folderId: Id<"folders">) {
+function listedFolderEntriesByCreatedAt(
+  ctx: QueryCtx,
+  folderId: Id<"folders">,
+) {
   return ctx.db
     .query("entries")
     .withIndex(
@@ -173,6 +211,33 @@ function listedFolderEntries(ctx: QueryCtx, folderId: Id<"folders">) {
           .eq("state", "ready")
           .eq("moveJobId", undefined),
     );
+}
+
+function sortedFolderEntries(
+  ctx: QueryCtx,
+  folderId: Id<"folders">,
+  sortOrder:
+    | "nameAsc"
+    | "nameDesc"
+    | "sizeAsc"
+    | "sizeDesc"
+    | "dateAsc"
+    | "dateDesc",
+) {
+  const index = sortOrder.startsWith("name")
+    ? ("by_folderId_and_state_and_moveJobId_and_nameKey" as const)
+    : sortOrder.startsWith("size")
+      ? ("by_folderId_and_state_and_moveJobId_and_size" as const)
+      : ("by_folderId_and_state_and_moveJobId_and_sortTimestamp" as const);
+  return ctx.db
+    .query("entries")
+    .withIndex(index, (q) =>
+      q
+        .eq("folderId", folderId)
+        .eq("state", "ready")
+        .eq("moveJobId", undefined),
+    )
+    .order(sortOrder.endsWith("Asc") ? "asc" : "desc");
 }
 
 // Check transaction headroom every this many entries while counting.
@@ -201,7 +266,7 @@ export const countFolderEntries = query({
       return { count: stats.itemCount, exact: true };
     }
     let count = 0;
-    for await (const _entry of listedFolderEntries(ctx, folder._id)) {
+    for await (const _entry of listedFolderEntriesByCreatedAt(ctx, folder._id)) {
       count += 1;
       if (count % COUNT_METRICS_INTERVAL !== 0) continue;
       const metrics = await ctx.meta.getTransactionMetrics();
@@ -221,14 +286,18 @@ export const listGalleryPage = query({
     anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
+    // Included in the client query key so pagination resets immediately when
+    // the persisted gallery/folder setting changes. The server still derives
+    // the authoritative effective setting below.
+    sortOrder: v.optional(gallerySortOrder),
     paginationOpts: paginationOptsValidator,
   },
-  returns: paginationResultValidator(v.any()),
+  returns: paginationResultValidator(galleryEntryValidator),
   handler: async (ctx, args) => {
     validateGalleryPaginationSize(args.paginationOpts.numItems);
-    const { folder } = await loadViewableImageFolder(ctx, args);
-    const result = await listedFolderEntries(ctx, folder._id)
-      .order("desc")
+    const { gallery, folder } = await loadViewableImageFolder(ctx, args);
+    const sortOrder = folder.sortOrder ?? gallery.sortOrder ?? "nameAsc";
+    const result = await sortedFolderEntries(ctx, folder._id, sortOrder)
       .paginate(args.paginationOpts);
     const page = [];
     const uploaderByProfileId = new Map<Id<"profiles">, string>();
@@ -245,21 +314,51 @@ export const listGalleryPage = query({
         uploaderByProfileId.set(entry.ownerProfileId, uploader);
       }
       const counter = await counterPromise;
-      const locked = entry.passwordHash !== undefined;
-      page.push({
-        ...entry,
-        uploader,
-        description: locked ? undefined : entry.description,
-        metadataJson: locked ? undefined : entry.metadataJson,
-        passwordSalt: undefined,
-        passwordHash: undefined,
-        passwordIterations: undefined,
-        passwordProtected: locked,
-        canDelete: false,
-        views: counter?.views ?? 0,
-      });
+      page.push(galleryEntryForViewer(entry, uploader, counter?.views ?? 0));
     }
     return { ...result, page };
+  },
+});
+
+// A lightbox link can target an entry outside the currently loaded page. Keep
+// that lookup separate from pagination so the URL works immediately without
+// fetching every preceding page in a large folder.
+export const getGalleryViewerEntry = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+    requestedEntryId: v.string(),
+  },
+  returns: v.union(v.null(), galleryEntryValidator),
+  handler: async (ctx, args) => {
+    const { folder } = await loadViewableImageFolder(ctx, args);
+    const entryId = ctx.db.normalizeId("entries", args.requestedEntryId);
+    if (entryId === null) return null;
+    const entry = await ctx.db.get("entries", entryId);
+    if (
+      entry === null ||
+      entry.galleryId !== args.galleryId ||
+      entry.folderId !== folder._id ||
+      entry.state !== "ready" ||
+      entry.moveJobId !== undefined
+    ) {
+      return null;
+    }
+    const [counter, uploaderProfile] = await Promise.all([
+      ctx.db
+        .query("entryCounters")
+        .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
+        .unique(),
+      ctx.db.get("profiles", entry.ownerProfileId),
+    ]);
+    return galleryEntryForViewer(
+      entry,
+      uploaderProfile === null
+        ? "Unknown"
+        : uploaderAttribution(uploaderProfile),
+      counter?.views ?? 0,
+    );
   },
 });
 

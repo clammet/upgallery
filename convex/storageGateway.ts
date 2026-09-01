@@ -24,6 +24,7 @@ import {
 } from "./lib/storageJobs";
 import { mediaKind } from "./lib/validators";
 import { settleBulkMoveItem } from "./lib/bulkOperations";
+import { entrySortTimestamp } from "./lib/entrySort";
 
 // A user-backed replacement lands on the replaced file's own path (or a case
 // variant of it, which the storage server reconciles on disk), so unlinking
@@ -233,6 +234,13 @@ export const completeUpload = internalMutation({
         previewError: contentChanged ? undefined : existing.previewError,
         metadataJson: args.metadataJson,
         filesystemModifiedAt: args.filesystemModifiedAt,
+        sortFallbackTimestamp: args.filesystemModifiedAt ?? now,
+        sortTimestamp: entrySortTimestamp({
+          metadataJson: args.metadataJson,
+          filesystemModifiedAt: args.filesystemModifiedAt,
+          sortFallbackTimestamp: args.filesystemModifiedAt ?? now,
+          createdAt: existing.createdAt,
+        }),
         filesystemIdentity: args.filesystemIdentity,
         passwordSalt: intent.passwordSalt,
         passwordHash: intent.passwordHash,
@@ -327,6 +335,13 @@ export const completeUpload = internalMutation({
       thumbnailKey: args.thumbnailKey,
       metadataJson: args.metadataJson,
       filesystemModifiedAt: args.filesystemModifiedAt,
+      sortFallbackTimestamp: args.filesystemModifiedAt ?? now,
+      sortTimestamp: entrySortTimestamp({
+        metadataJson: args.metadataJson,
+        filesystemModifiedAt: args.filesystemModifiedAt,
+        sortFallbackTimestamp: args.filesystemModifiedAt ?? now,
+        createdAt: now,
+      }),
       filesystemIdentity: args.filesystemIdentity,
       passwordSalt: intent.passwordSalt,
       passwordHash: intent.passwordHash,
@@ -1144,6 +1159,20 @@ export const completeEntryMove = internalMutation({
       thumbnailKey: args.thumbnailKey,
       previewKey: args.previewKey,
       filesystemModifiedAt: args.filesystemModifiedAt,
+      sortFallbackTimestamp:
+        args.filesystemModifiedAt ??
+        entry.sortFallbackTimestamp ??
+        entry.filesystemModifiedAt ??
+        entry.createdAt,
+      sortTimestamp: entrySortTimestamp({
+        metadataJson: entry.metadataJson,
+        filesystemModifiedAt: args.filesystemModifiedAt,
+        sortFallbackTimestamp:
+          args.filesystemModifiedAt ??
+          entry.sortFallbackTimestamp ??
+          entry.filesystemModifiedAt,
+        createdAt: entry.createdAt,
+      }),
       filesystemIdentity: args.filesystemIdentity,
       filesystemSyncId: undefined,
       moveJobId: undefined,

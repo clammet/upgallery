@@ -1,5 +1,37 @@
 import { describe, expect, test } from "vitest";
-import { mediaViewerGeometry } from "../src/components/MediaViewer";
+import {
+  mediaViewerGeometry,
+  mediaViewerMediaChanged,
+} from "../src/components/MediaViewer";
+
+describe("media viewer media identity", () => {
+  const identity = {
+    itemId: "entry-1",
+    mediaKind: "image" as const,
+    mimeType: "image/jpeg",
+    sourceUrl: "/media/image.jpg",
+    sourceRevision: 0,
+  };
+
+  test("preserves media state when realtime data recreates the same item", () => {
+    expect(mediaViewerMediaChanged(identity, { ...identity })).toBe(false);
+  });
+
+  test("resets media state for a different source or explicit reload", () => {
+    expect(
+      mediaViewerMediaChanged(identity, {
+        ...identity,
+        sourceUrl: "/media/replacement.jpg",
+      }),
+    ).toBe(true);
+    expect(
+      mediaViewerMediaChanged(identity, {
+        ...identity,
+        sourceRevision: 1,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("media viewer information layout", () => {
   test("adds the information column without shrinking a preview when space is available", () => {

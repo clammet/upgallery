@@ -3,6 +3,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import { adjustFolderStats } from "./lib/folderStats";
+import { entrySortTimestamp } from "./lib/entrySort";
 import {
   MEDIA_METADATA_VERSION,
   MEDIA_PROCESSOR_VERSION,
@@ -419,6 +420,17 @@ export const completeMediaProcessing = internalMutation({
         args.metadataProcessed === true ||
         args.metadataJson !== undefined ||
         job.removeLocationData === true;
+      const nextMetadataJson = metadataProcessed
+        ? args.metadataJson
+        : entry.metadataJson;
+      const nextFilesystemModifiedAt =
+        replacement?.filesystemModifiedAt ?? entry.filesystemModifiedAt;
+      const sortFallbackTimestamp =
+        replacement === null
+          ? entry.sortFallbackTimestamp ??
+            entry.filesystemModifiedAt ??
+            entry.createdAt
+          : replacement.filesystemModifiedAt ?? Date.now();
       await ctx.db.patch("entries", entry._id, {
         ...(replacement ?? {}),
         ...(args.thumbnailKey === undefined
@@ -433,6 +445,13 @@ export const completeMediaProcessing = internalMutation({
               metadataJson: args.metadataJson,
               metadataVersion: MEDIA_METADATA_VERSION,
             }),
+        sortFallbackTimestamp,
+        sortTimestamp: entrySortTimestamp({
+          metadataJson: nextMetadataJson,
+          filesystemModifiedAt: nextFilesystemModifiedAt,
+          sortFallbackTimestamp,
+          createdAt: entry.createdAt,
+        }),
         ...(args.previewKey === undefined
           ? {}
           : {

@@ -96,6 +96,10 @@ import {
 } from "../lib/metadata";
 import styles from "../styles/gallery.module.css";
 import layout from "../styles/layout.module.css";
+import {
+  GALLERY_SORT_OPTIONS,
+  type GallerySortOrder,
+} from "../lib/gallerySort";
 
 const uploadConcurrency = parseTransferConcurrency(
   import.meta.env.VITE_UPLOAD_CONCURRENCY,
@@ -247,10 +251,13 @@ export function GalleryPage(props: {
   const [paginationHistory, setPaginationHistory] = useState<
     Array<string | null>
   >([]);
+  const effectiveSortOrder =
+    listing?.folder.sortOrder ?? props.gallery.sortOrder ?? "nameAsc";
   const entryPageArgs = {
     anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
     folderId,
+    sortOrder: effectiveSortOrder,
   };
   const entryPages = usePaginatedQuery(
     api.entries.listGalleryPage,
@@ -272,11 +279,38 @@ export function GalleryPage(props: {
   // Only the paged layout shows a page total; infinite scroll never needs it.
   const folderEntryCount = useQuery(
     api.entries.countFolderEntries,
-    infiniteScroll || resolvingPath || invalidPath ? "skip" : entryPageArgs,
+    infiniteScroll || resolvingPath || invalidPath
+      ? "skip"
+      : {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+        },
   );
   const entries = (infiniteScroll
     ? entryPages.results
     : (pagedEntries?.page ?? [])) as GalleryEntry[];
+  const requestedViewerEntry = useQuery(
+    api.entries.getGalleryViewerEntry,
+    viewerEntryId === null || resolvingPath || invalidPath
+      ? "skip"
+      : {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+          requestedEntryId: viewerEntryId,
+        },
+  );
+  const viewerEntries = useMemo<GalleryEntry[]>(() => {
+    if (
+      requestedViewerEntry === undefined ||
+      requestedViewerEntry === null ||
+      entries.some((entry) => entry._id === requestedViewerEntry._id)
+    ) {
+      return entries;
+    }
+    return [...entries, requestedViewerEntry];
+  }, [entries, requestedViewerEntry]);
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
   const resetFolderAccess = useMutation(api.folders.resetAccessPolicySubtree);
@@ -367,7 +401,7 @@ export function GalleryPage(props: {
   );
   const viewerItems = useMemo<MediaViewerItem[]>(
     () =>
-      entries.map((entry) => {
+      viewerEntries.map((entry) => {
         const sourceUrl = publicMediaUrl(
           entry.storageKey,
           entry.filesystemModifiedAt,
@@ -412,9 +446,9 @@ export function GalleryPage(props: {
     [
       canonicalOrigin,
       canonicalRouteRoot,
-      entries,
       folderNames,
       props.gallery.storageKind,
+      viewerEntries,
     ],
   );
   const resolveViewerSource = useCallback(
@@ -565,14 +599,14 @@ export function GalleryPage(props: {
   useEffect(() => {
     if (viewerEntryId !== viewerStepFrom.current) viewerStepFrom.current = null;
     if (
-      listing !== undefined &&
+      requestedViewerEntry === null &&
       viewerEntryId !== null &&
       viewerIndex < 0 &&
       viewerStepFrom.current === null
     ) {
       setViewerEntry(null, true);
     }
-  }, [listing, setViewerEntry, viewerEntryId, viewerIndex]);
+  }, [requestedViewerEntry, setViewerEntry, viewerEntryId, viewerIndex]);
 
   // A dialog opened from the viewer loses its target if that entry vanishes
   // (deleted elsewhere, or just deleted here); drop it rather than fall back
@@ -581,13 +615,13 @@ export function GalleryPage(props: {
     if (
       viewerActionEntryId !== null &&
       listing !== undefined &&
-      !entries.some((entry) => entry._id === viewerActionEntryId)
+      !viewerEntries.some((entry) => entry._id === viewerActionEntryId)
     ) {
       setDeleteDialog(false);
       setMoveDialog(false);
       setViewerActionEntryId(null);
     }
-  }, [entries, listing, viewerActionEntryId]);
+  }, [listing, viewerActionEntryId, viewerEntries]);
 
   useEffect(() => {
     if (props.gallery.storageKind !== "user") return;
@@ -807,7 +841,7 @@ export function GalleryPage(props: {
   useEffect(() => {
     setPaginationCursor(null);
     setPaginationHistory([]);
-  }, [folderId, infiniteScroll, pageSize]);
+  }, [effectiveSortOrder, folderId, infiniteScroll, pageSize]);
 
   useEffect(() => {
     if (!allEntriesSelected || selectableEntries.status !== "CanLoadMore") {
@@ -1051,7 +1085,7 @@ export function GalleryPage(props: {
   const viewerActionEntry =
     viewerActionEntryId === null
       ? undefined
-      : entries.find((entry) => entry._id === viewerActionEntryId);
+      : viewerEntries.find((entry) => entry._id === viewerActionEntryId);
   const actionEntrySelection: EntrySelection | null =
     viewerActionEntry !== undefined
       ? { kind: "ids", entryIds: [viewerActionEntry._id] }
@@ -1080,13 +1114,13 @@ export function GalleryPage(props: {
     if (viewerEntryId === null) return;
     const removed = new Set<string>(entryIds);
     if (!removed.has(viewerEntryId)) return;
-    const current = entries.findIndex(
+    const current = viewerEntries.findIndex(
       (entry) => entry._id === viewerEntryId,
     );
-    const after = entries
+    const after = viewerEntries
       .slice(current + 1)
       .find((entry) => !removed.has(entry._id));
-    const before = entries
+    const before = viewerEntries
       .slice(0, Math.max(current, 0))
       .reverse()
       .find((entry) => !removed.has(entry._id));
@@ -1847,6 +1881,7 @@ export function GalleryPage(props: {
         <FolderForm
           title="New folder"
           galleryId={props.gallery._id}
+          gallerySortOrder={props.gallery.sortOrder ?? "nameAsc"}
           initialName=""
           initialAccessPolicy="inherit"
           initialDiscoverability="listed"
@@ -1881,6 +1916,7 @@ export function GalleryPage(props: {
         <FolderForm
           title="Folder settings"
           galleryId={props.gallery._id}
+          gallerySortOrder={props.gallery.sortOrder ?? "nameAsc"}
           previewFolderId={folderId}
           headerExtra={
             <>
@@ -1911,6 +1947,7 @@ export function GalleryPage(props: {
           isRoot={listing.folder.parentId === undefined}
           initialPreviewMode={listing.folder.previewMode}
           initialPreviewSource={listing.folder.previewSource}
+          initialSortOrder={listing.folder.sortOrder}
           onResetAccess={
             listing.access.canAdminGallery
               ? async () => {
@@ -1929,6 +1966,7 @@ export function GalleryPage(props: {
             discoverability,
             previewMode,
             previewSource,
+            sortOrder,
           ) => {
             const result = await updateFolder({
               anonymousClaim: anonymousClaim(),
@@ -1938,6 +1976,7 @@ export function GalleryPage(props: {
               discoverability,
               ...(previewMode === undefined ? {} : { previewMode }),
               previewSource: previewSource ?? null,
+              sortOrder: sortOrder ?? null,
             });
             await completeFilesystemOperation(result);
             setFolderDialog(null);
@@ -2843,6 +2882,7 @@ function FolderForm(props: {
   title: string;
   headerExtra?: ReactNode;
   galleryId: Id<"galleries">;
+  gallerySortOrder: GallerySortOrder;
   previewFolderId?: Id<"folders">;
   initialName: string;
   initialAccessPolicy: FolderAccessPolicy;
@@ -2850,6 +2890,7 @@ function FolderForm(props: {
   isRoot: boolean;
   initialPreviewMode?: FolderPreviewMode;
   initialPreviewSource?: string;
+  initialSortOrder?: GallerySortOrder;
   onResetAccess?: () => Promise<void>;
   onClose: () => void;
   onSubmit: (
@@ -2858,6 +2899,7 @@ function FolderForm(props: {
     discoverability: FolderDiscoverability,
     previewMode?: FolderPreviewMode,
     previewSource?: string,
+    sortOrder?: GallerySortOrder,
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(props.initialName);
@@ -2872,6 +2914,9 @@ function FolderForm(props: {
   >(props.initialPreviewMode ?? "inherit");
   const [previewSource, setPreviewSource] = useState(
     props.initialPreviewSource ?? "",
+  );
+  const [sortOrder, setSortOrder] = useState<GallerySortOrder | "inherit">(
+    props.initialSortOrder ?? "inherit",
   );
   const previewFilenameSuggestions = useQuery(
     api.folders.previewFilenameSuggestions,
@@ -2937,6 +2982,7 @@ function FolderForm(props: {
               props.isRoot ? "listed" : discoverability,
               previewMode === "inherit" ? undefined : previewMode,
               previewMode === "custom" ? previewSource.trim() : undefined,
+              sortOrder === "inherit" ? undefined : sortOrder,
             )
             .catch((reason: unknown) => {
               setError(friendlyError(reason, "Could not save"));
@@ -3025,6 +3071,30 @@ function FolderForm(props: {
                 <option value={filename} key={filename} />
               ))}
             </datalist>
+          </label>
+        ) : null}
+        {props.previewFolderId !== undefined ? (
+          <label>
+            Thumbnail order
+            <select
+              value={sortOrder}
+              onChange={(event) =>
+                setSortOrder(
+                  event.target.value as GallerySortOrder | "inherit",
+                )
+              }
+            >
+              <option value="inherit">
+                Use gallery default — {GALLERY_SORT_OPTIONS.find(
+                  (option) => option.value === props.gallerySortOrder,
+                )?.label}
+              </option>
+              {GALLERY_SORT_OPTIONS.map((option) => (
+                <option value={option.value} key={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
         ) : null}
         {error ? <p className={layout.formError}>{error}</p> : null}

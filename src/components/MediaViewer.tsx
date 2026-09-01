@@ -89,6 +89,14 @@ type PointerGesture = {
   panY: number;
 };
 
+type MediaIdentity = {
+  itemId: string;
+  mediaKind: MediaViewerItem["mediaKind"];
+  mimeType: string;
+  sourceUrl: string | undefined;
+  sourceRevision: number;
+};
+
 const ZOOM_EPSILON = 0.002;
 const INFO_COLUMN_WIDTH = 320;
 const MIN_PREVIEW_WIDTH = 96;
@@ -206,6 +214,20 @@ export function shouldOpenMediaViewer(event: {
   );
 }
 
+export function mediaViewerMediaChanged(
+  previous: MediaIdentity | null,
+  next: MediaIdentity,
+) {
+  return (
+    previous === null ||
+    previous.itemId !== next.itemId ||
+    previous.mediaKind !== next.mediaKind ||
+    previous.mimeType !== next.mimeType ||
+    previous.sourceUrl !== next.sourceUrl ||
+    previous.sourceRevision !== next.sourceRevision
+  );
+}
+
 export function MediaViewer(props: {
   items: MediaViewerItem[];
   initialIndex: number;
@@ -277,6 +299,7 @@ export function MediaViewer(props: {
   const pendingResolutions = useRef(new Map<string, string | null>());
   const unlockedPasswords = useRef(new Map<string, string>());
   const previousActiveItemId = useRef<string | null>(null);
+  const previousMediaIdentity = useRef<MediaIdentity | null>(null);
   const previousFitScale = useRef<number | null>(null);
   const gesture = useRef<PointerGesture | null>(null);
 
@@ -419,6 +442,18 @@ export function MediaViewer(props: {
     let cancelled = false;
     const itemChanged = previousActiveItemId.current !== activeItem.id;
     previousActiveItemId.current = activeItem.id;
+    const mediaIdentity: MediaIdentity = {
+      itemId: activeItem.id,
+      mediaKind: activeItem.mediaKind,
+      mimeType: activeItem.mimeType,
+      sourceUrl: activeItem.sourceUrl,
+      sourceRevision,
+    };
+    const mediaChanged = mediaViewerMediaChanged(
+      previousMediaIdentity.current,
+      mediaIdentity,
+    );
+    previousMediaIdentity.current = mediaIdentity;
     const cachedSource =
       activeItem.sourceUrl ?? resolvedSources.current.get(activeItem.id);
     const resolutionPending = pendingResolutions.current.has(activeItem.id);
@@ -437,12 +472,16 @@ export function MediaViewer(props: {
       setCopyPending(false);
       setDownloadPending(false);
     }
-    setNaturalSize(null);
-    setScale(1);
-    setPan({ x: 0, y: 0 });
-    setDragging(false);
-    previousFitScale.current = null;
-    gesture.current = null;
+    // Convex can recreate an item object when unrelated reactive data changes.
+    // Preserve the measured fit and zoom unless the rendered media changed.
+    if (mediaChanged) {
+      setNaturalSize(null);
+      setScale(1);
+      setPan({ x: 0, y: 0 });
+      setDragging(false);
+      previousFitScale.current = null;
+      gesture.current = null;
+    }
 
     if (cachedSource !== undefined) {
       pendingResolutions.current.delete(activeItem.id);

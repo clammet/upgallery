@@ -32,6 +32,7 @@ import {
 } from "./lib/normalize";
 import { mediaKind } from "./lib/validators";
 import { ensureUnknownUploaderProfile } from "./lib/profiles";
+import { entrySortTimestamp } from "./lib/entrySort";
 
 const SYNC_LEASE_MS = STORAGE_JOB_LEASE_MS;
 const SYNC_LEASE_RENEW_THRESHOLD_MS = SYNC_LEASE_MS / 2;
@@ -449,6 +450,13 @@ export const reconcileFilesystemFile = internalMutation({
         previewError: contentChanged ? undefined : existing.previewError,
         metadataJson: args.metadataJson,
         filesystemModifiedAt: args.modifiedAt,
+        sortFallbackTimestamp: args.modifiedAt,
+        sortTimestamp: entrySortTimestamp({
+          metadataJson: args.metadataJson,
+          filesystemModifiedAt: args.modifiedAt,
+          sortFallbackTimestamp: args.modifiedAt,
+          createdAt: existing.createdAt,
+        }),
         filesystemIdentity: args.identity,
         filesystemSyncId: args.syncId,
         state: "ready",
@@ -523,6 +531,13 @@ export const reconcileFilesystemFile = internalMutation({
       thumbnailKey: args.thumbnailKey,
       metadataJson: args.metadataJson,
       filesystemModifiedAt: args.modifiedAt,
+      sortFallbackTimestamp: args.modifiedAt,
+      sortTimestamp: entrySortTimestamp({
+        metadataJson: args.metadataJson,
+        filesystemModifiedAt: args.modifiedAt,
+        sortFallbackTimestamp: args.modifiedAt,
+        createdAt: now,
+      }),
       filesystemIdentity: args.identity,
       filesystemSyncId: args.syncId,
       state: "ready",
@@ -1062,6 +1077,13 @@ export const completeFilesystemOperation = internalMutation({
           operation.name,
         ),
         filesystemModifiedAt: args.modifiedAt,
+        sortFallbackTimestamp: args.modifiedAt,
+        sortTimestamp: entrySortTimestamp({
+          metadataJson: entry.metadataJson,
+          filesystemModifiedAt: args.modifiedAt,
+          sortFallbackTimestamp: args.modifiedAt,
+          createdAt: entry.createdAt,
+        }),
         filesystemIdentity: args.identity,
         filesystemSyncId: undefined,
         filesystemOperationId: undefined,

@@ -5,6 +5,7 @@ import {
   folderAccessPolicy,
   folderDiscoverability,
   folderPreviewMode,
+  gallerySortOrder,
 } from "./lib/validators";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -34,6 +35,7 @@ import {
 } from "./lib/permissions";
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { uploaderAttribution } from "./lib/profiles";
+import { scheduleSortTimestampBackfill } from "./entrySort";
 
 type FolderPreviewMode =
   | "first"
@@ -990,6 +992,9 @@ export const update = mutation({
     discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
     previewSource: v.optional(v.union(v.string(), v.null())),
+    // Null explicitly restores inheritance; omission preserves the setting
+    // for older clients and stale tabs.
+    sortOrder: v.optional(v.union(gallerySortOrder, v.null())),
   },
   handler: async (ctx, args) => {
     const folder = await ctx.db.get("folders", args.folderId);
@@ -1052,7 +1057,13 @@ export const update = mutation({
         previewMode: args.previewMode,
         previewSource:
           args.previewMode === "custom" ? previewSource : undefined,
+        ...(args.sortOrder === undefined
+          ? {}
+          : { sortOrder: args.sortOrder ?? undefined }),
       });
+      if (args.sortOrder?.startsWith("date")) {
+        await scheduleSortTimestampBackfill(ctx, gallery._id);
+      }
       const token = createToken();
       const operationId = await ctx.db.insert("filesystemOperations", {
         galleryId: gallery._id,
@@ -1080,7 +1091,13 @@ export const update = mutation({
       previewMode: args.previewMode,
       previewSource:
         args.previewMode === "custom" ? previewSource : undefined,
+      ...(args.sortOrder === undefined
+        ? {}
+        : { sortOrder: args.sortOrder ?? undefined }),
     });
+    if (args.sortOrder?.startsWith("date")) {
+      await scheduleSortTimestampBackfill(ctx, gallery._id);
+    }
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "folder.updated",

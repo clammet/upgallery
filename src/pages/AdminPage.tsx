@@ -29,6 +29,10 @@ import {
 } from "../lib/gallerySettings";
 import styles from "../styles/admin.module.css";
 import layout from "../styles/layout.module.css";
+import {
+  GALLERY_SORT_OPTIONS,
+  type GallerySortOrder,
+} from "../lib/gallerySort";
 
 type GalleryKind = "image" | "uploader";
 type StorageKind = "shared" | "user";
@@ -724,6 +728,7 @@ function GallerySettingsForm(props: {
     infiniteScroll: gallery.infiniteScroll !== false,
     paginationPageSize: gallery.paginationPageSize ?? 100,
     friendlyFolderUrls: gallery.friendlyFolderUrls === true,
+    sortOrder: gallery.sortOrder ?? "nameAsc",
     hosts: props.hosts
       .map((host) => `${host.host}|${host.rootPath}`)
       .join("\n"),
@@ -799,6 +804,10 @@ function GallerySettingsForm(props: {
         gallery.kind === "image"
           ? data.get("friendlyFolderUrls") === "on"
           : initial.friendlyFolderUrls,
+      sortOrder:
+        gallery.kind === "image"
+          ? (data.get("sortOrder") as GallerySortOrder)
+          : initial.sortOrder,
       hosts: props.isSystemAdmin ? String(data.get("hosts")) : initial.hosts,
       themeJson: JSON.stringify(theme),
     };
@@ -869,6 +878,17 @@ function GallerySettingsForm(props: {
           <select name="quickMove" defaultValue={initial.quickMove ? "on" : "off"}>
             <option value="off">Off</option>
             <option value="on">On</option>
+          </select>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Thumbnail order
+          <select name="sortOrder" defaultValue={initial.sortOrder}>
+            {GALLERY_SORT_OPTIONS.map((option) => (
+              <option value={option.value} key={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
       ) : null}

@@ -41,6 +41,15 @@ export const folderPreviewMode = v.union(
   v.literal("custom"),
 );
 
+export const gallerySortOrder = v.union(
+  v.literal("nameAsc"),
+  v.literal("nameDesc"),
+  v.literal("sizeAsc"),
+  v.literal("sizeDesc"),
+  v.literal("dateAsc"),
+  v.literal("dateDesc"),
+);
+
 export const entryState = v.union(
   v.literal("ready"),
   v.literal("deleted"),

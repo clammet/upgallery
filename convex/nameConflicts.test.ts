@@ -614,6 +614,55 @@ describe("name conflicts", () => {
 });
 
 describe("uploader attribution", () => {
+  test("gallery viewer resolves a direct-linked entry outside the current page", async () => {
+    const t = setupTest();
+    const { authed } = await seedAdmin(t);
+    const gallery = await createGallery(t, authed, {
+      slug: "direct-linked-gallery-entry",
+      kind: "image",
+    });
+    const first = await uploadFile(t, authed, {
+      galleryId: gallery.galleryId,
+      folderId: gallery.rootFolderId,
+      name: "first.jpg",
+      sha: "1",
+    });
+    const second = await uploadFile(t, authed, {
+      galleryId: gallery.galleryId,
+      folderId: gallery.rootFolderId,
+      name: "second.jpg",
+      sha: "2",
+    });
+    const page = await authed.query(api.entries.listGalleryPage, {
+      galleryId: gallery.galleryId,
+      folderId: gallery.rootFolderId,
+      paginationOpts: { cursor: null, numItems: 1 },
+    });
+    const outsidePage = [first.entry, second.entry].find(
+      (entry) => entry._id !== page.page[0]?._id,
+    );
+    expect(outsidePage).toBeDefined();
+
+    await expect(
+      authed.query(api.entries.getGalleryViewerEntry, {
+        galleryId: gallery.galleryId,
+        folderId: gallery.rootFolderId,
+        requestedEntryId: outsidePage!._id,
+      }),
+    ).resolves.toMatchObject({
+      _id: outsidePage!._id,
+      name: outsidePage!.name,
+      passwordProtected: false,
+    });
+    await expect(
+      authed.query(api.entries.getGalleryViewerEntry, {
+        galleryId: gallery.galleryId,
+        folderId: gallery.rootFolderId,
+        requestedEntryId: "not-a-convex-id",
+      }),
+    ).resolves.toBeNull();
+  });
+
   test("gallery and uploader listings use the profile's latest display name", async () => {
     const t = setupTest();
     const { authed } = await seedAdmin(t);

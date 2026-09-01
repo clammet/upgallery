@@ -3,6 +3,7 @@
 // values against that snapshot and sends only the changed fields, so a
 // long-open tab cannot overwrite settings that were changed elsewhere.
 import { THEME_MODE_DEFAULTS, type ThemeMode } from "./theme";
+import type { GallerySortOrder } from "./gallerySort";
 
 export type FolderPreviewMode =
   | "first"
@@ -53,6 +54,7 @@ export type SettingsSnapshot = {
   infiniteScroll: boolean;
   paginationPageSize: number;
   friendlyFolderUrls: boolean;
+  sortOrder: GallerySortOrder;
   hosts: string;
   themeJson: string;
 };
@@ -67,6 +69,7 @@ export type GallerySettingsUpdate = {
   infiniteScroll?: boolean;
   paginationPageSize?: number;
   friendlyFolderUrls?: boolean;
+  sortOrder?: GallerySortOrder;
   hosts?: Array<{ host: string; rootPath: string }>;
   theme?: GalleryTheme;
 };
@@ -166,6 +169,9 @@ export function diffGallerySettings(
     ...(current.friendlyFolderUrls === initial.friendlyFolderUrls
       ? {}
       : { friendlyFolderUrls: current.friendlyFolderUrls }),
+    ...(current.sortOrder === initial.sortOrder
+      ? {}
+      : { sortOrder: current.sortOrder }),
     ...(current.hosts === initial.hosts
       ? {}
       : { hosts: parseHostRoutes(current.hosts) }),

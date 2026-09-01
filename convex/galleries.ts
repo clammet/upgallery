@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
   folderPreviewMode,
+  gallerySortOrder,
   galleryKind,
   storageKind,
   systemGalleryRole,
@@ -32,6 +33,7 @@ import { publicProfile } from "./lib/profiles";
 import type { Doc, Id } from "./_generated/dataModel";
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { queueFilesystemSyncJob } from "./storageJobs";
+import { scheduleSortTimestampBackfill } from "./entrySort";
 
 const hostInput = v.object({
   host: v.string(),
@@ -233,6 +235,7 @@ export const create = mutation({
         : {}),
       infiniteScroll: true,
       paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
+      sortOrder: "nameAsc",
       theme: args.theme ?? {},
     });
     await createGalleryStats(ctx, galleryId);
@@ -616,6 +619,7 @@ export const update = mutation({
     infiniteScroll: v.optional(v.boolean()),
     paginationPageSize: v.optional(v.number()),
     friendlyFolderUrls: v.optional(v.boolean()),
+    sortOrder: v.optional(gallerySortOrder),
     theme: v.optional(themeValidator),
   },
   returns: v.null(),
@@ -738,8 +742,15 @@ export const update = mutation({
         : {
             friendlyFolderUrls: args.friendlyFolderUrls ? true : undefined,
           }),
+      ...(args.sortOrder === undefined ? {} : { sortOrder: args.sortOrder }),
       ...(args.theme === undefined ? {} : { theme: args.theme }),
     });
+    if (
+      args.sortOrder !== undefined &&
+      args.sortOrder.startsWith("date")
+    ) {
+      await scheduleSortTimestampBackfill(ctx, gallery._id);
+    }
     if (name !== undefined && rootFolder !== null) {
       await ctx.db.patch("folders", rootFolder._id, { name });
     }

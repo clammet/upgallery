@@ -10,6 +10,7 @@ import {
   folderAccessPolicy,
   folderDiscoverability,
   folderPreviewMode,
+  gallerySortOrder,
   galleryKind,
   galleryRole,
   jobState,
@@ -69,6 +70,9 @@ export default defineSchema({
     paginationPageSize: v.optional(v.number()),
     // Prefer human-readable folder-name paths over ?folder=<id> URLs.
     friendlyFolderUrls: v.optional(v.boolean()),
+    // Thumbnail ordering for image galleries. Legacy galleries default to
+    // case-insensitive filename order (A-Z).
+    sortOrder: v.optional(gallerySortOrder),
     theme: themeValidator,
     // Legacy counters. Live counts are in galleryStats (see
     // lib/galleryStats.ts); these only seed that row for galleries created
@@ -118,6 +122,8 @@ export default defineSchema({
     discoverability: folderDiscoverability,
     previewMode: v.optional(folderPreviewMode),
     previewSource: v.optional(v.string()),
+    // Undefined inherits the gallery's thumbnail ordering.
+    sortOrder: v.optional(gallerySortOrder),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
     filesystemMissingAt: v.optional(v.number()),
@@ -177,6 +183,12 @@ export default defineSchema({
     metadataJson: v.optional(v.string()),
     metadataVersion: v.optional(v.number()),
     filesystemModifiedAt: v.optional(v.number()),
+    // Stable fallback for date sorting. Unlike updatedAt, metadata refreshes
+    // and renames do not change it.
+    sortFallbackTimestamp: v.optional(v.number()),
+    // Date taken when metadata provides it; otherwise filesystem modified
+    // time, then upload time. Denormalized so date sorting can paginate.
+    sortTimestamp: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
     passwordSalt: v.optional(v.string()),
@@ -205,6 +217,24 @@ export default defineSchema({
       "state",
       "moveJobId",
       "createdAt",
+    ])
+    .index("by_folderId_and_state_and_moveJobId_and_nameKey", [
+      "folderId",
+      "state",
+      "moveJobId",
+      "nameKey",
+    ])
+    .index("by_folderId_and_state_and_moveJobId_and_size", [
+      "folderId",
+      "state",
+      "moveJobId",
+      "size",
+    ])
+    .index("by_folderId_and_state_and_moveJobId_and_sortTimestamp", [
+      "folderId",
+      "state",
+      "moveJobId",
+      "sortTimestamp",
     ])
     .index("by_folderId_and_state_and_moveJobId_and_name", [
       "folderId",

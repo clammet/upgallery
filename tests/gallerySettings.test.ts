@@ -21,6 +21,7 @@ function snapshot(): SettingsSnapshot {
     infiniteScroll: true,
     paginationPageSize: 100,
     friendlyFolderUrls: false,
+    sortOrder: "nameAsc",
     hosts: "photos.example.com|/",
     themeJson: initialThemeJson({}),
   };
@@ -102,6 +103,14 @@ describe("gallery settings dirty-field detection", () => {
     const current = { ...initial, friendlyFolderUrls: true };
     expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
       friendlyFolderUrls: true,
+    });
+  });
+
+  test("gallery sort order is sent only when changed", () => {
+    const initial = snapshot();
+    const current = { ...initial, sortOrder: "dateDesc" as const };
+    expect(diffGallerySettings(initial, current, themeOf(current))).toEqual({
+      sortOrder: "dateDesc",
     });
   });
 
