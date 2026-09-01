@@ -216,7 +216,11 @@ Shared gallery files are content-addressed below `public/shared`. User-backed
 galleries mirror their real filesystem hierarchy below `public/users`; opening
 a folder enqueues a durable background modification-time check and, when
 changed, a recursive reconciliation. The header shows shared reactive progress
-for the folder currently being scanned.
+for the folder currently being scanned. Direct item links in user-backed
+galleries use the gallery's configured public host/path and preserve the real
+folder and file names. The production edge must map that route to the gallery's
+curated `public/users` root, serving regular files directly and falling back to
+the SPA for directories and missing paths.
 Uploader files are stored below `protected/uploaders` and can only be read
 through an expiring, password-aware download ticket.
 Generated assets are stored separately below `derivatives/gallery` and

@@ -82,6 +82,7 @@ import {
   galleryFolderHref,
   galleryFolderLocation,
   galleryFolderPathSegments,
+  userBackedFileHref,
 } from "../lib/galleryRoutes";
 import {
   isHeifImage,
@@ -353,6 +354,17 @@ export function GalleryPage(props: {
   const viewerStepFrom = useRef<string | null>(null);
   const pageSentinel = useRef<HTMLDivElement>(null);
 
+  const friendlyFolderUrls = props.gallery.friendlyFolderUrls === true;
+  const canonicalOrigin = props.canonicalOrigin ?? window.location.origin;
+  const canonicalRouteRoot = props.canonicalRouteRoot ?? props.routeRoot;
+  const canonicalGalleryRoot =
+    canonicalOrigin === window.location.origin
+      ? canonicalRouteRoot
+      : new URL(canonicalRouteRoot, canonicalOrigin).toString();
+  const folderNames = useMemo(
+    () => listing?.breadcrumbs.slice(1).map((crumb) => crumb.name) ?? [],
+    [listing?.breadcrumbs],
+  );
   const viewerItems = useMemo<MediaViewerItem[]>(
     () =>
       entries.map((entry) => {
@@ -360,6 +372,18 @@ export function GalleryPage(props: {
           entry.storageKey,
           entry.filesystemModifiedAt,
         );
+        const directUrl =
+          props.gallery.storageKind === "user"
+            ? new URL(
+                userBackedFileHref({
+                  routeRoot: canonicalRouteRoot,
+                  folderNames,
+                  fileName: entry.name,
+                  filesystemModifiedAt: entry.filesystemModifiedAt,
+                }),
+                canonicalOrigin,
+              ).toString()
+            : sourceUrl;
         const heif = isHeifImage(entry.mimeType, entry.name);
         const nativeHeifPreview = shouldUseNativeHeifPreview(
           entry.mimeType,
@@ -373,7 +397,7 @@ export function GalleryPage(props: {
         return {
           id: entry._id,
           title: entry.name,
-          href: sourceUrl,
+          href: directUrl,
           sourceUrl: viewerSourceUrl,
           downloadUrl: sourceUrl,
           mediaKind: entry.mediaKind,
@@ -385,7 +409,13 @@ export function GalleryPage(props: {
           uploader: entry.uploader,
         };
       }),
-    [entries],
+    [
+      canonicalOrigin,
+      canonicalRouteRoot,
+      entries,
+      folderNames,
+      props.gallery.storageKind,
+    ],
   );
   const resolveViewerSource = useCallback(
     async (item: MediaViewerItem) => {
@@ -405,13 +435,6 @@ export function GalleryPage(props: {
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
-  const friendlyFolderUrls = props.gallery.friendlyFolderUrls === true;
-  const canonicalOrigin = props.canonicalOrigin ?? window.location.origin;
-  const canonicalRouteRoot = props.canonicalRouteRoot ?? props.routeRoot;
-  const canonicalGalleryRoot =
-    canonicalOrigin === window.location.origin
-      ? canonicalRouteRoot
-      : new URL(canonicalRouteRoot, canonicalOrigin).toString();
   const canonicalFolderHref = (
     targetFolderId: Id<"folders"> | null,
     targetFolderNames: string[],
@@ -426,10 +449,6 @@ export function GalleryPage(props: {
       ? href
       : new URL(href, canonicalOrigin).toString();
   };
-  const folderNames = useMemo(
-    () => listing?.breadcrumbs.slice(1).map((crumb) => crumb.name) ?? [],
-    [listing?.breadcrumbs],
-  );
   const currentFolderLocation =
     listing === undefined
       ? null

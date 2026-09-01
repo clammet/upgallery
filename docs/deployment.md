@@ -13,7 +13,7 @@ and derivative storage zones:
 | Zone | Container path | Writer | Reader | URL behavior |
 | --- | --- | --- | --- | --- |
 | Shared image galleries | `/data/media/public/shared` | storage services | Nginx read-only mount | direct `/media/shared/...` |
-| User-based image galleries | `/data/media/public/users` | storage services | Nginx read-only mount | direct `/media/users/...` |
+| User-based image galleries | `/data/media/public/users` | storage services | Nginx read-only mount | configured gallery host/path, mapped to its curated user root |
 | Uploader originals | `/data/media/protected/uploaders` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
 | Image-gallery derivatives | `/data/media/derivatives/gallery` | storage services | Nginx read-only mount | direct `/media/derivatives/gallery/...` |
 | Uploader derivatives | `/data/media/derivatives/up` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
@@ -305,6 +305,11 @@ replicate; the load-bearing behaviors are:
   in place), while `shared` and `derivatives/gallery` are content-addressed
   and served `immutable`. Never expose `protected/uploaders` or
   `derivatives/up`; those must pass through the storage API.
+- Each user-backed gallery's configured public host/path must also map to that
+  gallery's exact `public/users/<storageRoot>` directory. Serve regular files
+  from that alias with `must-revalidate`, but send directories and missing
+  paths to `/index.html` so friendly folder navigation remains an SPA route.
+  Keep directory listings disabled and retain the dotfile/PHP-source guards.
 
 ## GitHub Actions configuration
 

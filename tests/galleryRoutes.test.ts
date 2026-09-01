@@ -4,6 +4,7 @@ import {
   galleryFolderLocation,
   galleryFolderPathSegments,
   publicGalleryRoute,
+  userBackedFileHref,
 } from "../src/lib/galleryRoutes";
 
 describe("gallery folder routes", () => {
@@ -80,5 +81,25 @@ describe("gallery folder routes", () => {
       origin: "https://photos.example.com",
       routeRoot: "/family",
     });
+  });
+
+  test("builds user-backed file links in the gallery's filesystem namespace", () => {
+    expect(
+      userBackedFileHref({
+        routeRoot: "/gallery",
+        folderNames: ["pix", "Sesame Street"],
+        fileName: "_MG_1461.jpg",
+        filesystemModifiedAt: 1408429576000,
+      }),
+    ).toBe(
+      "/gallery/pix/Sesame%20Street/_MG_1461.jpg?v=1408429576000",
+    );
+    expect(
+      userBackedFileHref({
+        routeRoot: "/",
+        folderNames: [],
+        fileName: "At the root.jpg",
+      }),
+    ).toBe("/At%20the%20root.jpg");
   });
 });

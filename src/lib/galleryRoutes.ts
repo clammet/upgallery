@@ -27,6 +27,23 @@ function normalizedRouteRoot(routeRoot: string): string {
   return routeRoot.replace(/\/+$/, "");
 }
 
+export function userBackedFileHref(input: {
+  routeRoot: string;
+  folderNames: string[];
+  fileName: string;
+  filesystemModifiedAt?: number;
+}): string {
+  const root = normalizedRouteRoot(input.routeRoot);
+  const path = [...input.folderNames, input.fileName]
+    .map(encodeURIComponent)
+    .join("/");
+  const version =
+    input.filesystemModifiedAt === undefined
+      ? ""
+      : `?v=${encodeURIComponent(input.filesystemModifiedAt)}`;
+  return `${root}/${path}${version}`;
+}
+
 export function galleryFolderPathSegments(
   pathname: string,
   routeRoot: string,
