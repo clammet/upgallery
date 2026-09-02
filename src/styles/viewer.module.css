@@ -147,6 +147,18 @@
   border-color: var(--gallery-accent);
 }
 
+.titleButton:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: color-mix(in srgb, var(--gallery-fg) 40%, transparent);
+}
+
+.actualSizeIcon {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .viewerBody {
   display: flex;
   max-width: 100%;

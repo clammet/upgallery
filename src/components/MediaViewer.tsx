@@ -1101,6 +1101,23 @@ export function MediaViewer(props: {
               <Download aria-hidden="true" size={18} />
             </button>
           ) : null}
+          {activeItem.mediaKind === "image" ||
+          activeItem.mediaKind === "video" ? (
+            <button
+              className={styles.titleButton}
+              type="button"
+              onClick={() => setScale(1)}
+              disabled={
+                naturalSize === null || Math.abs(scale - 1) < ZOOM_EPSILON
+              }
+              aria-label={`View ${activeItem.title} at actual size`}
+              title="View at actual size (1:1)"
+            >
+              <span className={styles.actualSizeIcon} aria-hidden="true">
+                1:1
+              </span>
+            </button>
+          ) : null}
           <button
             className={`${styles.titleButton} ${infoOpen ? styles.titleButtonActive : ""}`}
             type="button"
