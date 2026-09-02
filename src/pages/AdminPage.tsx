@@ -33,6 +33,7 @@ import {
   GALLERY_SORT_OPTIONS,
   type GallerySortOrder,
 } from "../lib/gallerySort";
+import { MAX_LIGHTBOX_PRELOAD_COUNT } from "../lib/lightboxPreload";
 
 type GalleryKind = "image" | "uploader";
 type StorageKind = "shared" | "user";
@@ -1106,9 +1107,71 @@ function SystemSection() {
   return (
     <div className={styles.systemSection}>
       <h2 className={styles.systemHeading}>System</h2>
+      <SystemSettings />
       <DeploymentStatus />
       <SystemUsers />
     </div>
+  );
+}
+
+function SystemSettings() {
+  const settings = useQuery(api.system.lightboxPreloadSettings);
+  const update = useMutation(api.system.updateLightboxPreloadSettings);
+  const [message, setMessage] = useState<string | null>(null);
+  if (settings === undefined) return null;
+  return (
+    <Section title="Settings">
+      <p>
+        Preload nearby images when a gallery lightbox opens or advances. This
+        does not apply to uploader lightboxes.
+      </p>
+      <form
+        className={styles.inlineForm}
+        key={`${settings.ahead}:${settings.behind}`}
+        onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          setMessage(null);
+          void update({
+            ahead: Number(data.get("lightboxPreloadAhead")),
+            behind: Number(data.get("lightboxPreloadBehind")),
+          })
+            .then(() => setMessage("Settings saved"))
+            .catch(showError(setMessage));
+        }}
+      >
+        <label>
+          Lightbox preload forward <small>(images)</small>
+          <input
+            name="lightboxPreloadAhead"
+            type="number"
+            min="0"
+            max={MAX_LIGHTBOX_PRELOAD_COUNT}
+            step="1"
+            required
+            defaultValue={settings.ahead}
+          />
+        </label>
+        <label>
+          Lightbox preload behind <small>(images)</small>
+          <input
+            name="lightboxPreloadBehind"
+            type="number"
+            min="0"
+            max={MAX_LIGHTBOX_PRELOAD_COUNT}
+            step="1"
+            required
+            defaultValue={settings.behind}
+          />
+        </label>
+        <button type="submit">Save settings</button>
+      </form>
+      {message ? (
+        <p className={message.startsWith("Error:") ? layout.formError : undefined}>
+          {message}
+        </p>
+      ) : null}
+    </Section>
   );
 }
 

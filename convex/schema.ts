@@ -550,6 +550,13 @@ export default defineSchema({
     at: v.number(),
   }).index("by_component", ["component"]),
 
+  // A singleton row for non-secret settings shared by every gallery.
+  systemSettings: defineTable({
+    key: v.literal("global"),
+    lightboxPreloadAhead: v.number(),
+    lightboxPreloadBehind: v.number(),
+  }).index("by_key", ["key"]),
+
   auditEvents: defineTable({
     actorProfileId: v.optional(v.id("profiles")),
     action: v.string(),

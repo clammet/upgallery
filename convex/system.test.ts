@@ -95,3 +95,46 @@ describe("deployment status", () => {
     await expect(t.query(api.system.deploymentStatus)).rejects.toThrow();
   });
 });
+
+describe("system settings", () => {
+  test("lightbox preload settings default globally and only admins can update them", async () => {
+    const t = setupTest();
+    const admin = await seedUser(t, true);
+    const user = await seedUser(t, false);
+
+    await expect(t.query(api.system.lightboxPreloadSettings)).resolves.toEqual({
+      ahead: 2,
+      behind: 0,
+    });
+    await expect(
+      asUser(t, user).mutation(api.system.updateLightboxPreloadSettings, {
+        ahead: 4,
+        behind: 1,
+      }),
+    ).rejects.toThrow(/Unauthorized/);
+
+    const adminClient = asUser(t, admin);
+    await adminClient.mutation(api.system.updateLightboxPreloadSettings, {
+      ahead: 4,
+      behind: 1,
+    });
+    await expect(t.query(api.system.lightboxPreloadSettings)).resolves.toEqual({
+      ahead: 4,
+      behind: 1,
+    });
+    await expect(
+      adminClient.mutation(api.system.updateLightboxPreloadSettings, {
+        ahead: 21,
+        behind: 0,
+      }),
+    ).rejects.toThrow(/between 0 and 20/);
+
+    const rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("systemSettings")
+        .withIndex("by_key", (q) => q.eq("key", "global"))
+        .take(2),
+    );
+    expect(rows).toHaveLength(1);
+  });
+});

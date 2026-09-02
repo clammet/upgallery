@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   mediaViewerGeometry,
   mediaViewerMediaChanged,
+  mediaViewerPreloadItems,
+  type MediaViewerItem,
 } from "../src/components/MediaViewer";
 
 describe("media viewer media identity", () => {
@@ -30,6 +32,36 @@ describe("media viewer media identity", () => {
         sourceRevision: 1,
       }),
     ).toBe(true);
+  });
+});
+
+describe("media viewer preloading", () => {
+  const item = (
+    id: string,
+    mediaKind: MediaViewerItem["mediaKind"],
+  ): MediaViewerItem => ({
+    id,
+    title: id,
+    href: `/${id}`,
+    mediaKind,
+    mimeType: mediaKind === "image" ? "image/jpeg" : "video/mp4",
+  });
+  const items = [
+    item("image-0", "image"),
+    item("video-1", "video"),
+    item("image-2", "image"),
+    item("image-3", "image"),
+    item("image-4", "image"),
+  ];
+
+  test("selects the configured number of images on each side", () => {
+    expect(mediaViewerPreloadItems(items, 2, 2, 1).map((entry) => entry.id))
+      .toEqual(["image-3", "image-4", "image-0"]);
+  });
+
+  test("defaults can select two forward images and none behind", () => {
+    expect(mediaViewerPreloadItems(items, 0, 2, 0).map((entry) => entry.id))
+      .toEqual(["image-2", "image-3"]);
   });
 });
 

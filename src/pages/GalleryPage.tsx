@@ -247,6 +247,7 @@ export function GalleryPage(props: {
   const profile = useQuery(api.profiles.current, {
     anonymousClaim: anonymousClaim(),
   });
+  const lightboxPreload = useQuery(api.system.lightboxPreloadSettings);
   const pageSize = props.gallery.paginationPageSize ?? 100;
   // The gallery setting is a ceiling; a user who prefers paging gets paging
   // even where the gallery allows infinite scroll.
@@ -1836,6 +1837,8 @@ export function GalleryPage(props: {
           initialIndex={viewerIndex}
           themeMode={props.gallery.theme.mode ?? "light"}
           overzoom={profile?.overzoom === true}
+          preloadAhead={lightboxPreload?.ahead ?? 0}
+          preloadBehind={lightboxPreload?.behind ?? 0}
           onActiveItemChange={(item) => setViewerEntry(item.id, true)}
           onCopyLink={copyViewerLink}
           onTitleChange={

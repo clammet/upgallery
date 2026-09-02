@@ -232,12 +232,43 @@ export function mediaViewerMediaChanged(
   );
 }
 
+export function mediaViewerPreloadItems(
+  items: MediaViewerItem[],
+  activeIndex: number,
+  ahead: number,
+  behind: number,
+): MediaViewerItem[] {
+  const selected: MediaViewerItem[] = [];
+  const collect = (direction: -1 | 1, count: number) => {
+    let remaining = Math.max(0, Math.floor(count));
+    for (
+      let candidateIndex = activeIndex + direction;
+      candidateIndex >= 0 &&
+      candidateIndex < items.length &&
+      remaining > 0;
+      candidateIndex += direction
+    ) {
+      const candidate = items[candidateIndex];
+      if (candidate?.mediaKind !== "image") continue;
+      selected.push(candidate);
+      remaining -= 1;
+    }
+  };
+  collect(1, ahead);
+  collect(-1, behind);
+  return selected;
+}
+
 export function MediaViewer(props: {
   items: MediaViewerItem[];
   initialIndex: number;
   themeMode: ThemeMode;
   // Lets image zoom go past the natural size (up to OVERZOOM_MAX_SCALE).
   overzoom?: boolean;
+  // Gallery-only callers can warm nearby image sources. Omitted counts keep
+  // other uses, including the uploader lightbox, from preloading.
+  preloadAhead?: number;
+  preloadBehind?: number;
   onClose: () => void;
   resolveSource?: (
     item: MediaViewerItem,
@@ -314,6 +345,9 @@ export function MediaViewer(props: {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const resolvedSources = useRef(new Map<string, string>());
   const pendingResolutions = useRef(new Map<string, string | null>());
+  const preloadResolutions = useRef(new Set<string>());
+  const preloadedUrls = useRef(new Set<string>());
+  const preloadingImages = useRef(new Map<string, HTMLImageElement>());
   const unlockedPasswords = useRef(new Map<string, string>());
   const previousActiveItemId = useRef<string | null>(null);
   const previousMediaIdentity = useRef<MediaIdentity | null>(null);
@@ -597,6 +631,77 @@ export function MediaViewer(props: {
       cancelled = true;
     };
   }, [activeItem, props.resolveSource, sourceRevision]);
+
+  useEffect(() => {
+    const candidates = mediaViewerPreloadItems(
+      props.items,
+      index,
+      props.preloadAhead ?? 0,
+      props.preloadBehind ?? 0,
+    );
+    if (candidates.length === 0) return;
+
+    // Let the active item render and claim network priority before warming
+    // nearby sources. The Image objects are retained until completion so a
+    // browser cannot discard an otherwise-unreferenced preload.
+    const timeout = window.setTimeout(() => {
+      const preloadUrl = (url: string) => {
+        if (preloadedUrls.current.has(url)) return;
+        preloadedUrls.current.add(url);
+        const image = new Image();
+        preloadingImages.current.set(url, image);
+        const release = () => preloadingImages.current.delete(url);
+        image.addEventListener("load", release, { once: true });
+        image.addEventListener("error", release, { once: true });
+        image.src = url;
+      };
+
+      for (const item of candidates) {
+        const cachedSource =
+          item.sourceUrl ?? resolvedSources.current.get(item.id);
+        if (cachedSource !== undefined) {
+          preloadUrl(cachedSource);
+          continue;
+        }
+        if (
+          item.passwordProtected === true ||
+          props.resolveSource === undefined ||
+          preloadResolutions.current.has(item.id) ||
+          (pendingResolutions.current.has(item.id) &&
+            item.previewReady !== true)
+        ) {
+          continue;
+        }
+
+        preloadResolutions.current.add(item.id);
+        void props
+          .resolveSource(item)
+          .then((url) => {
+            if (url === null) {
+              pendingResolutions.current.set(item.id, null);
+              return;
+            }
+            pendingResolutions.current.delete(item.id);
+            resolvedSources.current.set(item.id, url);
+            preloadUrl(url);
+          })
+          .catch(() => {
+            // Preloading is best-effort. Navigating to the item will retry
+            // normally and surface any real loading error there.
+            pendingResolutions.current.delete(item.id);
+          })
+          .finally(() => preloadResolutions.current.delete(item.id));
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    index,
+    props.items,
+    props.preloadAhead,
+    props.preloadBehind,
+    props.resolveSource,
+  ]);
 
   useEffect(() => {
     if (activeItem !== undefined && !editingTitle) {

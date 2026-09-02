@@ -1,0 +1,1 @@
+export const MAX_LIGHTBOX_PRELOAD_COUNT = 20;
