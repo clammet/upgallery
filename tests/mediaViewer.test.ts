@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 import {
   mediaViewerGeometry,
   mediaViewerMediaChanged,
+  mediaViewerNavigationState,
+  mediaViewerNavigationZone,
   mediaViewerPreloadItems,
+  mediaViewerToggledActualSizeScale,
   type MediaViewerItem,
 } from "../src/components/MediaViewer";
 
@@ -62,6 +65,50 @@ describe("media viewer preloading", () => {
   test("defaults can select two forward images and none behind", () => {
     expect(mediaViewerPreloadItems(items, 0, 2, 0).map((entry) => entry.id))
       .toEqual(["image-2", "image-3"]);
+  });
+});
+
+describe("media viewer paginated navigation", () => {
+  test("uses the collection total and keeps next enabled at a loaded-page boundary", () => {
+    expect(mediaViewerNavigationState(99, 100, 250, true)).toEqual({
+      position: 100,
+      total: 250,
+      canMovePrevious: true,
+      canMoveNext: true,
+    });
+  });
+
+  test("disables next only after the full collection is loaded", () => {
+    expect(mediaViewerNavigationState(249, 250, 250, false)).toEqual({
+      position: 250,
+      total: 250,
+      canMovePrevious: true,
+      canMoveNext: false,
+    });
+  });
+
+  test("keeps next enabled when navigation can continue in another collection", () => {
+    expect(
+      mediaViewerNavigationState(4, 5, 5, false, true).canMoveNext,
+    ).toBe(true);
+  });
+});
+
+describe("media viewer navigation visibility", () => {
+  test("only reveals navigation in the outer quarters of the content", () => {
+    expect(mediaViewerNavigationZone(0, 400)).toBe("previous");
+    expect(mediaViewerNavigationZone(100, 400)).toBe("previous");
+    expect(mediaViewerNavigationZone(101, 400)).toBeNull();
+    expect(mediaViewerNavigationZone(299, 400)).toBeNull();
+    expect(mediaViewerNavigationZone(300, 400)).toBe("next");
+    expect(mediaViewerNavigationZone(400, 400)).toBe("next");
+  });
+});
+
+describe("media viewer actual-size toggle", () => {
+  test("switches between 1:1 and the fitted scale", () => {
+    expect(mediaViewerToggledActualSizeScale(0.4, 0.4)).toBe(1);
+    expect(mediaViewerToggledActualSizeScale(1, 0.4)).toBe(0.4);
   });
 });
 

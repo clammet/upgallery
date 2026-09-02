@@ -100,6 +100,8 @@ type MediaIdentity = {
   sourceRevision: number;
 };
 
+type NavigationZone = "previous" | "next" | null;
+
 const ZOOM_EPSILON = 0.002;
 const OVERZOOM_MAX_SCALE = 4;
 const INFO_COLUMN_WIDTH = 320;
@@ -259,9 +261,52 @@ export function mediaViewerPreloadItems(
   return selected;
 }
 
+export function mediaViewerNavigationState(
+  activeIndex: number,
+  loadedItemCount: number,
+  totalItemCount?: number,
+  hasMoreItems = false,
+  canMoveNextBeyondItems = false,
+) {
+  return {
+    position: activeIndex + 1,
+    total: Math.max(loadedItemCount, totalItemCount ?? 0),
+    canMovePrevious: activeIndex > 0,
+    canMoveNext:
+      activeIndex < loadedItemCount - 1 ||
+      hasMoreItems ||
+      canMoveNextBeyondItems,
+  };
+}
+
+export function mediaViewerNavigationZone(
+  pointerX: number,
+  contentWidth: number,
+): NavigationZone {
+  if (contentWidth <= 0 || pointerX < 0 || pointerX > contentWidth) return null;
+  if (pointerX <= contentWidth / 4) return "previous";
+  if (pointerX >= (contentWidth * 3) / 4) return "next";
+  return null;
+}
+
+export function mediaViewerToggledActualSizeScale(
+  currentScale: number,
+  fitScale: number,
+) {
+  return Math.abs(currentScale - 1) < ZOOM_EPSILON ? fitScale : 1;
+}
+
 export function MediaViewer(props: {
   items: MediaViewerItem[];
   initialIndex: number;
+  // The full collection size can be larger than the currently loaded items.
+  totalItems?: number;
+  hasMoreItems?: boolean;
+  onLoadMoreItems?: () => void;
+  // Called when the active item is the collection's final item and a caller
+  // can continue navigation in another collection (for example, a sibling
+  // gallery folder).
+  onMoveNextBeyondItems?: () => void;
   themeMode: ThemeMode;
   // Lets image zoom go past the natural size (up to OVERZOOM_MAX_SCALE).
   overzoom?: boolean;
@@ -308,6 +353,9 @@ export function MediaViewer(props: {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
   );
+  const [pendingNextFromId, setPendingNextFromId] = useState<string | null>(
+    null,
+  );
   const activeItem = props.items[index];
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -338,7 +386,9 @@ export function MediaViewer(props: {
   const [downloadPending, setDownloadPending] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoContentHeight, setInfoContentHeight] = useState(0);
+  const [navigationZone, setNavigationZone] = useState<NavigationZone>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const viewerBodyRef = useRef<HTMLDivElement>(null);
   const infoContentRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const titleEditFormRef = useRef<HTMLFormElement>(null);
@@ -419,6 +469,23 @@ export function MediaViewer(props: {
 
   const moveBy = useCallback(
     (direction: -1 | 1) => {
+      if (direction === 1 && index === props.items.length - 1) {
+        if (
+          props.hasMoreItems === true &&
+          props.onLoadMoreItems !== undefined
+        ) {
+          if (activeItem !== undefined && pendingNextFromId === null) {
+            setPendingNextFromId(activeItem.id);
+            props.onLoadMoreItems();
+          }
+          return;
+        }
+        props.onMoveNextBeyondItems?.();
+        return;
+      }
+      if (direction === -1 && pendingNextFromId !== null) {
+        setPendingNextFromId(null);
+      }
       const nextIndex = Math.min(
         Math.max(index + direction, 0),
         props.items.length - 1,
@@ -428,7 +495,16 @@ export function MediaViewer(props: {
       const nextItem = props.items[nextIndex];
       if (nextItem !== undefined) props.onActiveItemChange?.(nextItem);
     },
-    [index, props.items, props.onActiveItemChange],
+    [
+      activeItem,
+      index,
+      pendingNextFromId,
+      props.hasMoreItems,
+      props.items,
+      props.onActiveItemChange,
+      props.onLoadMoreItems,
+      props.onMoveNextBeyondItems,
+    ],
   );
 
   const openInNewTab = useCallback(() => {
@@ -463,11 +539,51 @@ export function MediaViewer(props: {
       });
   }, [activeItem, props.resolveTemporaryHref]);
 
+  const toggleActualSize = useCallback(() => {
+    if (
+      naturalSize === null ||
+      (activeItem?.mediaKind !== "image" && activeItem?.mediaKind !== "video")
+    ) {
+      return;
+    }
+    setScale((current) =>
+      mediaViewerToggledActualSizeScale(current, fitScale),
+    );
+    setPan({ x: 0, y: 0 });
+  }, [activeItem?.mediaKind, fitScale, naturalSize]);
+
   useEffect(() => {
     setIndex(
       Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
     );
   }, [props.initialIndex, props.items.length]);
+
+  useEffect(() => {
+    if (pendingNextFromId === null) return;
+    const previousIndex = props.items.findIndex(
+      (item) => item.id === pendingNextFromId,
+    );
+    const nextItem = props.items[previousIndex + 1];
+    if (previousIndex >= 0 && nextItem !== undefined) {
+      setPendingNextFromId(null);
+      setIndex(previousIndex + 1);
+      props.onActiveItemChange?.(nextItem);
+      return;
+    }
+    if (props.hasMoreItems !== true) {
+      setPendingNextFromId(null);
+      return;
+    }
+    // A lightbox URL may point beyond the thumbnail pages loaded so far. Keep
+    // paging until that item's successor is present or the folder is exhausted.
+    props.onLoadMoreItems?.();
+  }, [
+    pendingNextFromId,
+    props.hasMoreItems,
+    props.items,
+    props.onActiveItemChange,
+    props.onLoadMoreItems,
+  ]);
 
   useEffect(() => {
     if (props.items.length === 0) {
@@ -515,11 +631,26 @@ export function MediaViewer(props: {
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         moveBy(1);
+      } else if (
+        event.key.toLowerCase() === "a" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        toggleActualSize();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeItem, moveBy, openInNewTab, props.onClose, props.shortcutsSuspended]);
+  }, [
+    activeItem,
+    moveBy,
+    openInNewTab,
+    props.onClose,
+    props.shortcutsSuspended,
+    toggleActualSize,
+  ]);
 
   useEffect(() => {
     if (activeItem === undefined) return;
@@ -829,6 +960,13 @@ export function MediaViewer(props: {
 
   if (activeItem === undefined) return null;
 
+  const navigation = mediaViewerNavigationState(
+    index,
+    props.items.length,
+    props.totalItems,
+    props.hasMoreItems,
+    props.onMoveNextBeyondItems !== undefined,
+  );
   const canRenameActive =
     props.onTitleChange !== undefined && activeItem.canRename !== false;
 
@@ -1079,6 +1217,24 @@ export function MediaViewer(props: {
         role="dialog"
         aria-modal="true"
         aria-label={activeItem.title}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "mouse" || gesture.current !== null) {
+            setNavigationZone(null);
+            return;
+          }
+          const bounds = viewerBodyRef.current?.getBoundingClientRect();
+          setNavigationZone((current) => {
+            const next =
+              bounds === undefined
+                ? null
+                : mediaViewerNavigationZone(
+                    event.clientX - bounds.left,
+                    bounds.width,
+                  );
+            return current === next ? current : next;
+          });
+        }}
+        onPointerLeave={() => setNavigationZone(null)}
       >
         <header className={styles.titlebar}>
           <div className={styles.titleGroup}>
@@ -1157,7 +1313,8 @@ export function MediaViewer(props: {
             ) : null}
           </div>
           <span className={styles.position}>
-            {index + 1} / {props.items.length}
+            {navigation.position.toLocaleString()} /{" "}
+            {navigation.total.toLocaleString()}
           </span>
           {canChangeMarkdown ? (
             <MarkdownToggle
@@ -1211,12 +1368,12 @@ export function MediaViewer(props: {
             <button
               className={styles.titleButton}
               type="button"
-              onClick={() => setScale(1)}
+              onClick={toggleActualSize}
               disabled={
                 naturalSize === null || Math.abs(scale - 1) < ZOOM_EPSILON
               }
               aria-label={`View ${activeItem.title} at actual size`}
-              title="View at actual size (1:1)"
+              title="View at actual size (1:1) (A)"
             >
               <span className={styles.actualSizeIcon} aria-hidden="true">
                 1:1
@@ -1280,7 +1437,7 @@ export function MediaViewer(props: {
           ) : null}
         </header>
 
-        <div className={styles.viewerBody}>
+        <div ref={viewerBodyRef} className={styles.viewerBody}>
           <div
             ref={stageRef}
             className={`${styles.stage} ${showsTextPreview ? styles.stageTextPreview : ""} ${zoomed ? styles.stageZoomed : ""} ${dragging ? styles.stageDragging : ""}`}
@@ -1479,23 +1636,29 @@ export function MediaViewer(props: {
           ) : null}
         </div>
 
-        {props.items.length > 1 ? (
+        {navigation.canMovePrevious || navigation.canMoveNext ? (
           <>
             <button
-              className={`${styles.navigation} ${styles.previous}`}
+              className={`${styles.navigation} ${styles.previous} ${
+                navigationZone === "previous" ? styles.navigationVisible : ""
+              }`}
               type="button"
               onClick={() => moveBy(-1)}
-              disabled={index === 0}
+              disabled={!navigation.canMovePrevious}
               aria-label="Previous item"
               title="Previous"
             >
               <ChevronLeft aria-hidden="true" size={28} />
             </button>
             <button
-              className={`${styles.navigation} ${styles.next}`}
+              className={`${styles.navigation} ${styles.next} ${
+                navigationZone === "next" ? styles.navigationVisible : ""
+              }`}
               type="button"
               onClick={() => moveBy(1)}
-              disabled={index === props.items.length - 1}
+              disabled={
+                !navigation.canMoveNext || pendingNextFromId !== null
+              }
               aria-label="Next item"
               title="Next"
             >

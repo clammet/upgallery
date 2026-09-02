@@ -282,10 +282,12 @@ export function GalleryPage(props: {
         }
       : "skip",
   );
-  // Only the paged layout shows a page total; infinite scroll never needs it.
+  // Paging always needs a total for its label. Infinite scroll only needs the
+  // total while its lightbox is open, where the loaded thumbnail count is not
+  // the collection size.
   const folderEntryCount = useQuery(
     api.entries.countFolderEntries,
-    infiniteScroll || resolvingPath || invalidPath
+    resolvingPath || invalidPath || (infiniteScroll && viewerEntryId === null)
       ? "skip"
       : {
           anonymousClaim: anonymousClaim(),
@@ -305,6 +307,17 @@ export function GalleryPage(props: {
           galleryId: props.gallery._id,
           folderId,
           requestedEntryId: viewerEntryId,
+        },
+  );
+  const nextSiblingViewerTarget = useQuery(
+    api.entries.nextSiblingGalleryViewerTarget,
+    viewerEntryId === null || resolvingPath || invalidPath
+      ? "skip"
+      : {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+          currentEntryId: viewerEntryId,
         },
   );
   const viewerEntries = useMemo<GalleryEntry[]>(() => {
@@ -475,6 +488,52 @@ export function GalleryPage(props: {
       ? -1
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
+  const loadMoreViewerItems = useCallback(() => {
+    if (infiniteScroll && entryPages.status === "CanLoadMore") {
+      entryPages.loadMore(pageSize);
+    }
+  }, [entryPages.loadMore, entryPages.status, infiniteScroll, pageSize]);
+  const moveViewerToNextSibling = useCallback(() => {
+    if (
+      nextSiblingViewerTarget === undefined ||
+      nextSiblingViewerTarget === null
+    ) {
+      return;
+    }
+    const targetLocation = galleryFolderLocation({
+      routeRoot: props.routeRoot,
+      folderId: nextSiblingViewerTarget.folderId,
+      folderNames: [
+        ...folderNames.slice(0, -1),
+        nextSiblingViewerTarget.folderName,
+      ],
+      friendlyFolderUrls,
+      currentSearch: location.search,
+    });
+    const params = new URLSearchParams(targetLocation.search);
+    if (nextSiblingViewerTarget.entry === null) {
+      params.delete("item");
+    } else {
+      params.set("item", nextSiblingViewerTarget.entry._id);
+    }
+    const search = params.toString();
+    void navigate(
+      {
+        pathname: targetLocation.pathname,
+        search: search === "" ? "" : `?${search}`,
+        hash: location.hash,
+      },
+      { replace: true },
+    );
+  }, [
+    folderNames,
+    friendlyFolderUrls,
+    location.hash,
+    location.search,
+    navigate,
+    nextSiblingViewerTarget,
+    props.routeRoot,
+  ]);
   const canonicalFolderHref = (
     targetFolderId: Id<"folders"> | null,
     targetFolderNames: string[],
@@ -1572,16 +1631,20 @@ export function GalleryPage(props: {
       }
     >
       {index > 0 ? <span className={layout.separator}>/</span> : null}
-      <Link
-        to={canonicalFolderHref(
-          crumb._id === props.rootFolder._id ? null : crumb._id,
-          listing.breadcrumbs
-            .slice(1, index + 1)
-            .map((entry) => entry.name),
-        )}
-      >
-        {crumb.name}
-      </Link>
+      {index === listing.breadcrumbs.length - 1 ? (
+        crumb.name
+      ) : (
+        <Link
+          to={canonicalFolderHref(
+            crumb._id === props.rootFolder._id ? null : crumb._id,
+            listing.breadcrumbs
+              .slice(1, index + 1)
+              .map((entry) => entry.name),
+          )}
+        >
+          {crumb.name}
+        </Link>
+      )}
     </span>
   ));
 
@@ -1835,6 +1898,23 @@ export function GalleryPage(props: {
         <MediaViewer
           items={viewerItems}
           initialIndex={viewerIndex}
+          totalItems={
+            infiniteScroll && folderEntryCount?.exact === true
+              ? folderEntryCount.count
+              : undefined
+          }
+          hasMoreItems={
+            infiniteScroll && entryPages.status !== "Exhausted"
+          }
+          onLoadMoreItems={
+            infiniteScroll ? loadMoreViewerItems : undefined
+          }
+          onMoveNextBeyondItems={
+            nextSiblingViewerTarget === undefined ||
+            nextSiblingViewerTarget === null
+              ? undefined
+              : moveViewerToNextSibling
+          }
           themeMode={props.gallery.theme.mode ?? "light"}
           overzoom={profile?.overzoom === true}
           preloadAhead={lightboxPreload?.ahead ?? 0}

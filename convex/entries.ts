@@ -16,6 +16,7 @@ import {
   requireGalleryManager,
   requireGalleryRole,
   roleAtLeast,
+  shouldListFolder,
   unauthorizedError,
 } from "./lib/permissions";
 import {
@@ -241,6 +242,31 @@ function sortedFolderEntries(
     .order(sortOrder.endsWith("Asc") ? "asc" : "desc");
 }
 
+function reverseGallerySortOrder(
+  sortOrder:
+    | "nameAsc"
+    | "nameDesc"
+    | "sizeAsc"
+    | "sizeDesc"
+    | "dateAsc"
+    | "dateDesc",
+) {
+  switch (sortOrder) {
+    case "nameAsc":
+      return "nameDesc" as const;
+    case "nameDesc":
+      return "nameAsc" as const;
+    case "sizeAsc":
+      return "sizeDesc" as const;
+    case "sizeDesc":
+      return "sizeAsc" as const;
+    case "dateAsc":
+      return "dateDesc" as const;
+    case "dateDesc":
+      return "dateAsc" as const;
+  }
+}
+
 // Check transaction headroom every this many entries while counting.
 const COUNT_METRICS_INTERVAL = 256;
 // Stop counting once a transaction has less than this left, so a very large
@@ -360,6 +386,103 @@ export const getGalleryViewerEntry = query({
         : uploaderAttribution(uploaderProfile),
       counter?.views ?? 0,
     );
+  },
+});
+
+// Lets the lightbox continue from the final file in one folder to the first
+// file in the next visible sibling folder. Folder sibling order matches the
+// folder listing index (creation order).
+export const nextSiblingGalleryViewerTarget = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    folderId: v.id("folders"),
+    currentEntryId: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      folderId: v.id("folders"),
+      folderName: v.string(),
+      entry: v.union(v.null(), galleryEntryValidator),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const { gallery, folder, profile } = await loadViewableImageFolder(
+      ctx,
+      args,
+    );
+    if (folder.parentId === undefined) return null;
+
+    const currentEntryId = ctx.db.normalizeId("entries", args.currentEntryId);
+    if (currentEntryId === null) return null;
+    const sortOrder = folder.sortOrder ?? gallery.sortOrder ?? "nameAsc";
+    const finalEntry = await sortedFolderEntries(
+      ctx,
+      folder._id,
+      reverseGallerySortOrder(sortOrder),
+    ).first();
+    if (finalEntry?._id !== currentEntryId) return null;
+
+    const candidates = await ctx.db
+      .query("folders")
+      .withIndex("by_galleryId_and_parentId", (q) =>
+        q
+          .eq("galleryId", gallery._id)
+          .eq("parentId", folder.parentId)
+          .gt("_creationTime", folder._creationTime),
+      )
+      .take(128);
+    let sibling: Doc<"folders"> | null = null;
+    for (const candidate of candidates) {
+      if (
+        candidate.filesystemMissingAt === undefined &&
+        (await shouldListFolder(
+          ctx,
+          candidate,
+          profile,
+          args.anonymousClaim,
+        ))
+      ) {
+        sibling = candidate;
+        break;
+      }
+    }
+    if (sibling === null) return null;
+
+    const siblingSortOrder =
+      sibling.sortOrder ?? gallery.sortOrder ?? "nameAsc";
+    const firstEntry = await sortedFolderEntries(
+      ctx,
+      sibling._id,
+      siblingSortOrder,
+    ).first();
+    if (firstEntry === null) {
+      return {
+        folderId: sibling._id,
+        folderName: sibling.name,
+        entry: null,
+      };
+    }
+
+    const [counter, uploaderProfile] = await Promise.all([
+      ctx.db
+        .query("entryCounters")
+        .withIndex("by_entryId", (q) => q.eq("entryId", firstEntry._id))
+        .unique(),
+      ctx.db.get("profiles", firstEntry.ownerProfileId),
+    ]);
+    return {
+      folderId: sibling._id,
+      folderName: sibling.name,
+      entry: galleryEntryForViewer(
+        firstEntry,
+        uploaderProfile === null
+          ? "Unknown"
+          : uploaderAttribution(uploaderProfile),
+        counter?.views ?? 0,
+      ),
+    };
   },
 });
 

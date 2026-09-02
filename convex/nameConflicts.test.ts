@@ -704,3 +704,72 @@ describe("uploader attribution", () => {
     expect(uploaderListing.entries[0]?.uploader).toBe("Newest Display Name");
   });
 });
+
+describe("gallery lightbox folder navigation", () => {
+  test("continues from a folder's final entry into its next sibling", async () => {
+    const t = setupTest();
+    const { authed } = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createGallery(t, authed, {
+      slug: "sibling-lightbox-navigation",
+      kind: "image",
+    });
+    const firstFolder = await authed.mutation(api.folders.create, {
+      galleryId,
+      parentId: rootFolderId,
+      name: "First",
+      accessPolicy: "public",
+      discoverability: "listed",
+    });
+    const secondFolder = await authed.mutation(api.folders.create, {
+      galleryId,
+      parentId: rootFolderId,
+      name: "Second",
+      accessPolicy: "public",
+      discoverability: "listed",
+    });
+    if (firstFolder.kind !== "complete" || secondFolder.kind !== "complete") {
+      throw new Error("Expected shared-storage folders to complete inline");
+    }
+    const first = await uploadFile(t, authed, {
+      galleryId,
+      folderId: firstFolder.folderId,
+      name: "a.jpg",
+      sha: "a",
+    });
+    const last = await uploadFile(t, authed, {
+      galleryId,
+      folderId: firstFolder.folderId,
+      name: "z.jpg",
+      sha: "b",
+    });
+    const siblingFirst = await uploadFile(t, authed, {
+      galleryId,
+      folderId: secondFolder.folderId,
+      name: "next.jpg",
+      sha: "c",
+    });
+
+    await expect(
+      authed.query(api.entries.nextSiblingGalleryViewerTarget, {
+        galleryId,
+        folderId: firstFolder.folderId,
+        currentEntryId: first.entry._id,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      authed.query(api.entries.nextSiblingGalleryViewerTarget, {
+        galleryId,
+        folderId: firstFolder.folderId,
+        currentEntryId: last.entry._id,
+      }),
+    ).resolves.toMatchObject({
+      folderId: secondFolder.folderId,
+      folderName: "Second",
+      entry: {
+        _id: siblingFirst.entry._id,
+        name: "next.jpg",
+        passwordProtected: false,
+      },
+    });
+  });
+});

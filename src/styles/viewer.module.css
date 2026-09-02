@@ -381,12 +381,20 @@
   font-size: 2rem;
   height: 42px;
   justify-content: center;
+  opacity: 0;
   padding: 0 0 0.15rem;
+  pointer-events: none;
   position: absolute;
   top: calc(50% + 23px);
   transform: translateY(-50%);
   width: 42px;
   z-index: 1;
+}
+
+.navigationVisible,
+.navigation:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .navigation:hover:not(:disabled),
