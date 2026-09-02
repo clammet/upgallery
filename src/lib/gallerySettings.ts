@@ -50,6 +50,7 @@ export type SettingsSnapshot = {
   maxFileSizeLimitMib: number;
   folderPreviewMode: FolderPreviewMode;
   folderPreviewSource: string;
+  folderPreviewRecursive: boolean;
   quickMove: boolean;
   infiniteScroll: boolean;
   paginationPageSize: number;
@@ -65,6 +66,7 @@ export type GallerySettingsUpdate = {
   maxFileSizeLimit?: number;
   folderPreviewMode?: FolderPreviewMode;
   folderPreviewSource?: string;
+  folderPreviewRecursive?: boolean;
   quickMove?: boolean;
   infiniteScroll?: boolean;
   paginationPageSize?: number;
@@ -157,6 +159,9 @@ export function diffGallerySettings(
     ...(current.folderPreviewSource === initial.folderPreviewSource
       ? {}
       : { folderPreviewSource: current.folderPreviewSource }),
+    ...(current.folderPreviewRecursive === initial.folderPreviewRecursive
+      ? {}
+      : { folderPreviewRecursive: current.folderPreviewRecursive }),
     ...(current.quickMove === initial.quickMove
       ? {}
       : { quickMove: current.quickMove }),

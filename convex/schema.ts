@@ -62,6 +62,9 @@ export default defineSchema({
     rootFolderId: v.optional(v.id("folders")),
     folderPreviewMode: v.optional(folderPreviewMode),
     folderPreviewSource: v.optional(v.string()),
+    // Fill folder-tile previews from descendant subfolders when a folder's
+    // own images run short. Owner-controlled; undefined means off.
+    folderPreviewRecursive: v.optional(v.boolean()),
     // Allows owners to drag items into folders without entering select mode.
     quickMove: v.optional(v.boolean()),
     // Lets editors use the owner-only select, move, and delete tools.
@@ -177,6 +180,10 @@ export default defineSchema({
     mediaKind,
     size: v.number(),
     sha256: v.string(),
+    // The containing folder's subtree key (see lib/folderPath.ts), letting
+    // recursive folder previews range-scan a whole subtree's entries. Absent
+    // on entries created before the feature; enabling it backfills the key.
+    folderPathKey: v.optional(v.string()),
     storageKind,
     storageKey: v.string(),
     thumbnailKey: v.optional(v.string()),
@@ -246,18 +253,34 @@ export default defineSchema({
       "name",
     ])
     .index(
-      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_name",
-      ["folderId", "state", "mediaKind", "moveJobId", "name"],
-    )
-    .index(
-      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_nameKey",
+      "by_folderImages_nameKey",
       ["folderId", "state", "mediaKind", "moveJobId", "nameKey"],
     )
     .index(
-      "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
+      "by_folderImages_sha256",
       ["folderId", "state", "mediaKind", "moveJobId", "sha256"],
     )
     .index("by_galleryId_and_state", ["galleryId", "state"])
+    // Subtree preview scans: a folderPathKey prefix range walks every
+    // descendant folder's images (path order, then filename) in one query.
+    // Named for purpose, not fields: the full spelling exceeds Convex's
+    // 64-character identifier limit.
+    .index("by_subtreeImages", [
+      "galleryId",
+      "state",
+      "mediaKind",
+      "moveJobId",
+      "folderPathKey",
+      "nameKey",
+    ])
+    // Custom preview filenames resolved across a subtree.
+    .index("by_subtreeNameKey", [
+      "galleryId",
+      "state",
+      "nameKey",
+      "moveJobId",
+      "folderPathKey",
+    ])
     .index("by_state_and_mediaKind_and_metadataVersion", [
       "state",
       "mediaKind",

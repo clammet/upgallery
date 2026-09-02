@@ -1988,6 +1988,161 @@ describe("upgallery backend", () => {
     });
   });
 
+  test("recursive previews fill folder tiles from visible descendant subfolders", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      const admin = await seedProfile(t, {
+        email: "admin@example.com",
+        admin: true,
+      });
+      const viewer = await seedProfile(t, { email: "viewer@example.com" });
+      const authed = asUser(t, admin.googleSubject, "admin@example.com");
+      const viewerClient = asUser(t, viewer.googleSubject, "viewer@example.com");
+      const galleryId = await authed.mutation(api.galleries.create, {
+        name: "Recursive previews",
+        slug: "recursive-previews",
+        kind: "image",
+        storageKind: "shared",
+        storageRoot: "recursive-previews",
+        folderPreviewMode: "first3",
+        hosts: [{ host: "recursive.example.com", rootPath: "/" }],
+      });
+      const gallery = await t.run(async (ctx) =>
+        ctx.db.get("galleries", galleryId),
+      );
+      const createFolder = async (
+        parentId: Id<"folders">,
+        name: string,
+        accessPolicy: "public" | "restricted",
+        discoverability: "listed" | "unlisted",
+      ) => {
+        const created = await authed.mutation(api.folders.create, {
+          galleryId,
+          parentId,
+          name,
+          accessPolicy,
+          discoverability,
+        });
+        if (created.kind !== "complete") {
+          throw new Error("Shared storage folder unexpectedly required I/O");
+        }
+        return created.folderId;
+      };
+      const albumId = await createFolder(
+        gallery!.rootFolderId!,
+        "Album",
+        "public",
+        "listed",
+      );
+      const nestedId = await createFolder(albumId, "Nested", "public", "listed");
+      const deepId = await createFolder(nestedId, "Deep", "public", "listed");
+      const hiddenId = await createFolder(albumId, "Hidden", "restricted", "listed");
+      const secretId = await createFolder(albumId, "Secret", "public", "unlisted");
+      await t.run(async (ctx) => {
+        const files: Array<[Id<"folders">, string]> = [
+          [albumId, "own.jpg"],
+          [nestedId, "mid.jpg"],
+          [deepId, "deep1.jpg"],
+          [deepId, "deep2.jpg"],
+          [hiddenId, "aaa.jpg"],
+          [secretId, "bbb.jpg"],
+        ];
+        for (const [index, [folderId, name]] of files.entries()) {
+          await ctx.db.insert("entries", {
+            galleryId,
+            folderId,
+            ownerProfileId: admin.profileId,
+            name,
+            nameKey: name.toLowerCase(),
+            mimeType: "image/jpeg",
+            extension: "jpg",
+            mediaKind: "image",
+            size: 100 + index,
+            sha256: index.toString(16).repeat(64).slice(0, 64),
+            storageKind: "shared",
+            storageKey: `public/galleries/recursive-previews/${name}`,
+            thumbnailKey: `public/galleries/recursive-previews/${name}.thumb.jpg`,
+            state: "ready",
+            createdAt: Date.now() + index,
+            updatedAt: Date.now() + index,
+          });
+        }
+      });
+
+      // Off by default: the tile only shows the folder's own image.
+      const flat = await viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        previewSeed: 7,
+      });
+      expect(
+        flat.folderPreviews[0]!.entries.map((entry) => entry.name),
+      ).toEqual(["own.jpg"]);
+
+      // Enabling the option backfills folderPathKey on existing entries.
+      await authed.mutation(api.galleries.update, {
+        galleryId,
+        folderPreviewRecursive: true,
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      // The viewer's tile fills from listed public descendants only: the
+      // restricted and unlisted subfolders never leak into it.
+      const recursive = await viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        previewSeed: 7,
+      });
+      expect(
+        recursive.folderPreviews[0]!.entries.map((entry) => entry.name),
+      ).toEqual(["own.jpg", "mid.jpg", "deep1.jpg"]);
+
+      // A tile with one own image still tops up from its grandchildren.
+      const albumListing = await viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: albumId,
+        previewSeed: 7,
+      });
+      expect(albumListing.folders.map((folder) => folder.name)).toEqual([
+        "Nested",
+      ]);
+      expect(
+        albumListing.folderPreviews[0]!.entries.map((entry) => entry.name),
+      ).toEqual(["mid.jpg", "deep1.jpg", "deep2.jpg"]);
+
+      // The admin can see the restricted subfolder, so its image may fill in.
+      const adminListing = await authed.query(api.folders.list, {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        previewSeed: 7,
+      });
+      const adminNames = adminListing.folderPreviews[0]!.entries.map(
+        (entry) => entry.name,
+      );
+      expect(adminNames[0]).toBe("own.jpg");
+      expect(adminNames).toHaveLength(3);
+
+      // A custom preview filename resolves anywhere in the subtree.
+      await authed.mutation(api.galleries.update, {
+        galleryId,
+        folderPreviewMode: "custom",
+        folderPreviewSource: "deep2.jpg",
+      });
+      const customRecursive = await viewerClient.query(api.folders.list, {
+        galleryId,
+        folderId: gallery!.rootFolderId!,
+        previewSeed: 7,
+      });
+      expect(customRecursive.folderPreviews[0]).toMatchObject({
+        mode: "custom",
+        entries: [{ name: "deep2.jpg" }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("a user-backed directory is reconciled incrementally and skips an unchanged mtime", async () => {
     const t = setupTest();
     const admin = await seedProfile(t, {

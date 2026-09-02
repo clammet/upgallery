@@ -1,4 +1,9 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type QueryCtx,
+} from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
@@ -21,6 +26,7 @@ import {
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
 import { createFolderStats } from "./lib/folderStats";
+import { folderPathKey } from "./lib/folderPath";
 import {
   assertCanManageGallery,
   canManageGallery,
@@ -77,6 +83,204 @@ function isPreviewUrl(source: string) {
     source.includes("/") ||
     /^[a-z][a-z\d+.-]*:/i.test(source)
   );
+}
+
+// How a folder tile's preview images are chosen, derived from the effective
+// preview mode: the first images by name, a seeded pseudo-random pick, or a
+// specific filename (custom mode with a non-URL source).
+type PreviewProbe =
+  | { kind: "first" }
+  | { kind: "random"; seed: number }
+  | { kind: "nameKey"; nameKey: string };
+
+// Rows fetched per subtree scan before folder-visibility filtering.
+const RECURSIVE_PREVIEW_SCAN_LIMIT = 24;
+
+async function ownFolderPreviewEntries(
+  ctx: QueryCtx,
+  folderId: Id<"folders">,
+  probe: PreviewProbe,
+  count: number,
+): Promise<Array<Doc<"entries">>> {
+  if (probe.kind === "nameKey") {
+    const matches = await ctx.db
+      .query("entries")
+      .withIndex("by_folderId_and_state_and_nameKey", (q) =>
+        q
+          .eq("folderId", folderId)
+          .eq("state", "ready")
+          .eq("nameKey", probe.nameKey),
+      )
+      .take(4);
+    return matches
+      .filter((entry) => entry.moveJobId === undefined)
+      .slice(0, count);
+  }
+  if (probe.kind === "first") {
+    return await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_folderImages_nameKey",
+        (q) =>
+          q
+            .eq("folderId", folderId)
+            .eq("state", "ready")
+            .eq("mediaKind", "image")
+            .eq("moveJobId", undefined),
+      )
+      .take(count);
+  }
+  const threshold = randomPreviewThreshold(probe.seed, folderId);
+  const afterThreshold = await ctx.db
+    .query("entries")
+    .withIndex(
+      "by_folderImages_sha256",
+      (q) =>
+        q
+          .eq("folderId", folderId)
+          .eq("state", "ready")
+          .eq("mediaKind", "image")
+          .eq("moveJobId", undefined)
+          .gte("sha256", threshold),
+    )
+    .take(count);
+  const beforeThreshold =
+    afterThreshold.length >= count
+      ? []
+      : await ctx.db
+          .query("entries")
+          .withIndex(
+            "by_folderImages_sha256",
+            (q) =>
+              q
+                .eq("folderId", folderId)
+                .eq("state", "ready")
+                .eq("mediaKind", "image")
+                .eq("moveJobId", undefined)
+                .lt("sha256", threshold),
+          )
+          .take(count - afterThreshold.length);
+  return [...afterThreshold, ...beforeThreshold];
+}
+
+// Entries from a folder's descendant subtree, via a single folderPathKey
+// prefix range per probe. Entries whose folder the viewer cannot see (or
+// would not see listed) are dropped, so a restricted or unlisted subfolder
+// never leaks into an ancestor's tile. Best effort: if every scanned row is
+// hidden, the tile stays short rather than scanning without bound.
+async function descendantPreviewEntries(
+  ctx: QueryCtx,
+  input: {
+    gallery: Doc<"galleries">;
+    folder: Doc<"folders">;
+    probe: PreviewProbe;
+    count: number;
+    profile: Doc<"profiles"> | null;
+    anonymousClaim: string | undefined;
+    folderVisibility: Map<Id<"folders">, boolean>;
+  },
+): Promise<Array<Doc<"entries">>> {
+  const prefix = folderPathKey(input.folder);
+  const end = `${prefix}\uffff`;
+  const probe = input.probe;
+  let scanned: Array<Doc<"entries">>;
+  if (probe.kind === "nameKey") {
+    scanned = await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_subtreeNameKey",
+        (q) =>
+          q
+            .eq("galleryId", input.gallery._id)
+            .eq("state", "ready")
+            .eq("nameKey", probe.nameKey)
+            .eq("moveJobId", undefined)
+            .gt("folderPathKey", prefix)
+            .lt("folderPathKey", end),
+      )
+      .take(RECURSIVE_PREVIEW_SCAN_LIMIT);
+  } else if (probe.kind === "first") {
+    scanned = await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_subtreeImages",
+        (q) =>
+          q
+            .eq("galleryId", input.gallery._id)
+            .eq("state", "ready")
+            .eq("mediaKind", "image")
+            .eq("moveJobId", undefined)
+            .gt("folderPathKey", prefix)
+            .lt("folderPathKey", end),
+      )
+      .take(RECURSIVE_PREVIEW_SCAN_LIMIT);
+  } else {
+    // A seeded threshold inside the subtree's key range picks a stable
+    // pseudo-random starting point, wrapping around like the single-folder
+    // sha256 pick.
+    const threshold =
+      prefix + randomPreviewThreshold(probe.seed, input.folder._id);
+    const afterThreshold = await ctx.db
+      .query("entries")
+      .withIndex(
+        "by_subtreeImages",
+        (q) =>
+          q
+            .eq("galleryId", input.gallery._id)
+            .eq("state", "ready")
+            .eq("mediaKind", "image")
+            .eq("moveJobId", undefined)
+            .gte("folderPathKey", threshold)
+            .lt("folderPathKey", end),
+      )
+      .take(RECURSIVE_PREVIEW_SCAN_LIMIT);
+    const beforeThreshold =
+      afterThreshold.length >= input.count
+        ? []
+        : await ctx.db
+            .query("entries")
+            .withIndex(
+              "by_subtreeImages",
+              (q) =>
+                q
+                  .eq("galleryId", input.gallery._id)
+                  .eq("state", "ready")
+                  .eq("mediaKind", "image")
+                  .eq("moveJobId", undefined)
+                  .gt("folderPathKey", prefix)
+                  .lt("folderPathKey", threshold),
+            )
+            .take(RECURSIVE_PREVIEW_SCAN_LIMIT - afterThreshold.length);
+    scanned = [...afterThreshold, ...beforeThreshold];
+  }
+  const picked: Array<Doc<"entries">> = [];
+  for (const entry of scanned) {
+    if (picked.length >= input.count) break;
+    if (await descendantFolderVisible(ctx, entry.folderId, input)) {
+      picked.push(entry);
+    }
+  }
+  return picked;
+}
+
+async function descendantFolderVisible(
+  ctx: QueryCtx,
+  folderId: Id<"folders">,
+  input: {
+    profile: Doc<"profiles"> | null;
+    anonymousClaim: string | undefined;
+    folderVisibility: Map<Id<"folders">, boolean>;
+  },
+): Promise<boolean> {
+  const cached = input.folderVisibility.get(folderId);
+  if (cached !== undefined) return cached;
+  const folder = await ctx.db.get("folders", folderId);
+  const visible =
+    folder !== null &&
+    folder.filesystemMissingAt === undefined &&
+    (await shouldListFolder(ctx, folder, input.profile, input.anonymousClaim));
+  input.folderVisibility.set(folderId, visible);
+  return visible;
 }
 
 export const previewFilenameSuggestions = query({
@@ -214,6 +418,8 @@ export const list = query({
     if (!Number.isSafeInteger(previewSeed)) {
       throw new Error("Invalid folder preview seed");
     }
+    const recursivePreviews = gallery.folderPreviewRecursive === true;
+    const folderVisibility = new Map<Id<"folders">, boolean>();
     const folderPreviews = await Promise.all(
       folders.map(async (child) => {
         const mode =
@@ -225,77 +431,43 @@ export const list = query({
               ? gallery.folderPreviewSource
               : undefined;
         const count = mode === "first3" || mode === "random3" ? 3 : 1;
-        let candidates: Array<Doc<"entries">>;
+        let probe: PreviewProbe | null = null;
         let customUrl: string | undefined;
         if (mode === "custom") {
           const source = normalizePreviewSource(previewSource);
-          if (source === undefined) {
-            candidates = [];
-          } else if (isPreviewUrl(source)) {
-            customUrl = source;
-            candidates = [];
-          } else {
-            const matches = await ctx.db
-              .query("entries")
-              .withIndex("by_folderId_and_state_and_nameKey", (q) =>
-                q
-                  .eq("folderId", child._id)
-                  .eq("state", "ready")
-                  .eq("nameKey", entryNameKey(source)),
-              )
-              .take(4);
-            candidates = matches.filter(
-              (entry) => entry.moveJobId === undefined,
-            ).slice(0, 1);
+          if (source !== undefined) {
+            if (isPreviewUrl(source)) {
+              customUrl = source;
+            } else {
+              probe = { kind: "nameKey", nameKey: entryNameKey(source) };
+            }
           }
         } else if (mode === "first" || mode === "first3") {
-          candidates = await ctx.db
-            .query("entries")
-            .withIndex(
-              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_nameKey",
-              (q) =>
-                q
-                  .eq("folderId", child._id)
-                  .eq("state", "ready")
-                  .eq("mediaKind", "image")
-                  .eq("moveJobId", undefined),
-            )
-            .take(count);
+          probe = { kind: "first" };
         } else {
-          const threshold = randomPreviewThreshold(
-            previewSeed,
-            child._id,
-          );
-          const afterThreshold = await ctx.db
-            .query("entries")
-            .withIndex(
-              "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
-              (q) =>
-                q
-                  .eq("folderId", child._id)
-                  .eq("state", "ready")
-                  .eq("mediaKind", "image")
-                  .eq("moveJobId", undefined)
-                  .gte("sha256", threshold),
-            )
-            .take(count);
-          const beforeThreshold =
-            afterThreshold.length >= count
-              ? []
-              : await ctx.db
-                  .query("entries")
-                  .withIndex(
-                    "by_folderId_and_state_and_mediaKind_and_moveJobId_and_sha256",
-                    (q) =>
-                      q
-                        .eq("folderId", child._id)
-                        .eq("state", "ready")
-                        .eq("mediaKind", "image")
-                        .eq("moveJobId", undefined)
-                        .lt("sha256", threshold),
-                  )
-                  .take(count - afterThreshold.length);
-          candidates = [...afterThreshold, ...beforeThreshold];
+          probe = { kind: "random", seed: previewSeed };
+        }
+        let candidates =
+          probe === null
+            ? []
+            : await ownFolderPreviewEntries(ctx, child._id, probe, count);
+        if (
+          recursivePreviews &&
+          probe !== null &&
+          candidates.length < count
+        ) {
+          candidates = [
+            ...candidates,
+            ...(await descendantPreviewEntries(ctx, {
+              gallery,
+              folder: child,
+              probe,
+              count: count - candidates.length,
+              profile,
+              anonymousClaim: args.anonymousClaim,
+              folderVisibility,
+            })),
+          ];
         }
         return {
           folderId: child._id,
@@ -889,9 +1061,10 @@ export const moveMany = mutation({
 });
 
 // After a folder is reparented or renamed its descendants' denormalized
-// state is stale: child folders still carry the old ancestor chain, and in
-// user-backed galleries entry storage keys still embed the old path. Walk
-// the subtree one folder per transaction, repairing both.
+// state is stale: child folders still carry the old ancestor chain, entry
+// folderPathKeys still encode the old ancestry, and in user-backed galleries
+// entry storage keys still embed the old path. Walk the subtree one folder
+// per transaction, repairing all of it.
 export const reparentSubtree = internalMutation({
   args: { folderId: v.id("folders") },
   handler: async (ctx, args) => {
@@ -903,28 +1076,34 @@ export const reparentSubtree = internalMutation({
     if (gallery === null || gallery.deletedAt !== undefined) {
       return null;
     }
-    if (gallery.storageKind === "user" && gallery.rootFolderId !== undefined) {
-      const segments = await getFilesystemFolderSegments(ctx, gallery, folder);
-      const entries = ctx.db
-        .query("entries")
-        .withIndex("by_folderId_and_state", (q) =>
-          q.eq("folderId", folder._id),
-        );
-      for await (const entry of entries) {
-        if (entry.storageKind !== "user") {
-          continue;
-        }
+    const segments =
+      gallery.storageKind === "user" && gallery.rootFolderId !== undefined
+        ? await getFilesystemFolderSegments(ctx, gallery, folder)
+        : null;
+    const pathKey = folderPathKey(folder);
+    const entries = ctx.db
+      .query("entries")
+      .withIndex("by_folderId_and_state", (q) =>
+        q.eq("folderId", folder._id),
+      );
+    for await (const entry of entries) {
+      const patch: Partial<Doc<"entries">> = {};
+      if (segments !== null && entry.storageKind === "user") {
         const storageKey = getFilesystemStorageKey(
           gallery,
           segments,
           entry.name,
         );
         if (storageKey !== entry.storageKey) {
-          await ctx.db.patch("entries", entry._id, {
-            storageKey,
-            updatedAt: Date.now(),
-          });
+          patch.storageKey = storageKey;
+          patch.updatedAt = Date.now();
         }
+      }
+      if (entry.folderPathKey !== pathKey) {
+        patch.folderPathKey = pathKey;
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch("entries", entry._id, patch);
       }
     }
     const ancestorIds = [...folder.ancestorIds, folder._id];

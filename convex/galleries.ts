@@ -34,6 +34,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { queueFilesystemSyncJob } from "./storageJobs";
 import { scheduleSortTimestampBackfill } from "./entrySort";
+import { scheduleFolderPathKeyBackfill } from "./folderPathKeys";
 
 const hostInput = v.object({
   host: v.string(),
@@ -167,6 +168,7 @@ export const create = mutation({
     hosts: v.array(hostInput),
     folderPreviewMode: v.optional(folderPreviewMode),
     folderPreviewSource: v.optional(v.string()),
+    folderPreviewRecursive: v.optional(v.boolean()),
     theme: v.optional(themeValidator),
   },
   returns: v.id("galleries"),
@@ -232,6 +234,9 @@ export const create = mutation({
       folderPreviewMode: args.folderPreviewMode ?? "first",
       ...(args.folderPreviewMode === "custom"
         ? { folderPreviewSource }
+        : {}),
+      ...(args.folderPreviewRecursive === true
+        ? { folderPreviewRecursive: true }
         : {}),
       infiniteScroll: true,
       paginationPageSize: DEFAULT_GALLERY_PAGE_SIZE,
@@ -614,6 +619,7 @@ export const update = mutation({
     hosts: v.optional(v.array(hostInput)),
     folderPreviewMode: v.optional(folderPreviewMode),
     folderPreviewSource: v.optional(v.union(v.string(), v.null())),
+    folderPreviewRecursive: v.optional(v.boolean()),
     quickMove: v.optional(v.boolean()),
     editorBulkActions: v.optional(v.boolean()),
     infiniteScroll: v.optional(v.boolean()),
@@ -725,6 +731,13 @@ export const update = mutation({
       ...(args.folderPreviewSource === undefined
         ? {}
         : { folderPreviewSource }),
+      ...(args.folderPreviewRecursive === undefined
+        ? {}
+        : {
+            folderPreviewRecursive: args.folderPreviewRecursive
+              ? true
+              : undefined,
+          }),
       ...(args.quickMove === undefined
         ? {}
         : { quickMove: args.quickMove ? true : undefined }),
@@ -750,6 +763,14 @@ export const update = mutation({
       args.sortOrder.startsWith("date")
     ) {
       await scheduleSortTimestampBackfill(ctx, gallery._id);
+    }
+    // Older entries predate folderPathKey; fill it in once the first time
+    // this gallery opts into recursive previews.
+    if (
+      args.folderPreviewRecursive === true &&
+      gallery.folderPreviewRecursive !== true
+    ) {
+      await scheduleFolderPathKeyBackfill(ctx, gallery._id);
     }
     if (name !== undefined && rootFolder !== null) {
       await ctx.db.patch("folders", rootFolder._id, { name });

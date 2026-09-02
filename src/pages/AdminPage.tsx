@@ -724,6 +724,7 @@ function GallerySettingsForm(props: {
     ),
     folderPreviewMode: gallery.folderPreviewMode ?? "first",
     folderPreviewSource: gallery.folderPreviewSource ?? "",
+    folderPreviewRecursive: gallery.folderPreviewRecursive === true,
     quickMove: gallery.quickMove === true,
     infiniteScroll: gallery.infiniteScroll !== false,
     paginationPageSize: gallery.paginationPageSize ?? 100,
@@ -788,6 +789,10 @@ function GallerySettingsForm(props: {
         gallery.kind === "image"
           ? String(data.get("folderPreviewSource") ?? initial.folderPreviewSource)
           : initial.folderPreviewSource,
+      folderPreviewRecursive:
+        gallery.kind === "image"
+          ? data.get("folderPreviewRecursive") === "on"
+          : initial.folderPreviewRecursive,
       quickMove:
         gallery.kind === "image"
           ? data.get("quickMove") === "on"
@@ -871,6 +876,17 @@ function GallerySettingsForm(props: {
               <option value={name} key={name} />
             ))}
           </datalist>
+        </label>
+      ) : null}
+      {gallery.kind === "image" ? (
+        <label>Subfolder previews <small>(fill folder previews from images in nested subfolders)</small>
+          <select
+            name="folderPreviewRecursive"
+            defaultValue={initial.folderPreviewRecursive ? "on" : "off"}
+          >
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
         </label>
       ) : null}
       {gallery.kind === "image" ? (

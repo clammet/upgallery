@@ -7,6 +7,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { createToken, sha256 } from "./lib/crypto";
+import { folderPathKey } from "./lib/folderPath";
 import { adjustGalleryStats } from "./lib/galleryStats";
 import {
   adjustFolderStats,
@@ -436,6 +437,7 @@ export const reconcileFilesystemFile = internalMutation({
       const stalePreviewKey = contentChanged ? existing.previewKey : undefined;
       await ctx.db.patch("entries", existing._id, {
         folderId: folder._id,
+        folderPathKey: folderPathKey(folder),
         name: args.name,
         nameKey: entryNameKey(args.name),
         mimeType: args.mimeType,
@@ -518,6 +520,7 @@ export const reconcileFilesystemFile = internalMutation({
     const entryId = await ctx.db.insert("entries", {
       galleryId: gallery._id,
       folderId: folder._id,
+      folderPathKey: folderPathKey(folder),
       ownerProfileId: unknownUploader._id,
       name: args.name,
       nameKey: entryNameKey(args.name),

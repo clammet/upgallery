@@ -16,6 +16,7 @@ import {
   resolveLandingName,
 } from "./lib/entryNames";
 import { entryNameKey, fileExtensionFromName } from "./lib/normalize";
+import { folderPathKey } from "./lib/folderPath";
 import {
   replaceMediaProcessingJob,
   STORAGE_JOB_LEASE_MS,
@@ -160,6 +161,10 @@ export const completeUpload = internalMutation({
     ) {
       throw new Error("Storage metadata is too large");
     }
+    const intentFolder = await ctx.db.get("folders", intent.folderId);
+    if (intentFolder === null) {
+      throw new Error("The upload's destination folder no longer exists");
+    }
     const name = intent.resolvedName ?? intent.name;
     const nameKey = entryNameKey(name);
     // The entry this upload lands on: the folder's same-named file when the
@@ -217,6 +222,7 @@ export const completeUpload = internalMutation({
       const stalePreviewKey = contentChanged ? existing.previewKey : undefined;
       await ctx.db.patch("entries", existing._id, {
         folderId: intent.folderId,
+        folderPathKey: folderPathKey(intentFolder),
         ownerProfileId: intent.ownerProfileId,
         uploadIntentId: intent._id,
         name,
@@ -320,6 +326,7 @@ export const completeUpload = internalMutation({
     const entryId = await ctx.db.insert("entries", {
       galleryId: gallery._id,
       folderId: intent.folderId,
+      folderPathKey: folderPathKey(intentFolder),
       ownerProfileId: intent.ownerProfileId,
       uploadIntentId: intent._id,
       name,
@@ -1151,6 +1158,7 @@ export const completeEntryMove = internalMutation({
     await ctx.db.patch("entries", entry._id, {
       galleryId: destinationGallery._id,
       folderId: destinationFolder._id,
+      folderPathKey: folderPathKey(destinationFolder),
       name: targetName,
       nameKey: targetNameKey,
       extension: fileExtensionFromName(targetName, entry.extension),
