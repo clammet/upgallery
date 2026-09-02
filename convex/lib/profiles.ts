@@ -71,6 +71,7 @@ export function publicProfile(profile: Doc<"profiles">) {
     isSystemAdmin: profile.isSystemAdmin,
     lastSeenAt: profile.lastSeenAt,
     infiniteScroll: profile.infiniteScroll !== false,
+    overzoom: profile.overzoom === true,
   };
 }
 

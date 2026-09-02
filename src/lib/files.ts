@@ -36,3 +36,48 @@ export function formatBytes(bytes: number): string {
 export function storageApi(path: string): string {
   return `${import.meta.env.VITE_STORAGE_API_URL ?? ""}${path}`;
 }
+
+// Runs the client half of a mutation that returned a filesystem operation
+// capability: the storage server performs the file/folder work and marks the
+// operation complete. A "complete" result needs no follow-up.
+export async function completeFilesystemOperation(result: {
+  kind: "complete" | "filesystem";
+  operationId?: string;
+  token?: string;
+}): Promise<{ folderId: string | null } | null> {
+  if (result.kind === "complete") return null;
+  if (result.operationId === undefined || result.token === undefined) {
+    throw new Error("Filesystem operation capability is missing");
+  }
+  const response = await fetch(
+    storageApi("/api/storage/user-folder-operation"),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationId: result.operationId,
+        token: result.token,
+      }),
+    },
+  );
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      typeof body === "object" &&
+      body !== null &&
+      "error" in body &&
+      typeof body.error === "string"
+        ? body.error
+        : "Filesystem operation failed";
+    throw new Error(message);
+  }
+  return {
+    folderId:
+      typeof body === "object" &&
+      body !== null &&
+      "folderId" in body &&
+      typeof body.folderId === "string"
+        ? body.folderId
+        : null,
+  };
+}

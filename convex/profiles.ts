@@ -37,6 +37,7 @@ export const updatePreferences = mutation({
     anonymousClaim: v.optional(v.string()),
     displayName: v.optional(v.string()),
     infiniteScroll: v.optional(v.boolean()),
+    overzoom: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
@@ -58,6 +59,7 @@ export const updatePreferences = mutation({
       ...(args.infiniteScroll === undefined
         ? {}
         : { infiniteScroll: args.infiniteScroll }),
+      ...(args.overzoom === undefined ? {} : { overzoom: args.overzoom }),
     });
     return null;
   },

@@ -50,7 +50,12 @@ import {
   SelectListIcon,
   TrashIcon,
 } from "../components/ActionIcons";
-import { publicMediaUrl, formatBytes, storageApi } from "../lib/files";
+import {
+  completeFilesystemOperation,
+  publicMediaUrl,
+  formatBytes,
+  storageApi,
+} from "../lib/files";
 import { collectDroppedFiles, type DroppedFile } from "../lib/dropUpload";
 import {
   beginTransfer,
@@ -1830,6 +1835,7 @@ export function GalleryPage(props: {
           items={viewerItems}
           initialIndex={viewerIndex}
           themeMode={props.gallery.theme.mode ?? "light"}
+          overzoom={profile?.overzoom === true}
           onActiveItemChange={(item) => setViewerEntry(item.id, true)}
           onCopyLink={copyViewerLink}
           onTitleChange={
@@ -2834,48 +2840,6 @@ function FilesystemSyncIndicator(props: {
     );
   }
   return null;
-}
-
-async function completeFilesystemOperation(result: {
-  kind: "complete" | "filesystem";
-  operationId?: Id<"filesystemOperations">;
-  token?: string;
-}): Promise<{ folderId: string | null } | null> {
-  if (result.kind === "complete") return null;
-  if (result.operationId === undefined || result.token === undefined) {
-    throw new Error("Filesystem operation capability is missing");
-  }
-  const response = await fetch(
-    storageApi("/api/storage/user-folder-operation"),
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operationId: result.operationId,
-        token: result.token,
-      }),
-    },
-  );
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      typeof body === "object" &&
-      body !== null &&
-      "error" in body &&
-      typeof body.error === "string"
-        ? body.error
-        : "Filesystem operation failed";
-    throw new Error(message);
-  }
-  return {
-    folderId:
-      typeof body === "object" &&
-      body !== null &&
-      "folderId" in body &&
-      typeof body.folderId === "string"
-        ? body.folderId
-        : null,
-  };
 }
 
 function FolderForm(props: {

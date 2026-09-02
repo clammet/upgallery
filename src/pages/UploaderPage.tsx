@@ -19,11 +19,14 @@ import {
   MediaViewer,
   shouldOpenMediaViewer,
   type MediaViewerItem,
-  type MediaViewerLinkKind,
 } from "../components/MediaViewer";
 import { TrashIcon } from "../components/ActionIcons";
 import { MarkdownToggle } from "../components/MarkdownToggle";
-import { formatBytes, storageApi } from "../lib/files";
+import {
+  completeFilesystemOperation,
+  formatBytes,
+  storageApi,
+} from "../lib/files";
 import { dropContainsDirectory } from "../lib/dropUpload";
 import { useUpload } from "../hooks/useUpload";
 import { useBeforeUnloadGuard } from "../hooks/useBeforeUnloadGuard";
@@ -36,7 +39,7 @@ import {
   openStreetMapUrls,
   parseMetadataJson,
 } from "../lib/metadata";
-import { uploaderFileUrl } from "../lib/uploaderRoutes";
+import { uploaderItemUrl } from "../lib/uploaderRoutes";
 import { friendlyError } from "../lib/errors";
 import { copyTextToClipboard } from "../lib/clipboard";
 import {
@@ -62,6 +65,9 @@ export function UploaderPage(props: {
     galleryId: props.gallery._id,
     folderId: props.rootFolder._id,
   });
+  const profile = useQuery(api.profiles.current, {
+    anonymousClaim: anonymousClaim(),
+  });
   const [file, setFile] = useState<File | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [description, setDescription] = useState("");
@@ -83,6 +89,7 @@ export function UploaderPage(props: {
   const createDownloadTicket = useMutation(api.entries.createDownloadTicket);
   const requestPreview = useMutation(api.entries.requestPreview);
   const setEntryMarkdownMode = useMutation(api.entries.setMarkdownMode);
+  const renameEntry = useMutation(api.entries.rename);
   const removeStoredLocationData = useMutation(
     api.entries.removeLocationData,
   );
@@ -187,12 +194,13 @@ export function UploaderPage(props: {
       (listing?.entries ?? []).map((entry) => ({
         id: entry._id,
         title: entry.name,
-        href: uploaderFileUrl(props.routeRoot, entry._id, entry.name),
+        href: uploaderItemUrl(props.routeRoot, entry._id),
         mediaKind: entry.mediaKind,
         mimeType: entry.mimeType,
         canToggleMarkdown:
           entry.canDelete &&
           canToggleTextMarkdown(entry.mediaKind, entry.name),
+        canRename: entry.canDelete,
         passwordProtected: entry.passwordProtected,
         previewReady:
           !isHeifImage(entry.mimeType, entry.name) ||
@@ -224,16 +232,11 @@ export function UploaderPage(props: {
     [setSearchParams],
   );
   const copyViewerLink = useCallback(
-    async (item: MediaViewerItem, kind: MediaViewerLinkKind) => {
+    async (item: MediaViewerItem) => {
       const canonicalOrigin = props.canonicalOrigin ?? window.location.origin;
       const canonicalRouteRoot = props.canonicalRouteRoot ?? props.routeRoot;
-      const url = new URL(
-        kind === "direct"
-          ? uploaderFileUrl(canonicalRouteRoot, item.id, item.title)
-          : canonicalRouteRoot,
-        canonicalOrigin,
-      );
-      if (kind === "lightbox") url.searchParams.set("item", item.id);
+      const url = new URL(canonicalRouteRoot, canonicalOrigin);
+      url.searchParams.set("item", item.id);
       await copyTextToClipboard(url.toString());
     },
     [props.canonicalOrigin, props.canonicalRouteRoot, props.routeRoot],
@@ -300,6 +303,29 @@ export function UploaderPage(props: {
       });
     },
     [setEntryMarkdownMode],
+  );
+  const changeViewerTitle = useCallback(
+    async (item: MediaViewerItem, title: string, password?: string) => {
+      const result = await renameEntry({
+        anonymousClaim: anonymousClaim(),
+        galleryId: props.gallery._id,
+        entryId: item.id as Id<"entries">,
+        name: title,
+        password,
+      });
+      await completeFilesystemOperation(result);
+    },
+    [props.gallery._id, renameEntry],
+  );
+  const resolveViewerTemporaryHref = useCallback(
+    async (item: MediaViewerItem, suppliedPassword?: string) => {
+      const url = await resolveViewerSource(item, suppliedPassword);
+      if (url === null) {
+        throw new Error("The preview is still being prepared");
+      }
+      return url;
+    },
+    [resolveViewerSource],
   );
 
   useEffect(() => {
@@ -503,11 +529,14 @@ export function UploaderPage(props: {
           items={viewerItems}
           initialIndex={viewerIndex}
           themeMode={props.gallery.theme.mode ?? "light"}
+          overzoom={profile?.overzoom === true}
           onActiveItemChange={(item) => setViewerEntry(item.id, true)}
           onCopyLink={copyViewerLink}
           onMarkdownModeChange={changeViewerMarkdownMode}
+          onTitleChange={changeViewerTitle}
           resolveSource={resolveViewerSource}
           resolveDownload={resolveViewerDownload}
+          resolveTemporaryHref={resolveViewerTemporaryHref}
           onClose={() => setViewerEntry(null, true)}
         />
       ) : null}
@@ -532,24 +561,19 @@ function UploaderEntry(props: {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const fileUrl = uploaderFileUrl(
-    props.routeRoot,
-    props.entry._id,
-    props.entry.name,
-  );
+  const itemUrl = uploaderItemUrl(props.routeRoot, props.entry._id);
+  const openLightbox = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (!shouldOpenMediaViewer(event)) return;
+    event.preventDefault();
+    props.onOpen();
+  };
   return (
     <article className={styles.entry}>
       <a
         className={styles.previewLink}
-        href={fileUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+        href={itemUrl}
         aria-label={`View ${props.entry.name}`}
-        onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-          if (!shouldOpenMediaViewer(event)) return;
-          event.preventDefault();
-          props.onOpen();
-        }}
+        onClick={openLightbox}
       >
         <span className={styles.thumbnail}>
           {props.entry.mediaKind === "image" ||
@@ -570,12 +594,7 @@ function UploaderEntry(props: {
       </a>
       <div className={styles.entryFooter}>
         <div className={styles.entryTitle}>
-          <a
-            href={fileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={props.entry.name}
-          >
+          <a href={itemUrl} title={props.entry.name} onClick={openLightbox}>
             {props.entry.name}
           </a>
           {props.entry.description ? <p>{props.entry.description}</p> : null}

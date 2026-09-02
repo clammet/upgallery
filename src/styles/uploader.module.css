@@ -44,13 +44,6 @@
 .metadataMap iframe { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: block; height: 210px; width: 100%; }
 .metadataMap figcaption { font-size: .72rem; margin-top: .3rem; text-align: right; }
 .metadataUnavailable { color: var(--gallery-muted); margin: 0; }
-.fileViewer { align-items: center; display: flex; height: calc(100vh - 108px); justify-content: center; min-height: 360px; overflow: hidden; }
-.fileViewer iframe { background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); height: 100%; width: 100%; }
-.fileViewer img, .fileViewer video { display: block; max-height: 100%; max-width: 100%; object-fit: contain; }
-.fileViewer audio { max-width: min(520px, 100%); width: 100%; }
-.viewerStatus { align-self: center; color: var(--gallery-muted); justify-self: center; text-align: center; }
-.viewerForm { align-self: center; background: var(--gallery-surface); border: 1px solid var(--border); border-radius: var(--gallery-radius); display: grid; gap: .75rem; justify-self: center; max-width: 420px; padding: 1rem; width: 100%; }
-.viewerForm label { display: grid; font-size: .875rem; gap: .25rem; }
 @media (max-width: 520px) {
   .entryList { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .entry { min-height: 205px; }

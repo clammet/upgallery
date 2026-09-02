@@ -813,51 +813,6 @@ export const refreshMetadata = mutation({
   },
 });
 
-export const getForUploaderView = query({
-  args: {
-    anonymousClaim: v.optional(v.string()),
-    galleryId: v.id("galleries"),
-    entryId: v.id("entries"),
-  },
-  handler: async (ctx, args) => {
-    const entry = await ctx.db.get("entries", args.entryId);
-    if (
-      entry === null ||
-      entry.galleryId !== args.galleryId ||
-      entry.state !== "ready"
-    ) {
-      return null;
-    }
-    const [gallery, folder, profile, uploaderProfile] = await Promise.all([
-      ctx.db.get("galleries", entry.galleryId),
-      ctx.db.get("folders", entry.folderId),
-      getCurrentProfile(ctx, args.anonymousClaim),
-      ctx.db.get("profiles", entry.ownerProfileId),
-    ]);
-    if (
-      gallery === null ||
-      gallery.deletedAt !== undefined ||
-      gallery.kind !== "uploader" ||
-      folder === null ||
-      !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
-    ) {
-      return null;
-    }
-    return {
-      name: entry.name,
-      size: entry.size,
-      mimeType: entry.mimeType,
-      previewKey: entry.previewKey,
-      previewError: entry.previewError,
-      passwordProtected: entry.passwordHash !== undefined,
-      uploader:
-        uploaderProfile === null
-          ? "Unknown"
-          : uploaderAttribution(uploaderProfile),
-    };
-  },
-});
-
 export const createThumbnailTickets = mutation({
   args: {
     anonymousClaim: v.optional(v.string()),
@@ -973,6 +928,7 @@ export const rename = mutation({
     galleryId: v.id("galleries"),
     entryId: v.id("entries"),
     name: v.string(),
+    password: v.optional(v.string()),
   },
   returns: v.union(
     v.object({
@@ -994,7 +950,6 @@ export const rename = mutation({
     if (
       gallery === null ||
       gallery.deletedAt !== undefined ||
-      gallery.kind !== "image" ||
       entry === null ||
       entry.galleryId !== gallery._id ||
       entry.state !== "ready"
@@ -1005,13 +960,39 @@ export const rename = mutation({
     if (folder === null || folder.galleryId !== gallery._id) {
       throw new Error("File not found");
     }
-    const actor = await requireGalleryRole(
-      ctx,
-      gallery,
-      folder,
-      "editor",
-      args.anonymousClaim,
-    );
+    // Image galleries let editors rename anything; uploader galleries let
+    // uploaders rename only their own files (proving the file password when
+    // one is set, like deletion).
+    let actor;
+    if (gallery.kind === "uploader") {
+      actor = await requireCurrentProfile(ctx, args.anonymousClaim);
+      if (!isOwningProfile(entry.ownerProfileId, actor._id)) {
+        throw new Error("Unauthorized");
+      }
+      if (entry.passwordHash !== undefined) {
+        if (
+          args.password === undefined ||
+          entry.passwordSalt === undefined ||
+          entry.passwordIterations === undefined ||
+          !(await verifyPassword(
+            args.password,
+            entry.passwordSalt,
+            entry.passwordHash,
+            entry.passwordIterations,
+          ))
+        ) {
+          throw new Error("Incorrect password");
+        }
+      }
+    } else {
+      actor = await requireGalleryRole(
+        ctx,
+        gallery,
+        folder,
+        "editor",
+        args.anonymousClaim,
+      );
+    }
     if (entry.migrationState !== undefined) {
       throw new Error("File is currently being moved");
     }

@@ -126,12 +126,15 @@ function AccountPopover(props: {
     }
   };
 
-  const toggleInfiniteScroll = async (enabled: boolean) => {
+  const togglePreference = async (
+    preference: "infiniteScroll" | "overzoom",
+    enabled: boolean,
+  ) => {
     setError(null);
     try {
       await updatePreferences({
         anonymousClaim: anonymousClaim(),
-        infiniteScroll: enabled,
+        [preference]: enabled,
       });
     } catch (cause) {
       setError(friendlyError(cause));
@@ -216,7 +219,26 @@ function AccountPopover(props: {
           className={styles.switch}
           checked={props.profile.infiniteScroll}
           disabled={!galleryAllowsInfiniteScroll}
-          onChange={(event) => void toggleInfiniteScroll(event.target.checked)}
+          onChange={(event) =>
+            void togglePreference("infiniteScroll", event.target.checked)
+          }
+        />
+      </label>
+      <label className={styles.accountSetting}>
+        <span>
+          Lightbox overzoom
+          <small className={styles.accountHint}>
+            Zoom images past their natural size
+          </small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          className={styles.switch}
+          checked={props.profile.overzoom}
+          onChange={(event) =>
+            void togglePreference("overzoom", event.target.checked)
+          }
         />
       </label>
       {error ? <p className={styles.formError}>{error}</p> : null}

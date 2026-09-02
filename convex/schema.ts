@@ -35,6 +35,9 @@ export default defineSchema({
     // Per-user infinite scroll preference. Undefined means on; a gallery
     // that disables infinite scroll wins regardless.
     infiniteScroll: v.optional(v.boolean()),
+    // Lets the lightbox zoom images past their natural size. Undefined
+    // means off.
+    overzoom: v.optional(v.boolean()),
     isSystemAdmin: v.boolean(),
     lastSeenAt: v.number(),
   })

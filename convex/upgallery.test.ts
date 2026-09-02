@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { createPasswordHash } from "./lib/crypto";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -1131,17 +1132,6 @@ describe("upgallery backend", () => {
     await expect(
       t.query(api.profiles.current, { anonymousClaim }),
     ).resolves.toBeNull();
-
-    await expect(
-      t.query(api.entries.getForUploaderView, {
-        anonymousClaim,
-        galleryId,
-        entryId,
-      }),
-    ).resolves.toMatchObject({
-      name: "shared-image.jpg",
-      passwordProtected: false,
-    });
 
     const attachmentTicket = await t.mutation(
       api.entries.createDownloadTicket,
@@ -2599,6 +2589,100 @@ describe("upgallery backend", () => {
       name: "final.PNG",
       extension: "png",
     });
+  });
+
+  test("uploaders can rename only their own uploads, proving the file password", async () => {
+    const t = setupTest();
+    const admin = await seedProfile(t, {
+      email: "admin@example.com",
+      admin: true,
+    });
+    const uploader = await seedProfile(t, { email: "uploader@example.com" });
+    const other = await seedProfile(t, { email: "other@example.com" });
+    const uploaderClient = asUser(
+      t,
+      uploader.googleSubject,
+      "uploader@example.com",
+    );
+    const otherClient = asUser(t, other.googleSubject, "other@example.com");
+    const galleryId = await asUser(
+      t,
+      admin.googleSubject,
+      "admin@example.com",
+    ).mutation(api.galleries.create, {
+      name: "Rename uploads",
+      slug: "rename-uploads",
+      kind: "uploader",
+      storageKind: "shared",
+      storageRoot: "rename-uploads",
+      hosts: [{ host: "rename-uploads.example.com", rootPath: "/" }],
+    });
+    const password = await createPasswordHash("secret");
+    const { plainEntryId, lockedEntryId } = await t.run(async (ctx) => {
+      const gallery = await ctx.db.get("galleries", galleryId);
+      const rootFolderId = gallery!.rootFolderId!;
+      const baseEntry = {
+        galleryId,
+        folderId: rootFolderId,
+        ownerProfileId: uploader.profileId,
+        mimeType: "image/jpeg",
+        extension: "jpg",
+        mediaKind: "image" as const,
+        size: 12,
+        storageKind: "shared" as const,
+        state: "ready" as const,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const plainEntryId = await ctx.db.insert("entries", {
+        ...baseEntry,
+        name: "upload.jpg",
+        nameKey: "upload.jpg",
+        sha256: "e".repeat(64),
+        storageKey: "protected/uploaders/rename-uploads/ee/ee/upload.jpg",
+      });
+      const lockedEntryId = await ctx.db.insert("entries", {
+        ...baseEntry,
+        name: "locked.jpg",
+        nameKey: "locked.jpg",
+        sha256: "f".repeat(64),
+        storageKey: "protected/uploaders/rename-uploads/ff/ff/locked.jpg",
+        passwordHash: password.hash,
+        passwordSalt: password.salt,
+        passwordIterations: password.iterations,
+      });
+      return { plainEntryId, lockedEntryId };
+    });
+
+    await expect(
+      otherClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId: plainEntryId,
+        name: "stolen.jpg",
+      }),
+    ).rejects.toThrow("Unauthorized");
+    await expect(
+      uploaderClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId: plainEntryId,
+        name: "renamed.jpg",
+      }),
+    ).resolves.toMatchObject({ kind: "complete", name: "renamed.jpg" });
+    await expect(
+      uploaderClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId: lockedEntryId,
+        name: "unlocked.jpg",
+      }),
+    ).rejects.toThrow("Incorrect password");
+    await expect(
+      uploaderClient.mutation(api.entries.rename, {
+        galleryId,
+        entryId: lockedEntryId,
+        name: "unlocked.jpg",
+        password: "secret",
+      }),
+    ).resolves.toMatchObject({ kind: "complete", name: "unlocked.jpg" });
   });
 
   test("user-backed file renames commit after the filesystem operation", async () => {

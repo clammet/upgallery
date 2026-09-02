@@ -1,29 +1,21 @@
 import { describe, expect, test } from "vitest";
-import {
-  uploaderFileEntryId,
-  uploaderFileUrl,
-} from "../src/lib/uploaderRoutes";
+import { uploaderItemUrl } from "../src/lib/uploaderRoutes";
 
-describe("uploader file routes", () => {
-  test("builds durable file URLs for fallback and mounted uploader routes", () => {
-    expect(
-      uploaderFileUrl("/up/drop-box", "entry123", "photo one.jpg"),
-    ).toBe("/up/drop-box/files/entry123/photo%20one.jpg");
-    expect(uploaderFileUrl("/", "entry123", "archive.zip")).toBe(
-      "/files/entry123/archive.zip",
+describe("uploader item URLs", () => {
+  test("builds a lightbox link under the route root", () => {
+    expect(uploaderItemUrl("/up/drop", "entry123")).toBe(
+      "/up/drop?item=entry123",
     );
   });
 
-  test("extracts only file IDs beneath the configured route root", () => {
-    expect(
-      uploaderFileEntryId(
-        "/uploads/files/entry123/photo%20one.jpg",
-        "/uploads",
-      ),
-    ).toBe("entry123");
-    expect(
-      uploaderFileEntryId("/other/files/entry123/photo.jpg", "/uploads"),
-    ).toBeNull();
-    expect(uploaderFileEntryId("/uploads/files/", "/uploads")).toBeNull();
+  test("handles a root-mounted uploader and trailing slashes", () => {
+    expect(uploaderItemUrl("/", "entry123")).toBe("/?item=entry123");
+    expect(uploaderItemUrl("/uploads/", "entry123")).toBe(
+      "/uploads?item=entry123",
+    );
+  });
+
+  test("escapes the entry id", () => {
+    expect(uploaderItemUrl("/up/drop", "a/b")).toBe("/up/drop?item=a%2Fb");
   });
 });

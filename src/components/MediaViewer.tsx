@@ -65,6 +65,9 @@ export type MediaViewerItem = {
   previewError?: string;
   metadataJson?: string;
   uploader?: string;
+  // Undefined counts as renamable; only an explicit false hides the rename
+  // affordance for this item while onTitleChange is set.
+  canRename?: boolean;
 };
 
 export type MediaViewerLinkKind = "lightbox" | "direct";
@@ -98,6 +101,7 @@ type MediaIdentity = {
 };
 
 const ZOOM_EPSILON = 0.002;
+const OVERZOOM_MAX_SCALE = 4;
 const INFO_COLUMN_WIDTH = 320;
 const MIN_PREVIEW_WIDTH = 96;
 const VIEWER_BORDER_WIDTH = 2;
@@ -232,6 +236,8 @@ export function MediaViewer(props: {
   items: MediaViewerItem[];
   initialIndex: number;
   themeMode: ThemeMode;
+  // Lets image zoom go past the natural size (up to OVERZOOM_MAX_SCALE).
+  overzoom?: boolean;
   onClose: () => void;
   resolveSource?: (
     item: MediaViewerItem,
@@ -241,12 +247,23 @@ export function MediaViewer(props: {
     item: MediaViewerItem,
     password?: string,
   ) => Promise<string>;
+  // When set, items have no shareable direct URL: "open in new tab" mints a
+  // short-lived ticket URL through this resolver instead of using item.href,
+  // and link copying only offers the lightbox link.
+  resolveTemporaryHref?: (
+    item: MediaViewerItem,
+    password?: string,
+  ) => Promise<string>;
   onMarkdownModeChange?: (
     item: MediaViewerItem,
     markdown: boolean,
   ) => Promise<void>;
   onActiveItemChange?: (item: MediaViewerItem) => void;
-  onTitleChange?: (item: MediaViewerItem, title: string) => Promise<void>;
+  onTitleChange?: (
+    item: MediaViewerItem,
+    title: string,
+    password?: string,
+  ) => Promise<void>;
   onCopyLink?: (
     item: MediaViewerItem,
     kind: MediaViewerLinkKind,
@@ -323,9 +340,10 @@ export function MediaViewer(props: {
     ],
   );
   const fitScale = geometry.fitScale;
+  const maxScale = props.overzoom === true ? OVERZOOM_MAX_SCALE : 1;
   const zoomed = naturalSize !== null && scale > fitScale + ZOOM_EPSILON;
   const canZoom =
-    naturalSize !== null && fitScale < 1 - ZOOM_EPSILON;
+    naturalSize !== null && fitScale < maxScale - ZOOM_EPSILON;
   const rendersMarkdown =
     activeItem !== undefined &&
     shouldRenderTextAsMarkdown(activeItem.mediaKind, activeItem.title);
@@ -379,6 +397,38 @@ export function MediaViewer(props: {
     [index, props.items, props.onActiveItemChange],
   );
 
+  const openInNewTab = useCallback(() => {
+    if (activeItem === undefined) return;
+    const resolveTemporaryHref = props.resolveTemporaryHref;
+    if (resolveTemporaryHref === undefined) {
+      window.open(activeItem.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (
+      activeItem.passwordProtected === true &&
+      !unlockedPasswords.current.has(activeItem.id)
+    ) {
+      return;
+    }
+    // The ticket URL is minted asynchronously; the tab has to open
+    // synchronously inside the user gesture or the browser blocks it.
+    const tab = window.open("", "_blank");
+    if (tab === null) return;
+    tab.opener = null;
+    void resolveTemporaryHref(
+      activeItem,
+      unlockedPasswords.current.get(activeItem.id),
+    )
+      .then((url) => tab.location.replace(url))
+      .catch((reason: unknown) => {
+        tab.close();
+        setTitleFeedback({
+          kind: "error",
+          message: friendlyError(reason, "Could not open the file"),
+        });
+      });
+  }, [activeItem, props.resolveTemporaryHref]);
+
   useEffect(() => {
     setIndex(
       Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
@@ -424,7 +474,7 @@ export function MediaViewer(props: {
       if (isEditableTarget(event.target)) return;
       if (event.key === " " && activeItem !== undefined) {
         event.preventDefault();
-        window.open(activeItem.href, "_blank", "noopener,noreferrer");
+        openInNewTab();
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         moveBy(-1);
@@ -435,7 +485,7 @@ export function MediaViewer(props: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeItem, moveBy, props.onClose, props.shortcutsSuspended]);
+  }, [activeItem, moveBy, openInNewTab, props.onClose, props.shortcutsSuspended]);
 
   useEffect(() => {
     if (activeItem === undefined) return;
@@ -630,10 +680,10 @@ export function MediaViewer(props: {
       if (previous === null || current <= previous + ZOOM_EPSILON) {
         return fitScale;
       }
-      return Math.min(1, Math.max(fitScale, current));
+      return Math.min(maxScale, Math.max(fitScale, current));
     });
     previousFitScale.current = fitScale;
-  }, [activeItem?.id, fitScale, naturalSize]);
+  }, [activeItem?.id, fitScale, maxScale, naturalSize]);
 
   const clampPan = useCallback(
     (
@@ -673,6 +723,9 @@ export function MediaViewer(props: {
   }, [clampPan, geometry.height, geometry.width, scale]);
 
   if (activeItem === undefined) return null;
+
+  const canRenameActive =
+    props.onTitleChange !== undefined && activeItem.canRename !== false;
 
   const setMediaNaturalSize = (width: number, height: number) => {
     if (width <= 0 || height <= 0) return;
@@ -727,7 +780,11 @@ export function MediaViewer(props: {
     setTitlePending(true);
     setTitleFeedback(null);
     try {
-      await props.onTitleChange(activeItem, titleDraft);
+      await props.onTitleChange(
+        activeItem,
+        titleDraft,
+        unlockedPasswords.current.get(activeItem.id),
+      );
       setEditingTitle(false);
       setTitleFeedback({ kind: "success", message: "Filename updated" });
     } catch (reason) {
@@ -743,7 +800,10 @@ export function MediaViewer(props: {
   const copyLink = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (props.onCopyLink === undefined || copyPending) return;
     const kind: MediaViewerLinkKind =
-      event.metaKey || event.ctrlKey ? "direct" : "lightbox";
+      props.resolveTemporaryHref === undefined &&
+      (event.metaKey || event.ctrlKey)
+        ? "direct"
+        : "lightbox";
     setCopyPending(true);
     setTitleFeedback(null);
     try {
@@ -795,7 +855,7 @@ export function MediaViewer(props: {
     if (!canZoom || naturalSize === null) return;
     event.preventDefault();
     const nextScale = Math.min(
-      1,
+      maxScale,
       Math.max(fitScale, scale * Math.exp(-event.deltaY * 0.0015)),
     );
     if (Math.abs(nextScale - scale) < 0.0001) return;
@@ -949,7 +1009,7 @@ export function MediaViewer(props: {
               </form>
             ) : (
               <h2 id="media-viewer-title" title={activeItem.title}>
-                {props.onTitleChange !== undefined ? (
+                {canRenameActive ? (
                   <button
                     className={styles.titleTextButton}
                     type="button"
@@ -975,7 +1035,11 @@ export function MediaViewer(props: {
                 onClick={(event) => void copyLink(event)}
                 disabled={copyPending}
                 aria-label={`Copy link to ${activeItem.title}`}
-                title="Copy lightbox link (Cmd/Ctrl-click for direct link)"
+                title={
+                  props.resolveTemporaryHref === undefined
+                    ? "Copy lightbox link (Cmd/Ctrl-click for direct link)"
+                    : "Copy link"
+                }
               >
                 {titleFeedback?.kind === "success" &&
                 (titleFeedback.message === "Link copied" ||
@@ -1048,16 +1112,32 @@ export function MediaViewer(props: {
           >
             <Info aria-hidden="true" size={18} />
           </button>
-          <a
-            className={styles.titleButton}
-            href={activeItem.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Open ${activeItem.title} in a new tab`}
-            title="Open in new tab (Space)"
-          >
-            <ExternalLink aria-hidden="true" size={17} />
-          </a>
+          {props.resolveTemporaryHref !== undefined ? (
+            <button
+              className={styles.titleButton}
+              type="button"
+              onClick={openInNewTab}
+              disabled={
+                activeItem.passwordProtected === true &&
+                !unlockedPasswords.current.has(activeItem.id)
+              }
+              aria-label={`Open ${activeItem.title} in a new tab (temporary URL, not shareable)`}
+              title="Open in new tab (Space) — temporary URL, not shareable"
+            >
+              <ExternalLink aria-hidden="true" size={17} />
+            </button>
+          ) : (
+            <a
+              className={styles.titleButton}
+              href={activeItem.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open ${activeItem.title} in a new tab`}
+              title="Open in new tab (Space)"
+            >
+              <ExternalLink aria-hidden="true" size={17} />
+            </a>
+          )}
           <button
             ref={closeButtonRef}
             className={styles.titleButton}
@@ -1118,13 +1198,19 @@ export function MediaViewer(props: {
             ) : loadError ? (
               <div className={styles.status}>
                 <p>{loadError}</p>
-                <a
-                  href={activeItem.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open in a new tab
-                </a>
+                {props.resolveTemporaryHref !== undefined ? (
+                  <button type="button" onClick={openInNewTab}>
+                    Open in a new tab
+                  </button>
+                ) : (
+                  <a
+                    href={activeItem.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open in a new tab
+                  </a>
+                )}
               </div>
             ) : sourceUrl !== null && rendersCode ? (
               <Suspense
@@ -1209,13 +1295,19 @@ export function MediaViewer(props: {
             ) : sourceUrl !== null ? (
               <div className={styles.status}>
                 <p>This file type cannot be previewed in the browser.</p>
-                <a
-                  href={activeItem.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open original
-                </a>
+                {props.resolveTemporaryHref !== undefined ? (
+                  <button type="button" onClick={openInNewTab}>
+                    Open original
+                  </button>
+                ) : (
+                  <a
+                    href={activeItem.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open original
+                  </a>
+                )}
               </div>
             ) : null}
           </div>
