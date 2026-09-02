@@ -38,6 +38,7 @@ import {
   resolveFolderAccess,
   roleAtLeast,
   shouldListFolder,
+  unauthorizedError,
 } from "./lib/permissions";
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { uploaderAttribution } from "./lib/profiles";
@@ -312,7 +313,7 @@ export const previewFilenameSuggestions = query({
         profile,
         args.anonymousClaim,
       );
-      if (!access.canView) throw new Error("Unauthorized");
+      if (!access.canView) throw unauthorizedError();
       const matches = await ctx.db
         .query("entries")
         .withIndex("by_folderId_and_state_and_nameKey", (q) =>
@@ -388,7 +389,7 @@ export const list = query({
       args.anonymousClaim,
     );
     if (!folderAccess.canView) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     const role = folderAccess.role;
     const filesystemSync =

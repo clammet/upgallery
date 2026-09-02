@@ -10,6 +10,7 @@ import {
   getCurrentProfile,
   requireCurrentProfile,
   requireGalleryManager,
+  unauthorizedError,
 } from "./lib/permissions";
 import {
   bulkConflictPolicy,
@@ -769,7 +770,7 @@ export const resolveConflict = mutation({
     }
     const operation = await ctx.db.get("bulkOperations", job.bulkOperationId);
     if (operation === null || operation.actorProfileId !== profile._id) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     await resolveParkedJob(ctx, job, args.policy);
     return null;

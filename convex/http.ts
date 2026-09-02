@@ -34,6 +34,13 @@ function errorResponse(error: unknown, fallback: string) {
   ) {
     return json({ error: "Item exists", code: "entry_exists" }, 409);
   }
+  if (error instanceof ConvexError && isRecord(error.data)) {
+    const message = error.data.message;
+    return json(
+      { error: typeof message === "string" ? message : fallback },
+      error.data.code === "unauthorized" ? 403 : 400,
+    );
+  }
   return json(
     { error: error instanceof Error ? error.message : fallback },
     400,

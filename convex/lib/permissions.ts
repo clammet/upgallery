@@ -1,4 +1,5 @@
 import { isValidAnonymousClaim } from "@clammet/convex-googly-auth";
+import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { googlyAuth } from "./auth";
@@ -8,6 +9,18 @@ import { profileByIdentityId } from "./profiles";
 type ReadCtx = QueryCtx | MutationCtx;
 export type Role = "owner" | "editor" | "viewer";
 export type SystemRole = "none" | "editor" | "viewer";
+
+/**
+ * The refusal every access check throws. The code lets the browser tell a
+ * permission problem from any other failure and offer a login instead of an
+ * error page; the message keeps logs and test output readable.
+ */
+export function unauthorizedError(): ConvexError<{
+  code: "unauthorized";
+  message: string;
+}> {
+  return new ConvexError({ code: "unauthorized" as const, message: "Unauthorized" });
+}
 
 export type FolderAccessResolution = {
   role: Role | null;
@@ -61,7 +74,7 @@ export async function requireSystemAdmin(
 ): Promise<Doc<"profiles">> {
   const profile = await requireCurrentProfile(ctx);
   if (!profile.isSystemAdmin) {
-    throw new Error("Unauthorized");
+    throw unauthorizedError();
   }
   return profile;
 }
@@ -245,7 +258,7 @@ export async function assertCanManageGallery(
     anonymousClaim,
   );
   if (!canManageGallery(gallery, role)) {
-    throw new Error("Unauthorized");
+    throw unauthorizedError();
   }
 }
 
@@ -272,7 +285,7 @@ export async function requireGalleryRole(
     anonymousClaim,
   );
   if (!roleAtLeast(role, minimum)) {
-    throw new Error("Unauthorized");
+    throw unauthorizedError();
   }
   return profile;
 }
@@ -292,7 +305,7 @@ export async function requireGalleryManager(
     anonymousClaim,
   );
   if (!canManageGallery(gallery, role)) {
-    throw new Error("Unauthorized");
+    throw unauthorizedError();
   }
   return profile;
 }

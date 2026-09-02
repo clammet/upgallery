@@ -1657,7 +1657,7 @@ describe("upgallery backend", () => {
         galleryId,
         folderId: restrictedFolder.folderId,
       }),
-    ).rejects.toThrow("Unauthorized");
+    ).rejects.toMatchObject({ data: { code: "unauthorized" } });
     await expect(
       viewerClient.query(api.folders.list, {
         galleryId,

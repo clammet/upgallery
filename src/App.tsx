@@ -9,18 +9,22 @@ import { UploaderPage } from "./pages/UploaderPage";
 import { AdminPage } from "./pages/AdminPage";
 import { PageFrame } from "./components/PageFrame";
 import { AuthCallbackPage } from "./components/AuthCallbackPage";
+import { AccessDenied } from "./components/AccessDenied";
+import { GalleryErrorScope } from "./components/GalleryErrorBoundary";
 
 export function App() {
   return (
     <>
       <AuthBootstrap />
-      <Routes>
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        <Route path="/admin/*" element={<AdminPage />} />
-        <Route path="/g/:slug/*" element={<SlugGallery expectedKind="image" />} />
-        <Route path="/up/:slug" element={<SlugGallery expectedKind="uploader" />} />
-        <Route path="*" element={<HostGallery />} />
-      </Routes>
+      <GalleryErrorScope>
+        <Routes>
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route path="/admin/*" element={<AdminPage />} />
+          <Route path="/g/:slug/*" element={<SlugGallery expectedKind="image" />} />
+          <Route path="/up/:slug" element={<SlugGallery expectedKind="uploader" />} />
+          <Route path="*" element={<HostGallery />} />
+        </Routes>
+      </GalleryErrorScope>
     </>
   );
 }
@@ -66,6 +70,9 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
   ) {
     return <NotFound />;
   }
+  if (!resolved.access.canView) {
+    return <AccessDenied gallery={resolved.gallery} scope="gallery" />;
+  }
   const canonicalRoute =
     canonicalHostRoute === null
       ? null
@@ -73,22 +80,26 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
           protocol: window.location.protocol,
           host: window.location.host,
         });
-  return resolved.gallery.kind === "image" ? (
-    <GalleryPage
-      gallery={resolved.gallery}
-      rootFolder={resolved.rootFolder}
-      routeRoot={`/g/${resolved.gallery.slug}`}
-      canonicalOrigin={canonicalRoute?.origin}
-      canonicalRouteRoot={canonicalRoute?.routeRoot}
-    />
-  ) : (
-    <UploaderPage
-      gallery={resolved.gallery}
-      rootFolder={resolved.rootFolder}
-      routeRoot={`/up/${resolved.gallery.slug}`}
-      canonicalOrigin={canonicalRoute?.origin}
-      canonicalRouteRoot={canonicalRoute?.routeRoot}
-    />
+  return (
+    <GalleryErrorScope gallery={resolved.gallery}>
+      {resolved.gallery.kind === "image" ? (
+        <GalleryPage
+          gallery={resolved.gallery}
+          rootFolder={resolved.rootFolder}
+          routeRoot={`/g/${resolved.gallery.slug}`}
+          canonicalOrigin={canonicalRoute?.origin}
+          canonicalRouteRoot={canonicalRoute?.routeRoot}
+        />
+      ) : (
+        <UploaderPage
+          gallery={resolved.gallery}
+          rootFolder={resolved.rootFolder}
+          routeRoot={`/up/${resolved.gallery.slug}`}
+          canonicalOrigin={canonicalRoute?.origin}
+          canonicalRouteRoot={canonicalRoute?.routeRoot}
+        />
+      )}
+    </GalleryErrorScope>
   );
 }
 
@@ -103,18 +114,25 @@ function HostGallery() {
   if (resolved === null || resolved.rootFolder === null) {
     return <Landing />;
   }
-  return resolved.gallery.kind === "image" ? (
-    <GalleryPage
-      gallery={resolved.gallery}
-      rootFolder={resolved.rootFolder}
-      routeRoot={resolved.routeRoot}
-    />
-  ) : (
-    <UploaderPage
-      gallery={resolved.gallery}
-      rootFolder={resolved.rootFolder}
-      routeRoot={resolved.routeRoot}
-    />
+  if (!resolved.access.canView) {
+    return <AccessDenied gallery={resolved.gallery} scope="gallery" />;
+  }
+  return (
+    <GalleryErrorScope gallery={resolved.gallery}>
+      {resolved.gallery.kind === "image" ? (
+        <GalleryPage
+          gallery={resolved.gallery}
+          rootFolder={resolved.rootFolder}
+          routeRoot={resolved.routeRoot}
+        />
+      ) : (
+        <UploaderPage
+          gallery={resolved.gallery}
+          rootFolder={resolved.rootFolder}
+          routeRoot={resolved.routeRoot}
+        />
+      )}
+    </GalleryErrorScope>
   );
 }
 

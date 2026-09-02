@@ -16,6 +16,7 @@ import {
   requireGalleryManager,
   requireGalleryRole,
   roleAtLeast,
+  unauthorizedError,
 } from "./lib/permissions";
 import {
   cleanDescription,
@@ -164,7 +165,7 @@ async function assertCanUpload(
   const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
   const allowed = roleAtLeast(role, "editor");
   if (!allowed) {
-    throw new Error("Unauthorized");
+    throw unauthorizedError();
   }
   return { gallery, folder, profile };
 }
@@ -527,7 +528,7 @@ export const createDownloadTicket = mutation({
       folder === null ||
       !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (gallery.kind !== "uploader") {
       throw new Error("Image gallery files are served directly");
@@ -586,7 +587,7 @@ export const requestPreview = mutation({
       folder === null ||
       !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (entry.passwordHash !== undefined) {
       if (
@@ -674,7 +675,7 @@ export const removeLocationData = mutation({
           )
         : isOwningProfile(entry.ownerProfileId, actor._id);
     if (!allowed) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (!metadataHasLocation(entry.metadataJson)) {
       throw new Error("This image does not contain location data");
@@ -774,7 +775,7 @@ export const refreshMetadata = mutation({
             "editor",
           )
         : isOwningProfile(entry.ownerProfileId, actor._id);
-    if (!allowed) throw new Error("Unauthorized");
+    if (!allowed) throw unauthorizedError();
 
     const jobs = await ctx.db
       .query("mediaProcessingJobs")
@@ -839,7 +840,7 @@ export const createThumbnailTickets = mutation({
       folder.galleryId !== gallery._id ||
       !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
     ) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
 
     const tickets: Array<{
@@ -897,7 +898,7 @@ export const updateMetadata = mutation({
     const role = await getEffectiveRole(ctx, gallery._id, folder, profile);
     const owns = isOwningProfile(entry.ownerProfileId, profile._id);
     if (!owns && !roleAtLeast(role, "editor")) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (entry.passwordHash !== undefined) {
       if (
@@ -967,7 +968,7 @@ export const rename = mutation({
     if (gallery.kind === "uploader") {
       actor = await requireCurrentProfile(ctx, args.anonymousClaim);
       if (!isOwningProfile(entry.ownerProfileId, actor._id)) {
-        throw new Error("Unauthorized");
+        throw unauthorizedError();
       }
       if (entry.passwordHash !== undefined) {
         if (
@@ -1074,7 +1075,7 @@ export const setMarkdownMode = mutation({
       throw new Error("File not found");
     }
     if (!isOwningProfile(entry.ownerProfileId, profile._id)) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (
       entry.mediaKind !== "text" ||
@@ -1130,7 +1131,7 @@ export const remove = mutation({
       (gallery.kind === "uploader" && !owns) ||
       (gallery.kind === "image" && !owns && !roleAtLeast(role, "editor"))
     ) {
-      throw new Error("Unauthorized");
+      throw unauthorizedError();
     }
     if (entry.migrationState === "moving") {
       throw new Error("File is currently being moved");
