@@ -99,3 +99,35 @@ test("gallery derivatives have direct immutable media URLs", async () => {
     "/media/derivatives/gallery/shared/family/thumbnails/aa/bb/hash.thumb.jpg",
   );
 });
+
+test("directly served storage is readable without exposing protected files", async () => {
+  const { storageDirectoryMode, storageFileMode } = await import(
+    "../storage/paths.js"
+  );
+
+  // Group write is deliberate: on user-backed galleries the directory owner
+  // reaches these files through a default ACL, and the ACL mask is the
+  // group bits.
+  expect(storageFileMode("public/shared/family/aa/bb/photo.jpg")).toBe(0o664);
+  expect(storageFileMode("public/users/alice/photos/photo.jpg")).toBe(0o664);
+  expect(
+    storageFileMode(
+      "derivatives/gallery/shared/family/thumbnails/aa/bb/photo.thumb.jpg",
+    ),
+  ).toBe(0o664);
+  expect(storageDirectoryMode("public/users/alice/photos/photo.jpg")).toBe(
+    0o775,
+  );
+  expect(
+    storageDirectoryMode("derivatives/gallery/shared/family/thumbnails/aa"),
+  ).toBe(0o775);
+  expect(storageDirectoryMode("protected/uploaders/drop/aa/bb/archive.zip")).toBe(
+    0o700,
+  );
+  expect(storageFileMode("protected/uploaders/drop/aa/bb/archive.zip")).toBe(
+    0o600,
+  );
+  expect(
+    storageFileMode("derivatives/up/drop/previews/aa/bb/photo.preview.jpg"),
+  ).toBe(0o600);
+});

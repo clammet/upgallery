@@ -12,6 +12,7 @@ import { delay, runWithHeartbeat } from "./heartbeat.js";
 import { processMaintenanceClaim } from "./maintenance.js";
 import { configureMediaConcurrency } from "./media.js";
 import { processMediaClaim } from "./mediaWorker.js";
+import { applyStorageUmask } from "./paths.js";
 import { startServiceStatusReporter } from "./serviceStatus.js";
 import { assertStorageRootsMounted } from "./storageRoots.js";
 import {
@@ -41,6 +42,7 @@ await assertStorageRootsMounted(
   },
   "upgallery storage worker",
 );
+applyStorageUmask();
 await mkdir(config.storageRoot, { recursive: true });
 configureMediaConcurrency();
 

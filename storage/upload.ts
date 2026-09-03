@@ -6,6 +6,7 @@ import {
 } from "node:fs";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   rename,
@@ -29,6 +30,8 @@ import {
   absoluteStoragePath,
   buildStorageKey,
   storageDirectory,
+  storageDirectoryMode,
+  storageFileMode,
 } from "./paths.js";
 import {
   classifyMedia,
@@ -126,7 +129,10 @@ export async function handleUpload(
           folderSegments: claim!.folderSegments,
           fileName: claim!.name,
         });
-        await mkdir(storageDirectory(storageKey), { recursive: true });
+        await mkdir(storageDirectory(storageKey), {
+          recursive: true,
+          mode: storageDirectoryMode(storageKey),
+        });
         const finalPath = absoluteStoragePath(storageKey);
         if (claim!.galleryKind === "image" && claim!.storageKind === "user") {
           await installReplacing(parsed.temporaryPath, finalPath, signal);
@@ -138,6 +144,11 @@ export async function handleUpload(
             await installReplacing(parsed.temporaryPath, finalPath, signal);
           }
         }
+        // Multipart and partial files stay private. Publish only paths that
+        // nginx is explicitly allowed to serve; uploader storage remains
+        // owner-only. This also repairs a same-content file from an older
+        // upload that was installed mode 0600.
+        await chmod(finalPath, storageFileMode(storageKey));
         if (
           claim!.replacesStorageKey !== undefined &&
           claim!.replacesStorageKey !== storageKey

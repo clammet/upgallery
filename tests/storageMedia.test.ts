@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -87,6 +87,9 @@ test("BMP images generate JPEG thumbnails", async () => {
   expect(metadata.format).toBe("jpeg");
   expect(metadata.width).toBeLessThanOrEqual(512);
   expect(metadata.height).toBeLessThanOrEqual(512);
+  expect((await stat(join(storageRoot, thumbnailKey!))).mode & 0o777).toBe(
+    0o600,
+  );
   const mediaMetadata = JSON.parse(
     (await extractMediaMetadataJson(sourcePath, "image"))!,
   );
@@ -125,6 +128,9 @@ test("image thumbnails fit inside a 512px square without changing aspect ratio",
     width: 512,
     height: 256,
   });
+  expect((await stat(join(storageRoot, thumbnailKey!))).mode & 0o777).toBe(
+    0o664,
+  );
 });
 
 test("HEIC images fall back to the libheif thumbnailer", async () => {
@@ -281,6 +287,7 @@ test("full-resolution previews preserve the source pixel dimensions", async () =
     width: 123,
     height: 77,
   });
+  expect((await stat(join(storageRoot, previewKey))).mode & 0o777).toBe(0o600);
 });
 
 test("QuickTime metadata includes display resolution and decoded location", async () => {

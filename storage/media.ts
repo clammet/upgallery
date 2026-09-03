@@ -1,12 +1,18 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, unlink } from "node:fs/promises";
+import { chmod, mkdir, rename, unlink } from "node:fs/promises";
 import { dirname, extname } from "node:path";
 import exifr from "exifr";
 import { extension as extensionForMime, lookup as lookupMime } from "mime-types";
 import sharp from "sharp";
 import { config } from "./config.js";
-import { absoluteStoragePath, buildStorageKey, sanitizeExtension } from "./paths.js";
+import {
+  absoluteStoragePath,
+  buildStorageKey,
+  sanitizeExtension,
+  storageDirectoryMode,
+  storageFileMode,
+} from "./paths.js";
 
 export type MediaKind =
   | "image"
@@ -91,7 +97,10 @@ export async function createThumbnail(input: {
   const decodedHeifPath = `${thumbnailPath}.partial-${randomUUID()}.png`;
   try {
     input.signal?.throwIfAborted();
-    await mkdir(dirname(thumbnailPath), { recursive: true });
+    await mkdir(dirname(thumbnailPath), {
+      recursive: true,
+      mode: storageDirectoryMode(thumbnailKey),
+    });
     if (
       input.mediaKind === "image" &&
       !ffmpegImageExtensions.has(input.extension.toLocaleLowerCase())
@@ -122,6 +131,7 @@ export async function createThumbnail(input: {
     }
     input.signal?.throwIfAborted();
     await rename(temporaryPath, thumbnailPath);
+    await chmod(thumbnailPath, storageFileMode(thumbnailKey));
     return thumbnailKey;
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);
@@ -153,13 +163,17 @@ export async function createPreview(input: {
   const temporaryPath = `${previewPath}.partial-${randomUUID()}.jpg`;
   try {
     input.signal?.throwIfAborted();
-    await mkdir(dirname(previewPath), { recursive: true });
+    await mkdir(dirname(previewPath), {
+      recursive: true,
+      mode: storageDirectoryMode(previewKey),
+    });
     await sharp(input.sourcePath)
       .rotate()
       .jpeg({ quality: 88, mozjpeg: true })
       .toFile(temporaryPath);
     input.signal?.throwIfAborted();
     await rename(temporaryPath, previewPath);
+    await chmod(previewPath, storageFileMode(previewKey));
     return previewKey;
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);
