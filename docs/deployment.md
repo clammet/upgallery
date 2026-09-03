@@ -43,6 +43,28 @@ with no application-generated directory beside them, so they can be managed
 through SFTP, SCP, rsync, or the application. Deletion checks for other live
 metadata references before unlinking shared bytes or derivatives.
 
+### Mount sentinels
+
+When the storage roots are bind mounts, a missing source at boot (for example
+a block storage volume with `nofail`) makes Docker create an empty directory
+in its place, and the services would start against an empty tree and
+reconcile metadata against it. To refuse that, set `STORAGE_MOUNT_ROOTS` to
+the comma-separated paths under `STORAGE_ROOT` that are separately mounted,
+and create a sentinel file at the top of each one after confirming the volume
+is mounted:
+
+```bash
+for root in public/shared public/users protected/uploaders derivatives; do
+  touch "/srv/upgallery/$root/.upgallery-storage-root"
+done
+```
+
+Both the API and the worker check every listed root at startup and exit with
+status 1, naming the missing file, when a sentinel is absent or is not a
+regular file. `STORAGE_ROOT_SENTINEL` renames the file (default
+`.upgallery-storage-root`). Leaving `STORAGE_MOUNT_ROOTS` unset disables the
+check, which is what local development does.
+
 Never mount `protected/uploaders` or `derivatives/up` into the Nginx container.
 Uploader originals and derivatives must pass through the gateway so password
 checks and view/download counters cannot be bypassed.

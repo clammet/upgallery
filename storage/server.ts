@@ -8,6 +8,7 @@ import { callConvex } from "./convex.js";
 import { handleDownload } from "./download.js";
 import { prepareTemporaryStorage } from "./temporary.js";
 import { startServiceStatusReporter } from "./serviceStatus.js";
+import { assertStorageRootsMounted } from "./storageRoots.js";
 import { handleUpload } from "./upload.js";
 import { runFilesystemOperation } from "./userFilesystem.js";
 
@@ -165,6 +166,14 @@ app.use(
 );
 
 if (process.env.NODE_ENV !== "test") {
+  await assertStorageRootsMounted(
+    {
+      storageRoot: config.storageRoot,
+      mountRoots: config.storageMountRoots,
+      sentinelName: config.storageRootSentinel,
+    },
+    "upgallery storage API",
+  );
   await mkdir(config.storageRoot, { recursive: true });
   await prepareTemporaryStorage();
   startServiceStatusReporter("storage-api");

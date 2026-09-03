@@ -7,24 +7,30 @@
   "rangeStrategy": "pin",
   "minimumReleaseAge": "3 days",
   "rebaseWhen": "conflicted",
+  "dependencyDashboard": true,
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true
+    "automerge": true,
+    "rebaseWhen": "behind-base-branch"
   },
   "packageRules": [
     {
+      "description": "Supply-chain soak: automerged PRs rebase onto main first so CI ran against the current base",
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "automerge": true
+      "automerge": true,
+      "rebaseWhen": "behind-base-branch"
     },
     {
-      "description": "Majors wait for a human",
+      "description": "Majors wait for a human and soak a week",
       "matchUpdateTypes": ["major"],
-      "automerge": false
+      "automerge": false,
+      "minimumReleaseAge": "7 days"
     },
     {
-      "description": "Pins and digest refreshes point at code that already shipped - no soak needed",
-      "matchUpdateTypes": ["pin", "pinDigest", "digest"],
-      "minimumReleaseAge": null
+      "description": "Supply-chain soak: never automerge a GitHub Actions digest change. A moved tag on a SHA-pinned action shows up as a digest update; a human compares it against the upstream release first",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "pinDigest"],
+      "automerge": false
     },
     {
       "description": "0.x minors are breaking by semver convention - hold them for a human",

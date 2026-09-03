@@ -13,6 +13,7 @@ import { processMaintenanceClaim } from "./maintenance.js";
 import { configureMediaConcurrency } from "./media.js";
 import { processMediaClaim } from "./mediaWorker.js";
 import { startServiceStatusReporter } from "./serviceStatus.js";
+import { assertStorageRootsMounted } from "./storageRoots.js";
 import {
   executeFilesystemOperation,
   runUserDirectorySync,
@@ -32,6 +33,14 @@ const activeJobs = {
   filesystemOperationRecovery: 0,
 };
 
+await assertStorageRootsMounted(
+  {
+    storageRoot: config.storageRoot,
+    mountRoots: config.storageMountRoots,
+    sentinelName: config.storageRootSentinel,
+  },
+  "upgallery storage worker",
+);
 await mkdir(config.storageRoot, { recursive: true });
 configureMediaConcurrency();
 

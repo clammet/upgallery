@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseMountRoots, parseSentinelName } from "./storageRoots.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -28,6 +29,11 @@ export const config = {
   convexSiteUrl: required("CONVEX_SITE_URL").replace(/\/+$/, ""),
   storageSecret: required("STORAGE_INTERNAL_SECRET"),
   storageRoot: resolve(process.env.STORAGE_ROOT?.trim() || ".storage"),
+  // Startup guard for bind-mounted roots (see storageRoots.ts). Comma
+  // separated paths relative to STORAGE_ROOT; each must contain the sentinel
+  // file. Unset means no guard.
+  storageMountRoots: parseMountRoots(process.env.STORAGE_MOUNT_ROOTS),
+  storageRootSentinel: parseSentinelName(process.env.STORAGE_ROOT_SENTINEL),
   pollIntervalMs: positiveInteger("STORAGE_POLL_INTERVAL_MS", 1_000),
   heartbeatIntervalMs: positiveInteger(
     "STORAGE_HEARTBEAT_INTERVAL_MS",
