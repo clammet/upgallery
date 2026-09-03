@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
   access,
+  chmod,
   copyFile,
   mkdir,
   open,
@@ -16,6 +17,7 @@ import type { MediaProcessingClaim } from "./convex.js";
 import {
   absoluteStoragePath,
   buildStorageKey,
+  storageFileMode,
 } from "./paths.js";
 
 const preservedIfd0Tags = new Set([
@@ -142,6 +144,8 @@ export async function rewriteStoredImageWithoutLocationData(
         await rename(temporaryPath, destinationPath);
       }
     }
+
+    await chmod(destinationPath, storageFileMode(storageKey));
 
     const installed = await stat(destinationPath);
     return {

@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, mkdir, rename, stat, unlink } from "node:fs/promises";
+import { access, chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { callConvex, type MaintenanceClaim } from "./convex.js";
 import {
   absoluteStoragePath,
   buildStorageKey,
+  storageFileMode,
 } from "./paths.js";
 import { removeReplacedFile } from "./replacedFile.js";
 
@@ -234,7 +235,10 @@ async function copyAtomically(
     const sameContent =
       expectedSha256 === undefined ||
       (await fileSha256(destination, signal)) === expectedSha256;
-    if (sameContent) return;
+    if (sameContent) {
+      await chmod(destination, storageFileMode(destinationKey));
+      return;
+    }
     if (!overwrite) {
       throw new Error("Destination already contains a different file");
     }
@@ -247,6 +251,7 @@ async function copyAtomically(
       { signal },
     );
     await rename(temporary, destination);
+    await chmod(destination, storageFileMode(destinationKey));
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;

@@ -99,3 +99,21 @@ test("gallery derivatives have direct immutable media URLs", async () => {
     "/media/derivatives/gallery/shared/family/thumbnails/aa/bb/hash.thumb.jpg",
   );
 });
+
+test("directly served storage is readable without exposing protected files", async () => {
+  const { storageFileMode } = await import("../storage/paths.js");
+
+  expect(storageFileMode("public/shared/family/aa/bb/photo.jpg")).toBe(0o644);
+  expect(storageFileMode("public/users/alice/photos/photo.jpg")).toBe(0o644);
+  expect(
+    storageFileMode(
+      "derivatives/gallery/shared/family/thumbnails/aa/bb/photo.thumb.jpg",
+    ),
+  ).toBe(0o644);
+  expect(storageFileMode("protected/uploaders/drop/aa/bb/archive.zip")).toBe(
+    0o600,
+  );
+  expect(
+    storageFileMode("derivatives/up/drop/previews/aa/bb/photo.preview.jpg"),
+  ).toBe(0o600);
+});

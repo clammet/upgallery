@@ -116,6 +116,13 @@ export function storageDirectory(storageKey: string): string {
   return dirname(absoluteStoragePath(storageKey));
 }
 
+export function storageFileMode(storageKey: string): number {
+  return storageKey.startsWith("public/") ||
+    storageKey.startsWith("derivatives/gallery/")
+    ? 0o644
+    : 0o600;
+}
+
 export function publicMediaPath(storageKey: string): string {
   if (storageKey.startsWith("derivatives/gallery/")) {
     return `/media/${storageKey}`;
