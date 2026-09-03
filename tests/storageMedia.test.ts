@@ -129,7 +129,7 @@ test("image thumbnails fit inside a 512px square without changing aspect ratio",
     height: 256,
   });
   expect((await stat(join(storageRoot, thumbnailKey!))).mode & 0o777).toBe(
-    0o644,
+    0o664,
   );
 });
 

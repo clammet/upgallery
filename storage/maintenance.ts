@@ -7,6 +7,7 @@ import { callConvex, type MaintenanceClaim } from "./convex.js";
 import {
   absoluteStoragePath,
   buildStorageKey,
+  storageDirectoryMode,
   storageFileMode,
 } from "./paths.js";
 import { removeReplacedFile } from "./replacedFile.js";
@@ -224,7 +225,10 @@ async function copyAtomically(
 ) {
   const source = absoluteStoragePath(sourceKey);
   const destination = absoluteStoragePath(destinationKey);
-  await mkdir(dirname(destination), { recursive: true });
+  await mkdir(dirname(destination), {
+    recursive: true,
+    mode: storageDirectoryMode(destinationKey),
+  });
   let destinationExists = true;
   try {
     await access(destination);

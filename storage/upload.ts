@@ -30,6 +30,7 @@ import {
   absoluteStoragePath,
   buildStorageKey,
   storageDirectory,
+  storageDirectoryMode,
   storageFileMode,
 } from "./paths.js";
 import {
@@ -128,7 +129,10 @@ export async function handleUpload(
           folderSegments: claim!.folderSegments,
           fileName: claim!.name,
         });
-        await mkdir(storageDirectory(storageKey), { recursive: true });
+        await mkdir(storageDirectory(storageKey), {
+          recursive: true,
+          mode: storageDirectoryMode(storageKey),
+        });
         const finalPath = absoluteStoragePath(storageKey);
         if (claim!.galleryKind === "image" && claim!.storageKind === "user") {
           await installReplacing(parsed.temporaryPath, finalPath, signal);

@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { AsyncSemaphore, CapacityError } from "./concurrency.js";
 import { callConvex } from "./convex.js";
 import { handleDownload } from "./download.js";
+import { applyStorageUmask } from "./paths.js";
 import { prepareTemporaryStorage } from "./temporary.js";
 import { startServiceStatusReporter } from "./serviceStatus.js";
 import { handleUpload } from "./upload.js";
@@ -165,6 +166,7 @@ app.use(
 );
 
 if (process.env.NODE_ENV !== "test") {
+  applyStorageUmask();
   await mkdir(config.storageRoot, { recursive: true });
   await prepareTemporaryStorage();
   startServiceStatusReporter("storage-api");

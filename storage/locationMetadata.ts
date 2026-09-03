@@ -17,6 +17,7 @@ import type { MediaProcessingClaim } from "./convex.js";
 import {
   absoluteStoragePath,
   buildStorageKey,
+  storageDirectoryMode,
   storageFileMode,
 } from "./paths.js";
 
@@ -132,7 +133,10 @@ export async function rewriteStoredImageWithoutLocationData(
             extension: claim.extension,
           });
     const destinationPath = absoluteStoragePath(storageKey);
-    await mkdir(dirname(destinationPath), { recursive: true });
+    await mkdir(dirname(destinationPath), {
+      recursive: true,
+      mode: storageDirectoryMode(storageKey),
+    });
 
     if (destinationPath === sourcePath) {
       await rename(temporaryPath, destinationPath);

@@ -10,6 +10,7 @@ import {
   absoluteStoragePath,
   buildStorageKey,
   sanitizeExtension,
+  storageDirectoryMode,
   storageFileMode,
 } from "./paths.js";
 
@@ -96,7 +97,10 @@ export async function createThumbnail(input: {
   const decodedHeifPath = `${thumbnailPath}.partial-${randomUUID()}.png`;
   try {
     input.signal?.throwIfAborted();
-    await mkdir(dirname(thumbnailPath), { recursive: true });
+    await mkdir(dirname(thumbnailPath), {
+      recursive: true,
+      mode: storageDirectoryMode(thumbnailKey),
+    });
     if (
       input.mediaKind === "image" &&
       !ffmpegImageExtensions.has(input.extension.toLocaleLowerCase())
@@ -159,7 +163,10 @@ export async function createPreview(input: {
   const temporaryPath = `${previewPath}.partial-${randomUUID()}.jpg`;
   try {
     input.signal?.throwIfAborted();
-    await mkdir(dirname(previewPath), { recursive: true });
+    await mkdir(dirname(previewPath), {
+      recursive: true,
+      mode: storageDirectoryMode(previewKey),
+    });
     await sharp(input.sourcePath)
       .rotate()
       .jpeg({ quality: 88, mozjpeg: true })

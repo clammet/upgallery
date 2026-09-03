@@ -21,6 +21,7 @@ import {
 } from "./media.js";
 import {
   absoluteStoragePath,
+  storageDirectoryMode,
   userFilesystemStorageKey,
 } from "./paths.js";
 
@@ -130,7 +131,10 @@ async function syncUserDirectory(
         );
         const directoryPath = absoluteStoragePath(directoryKey);
         if (claim.folderSegments.length === 0) {
-          await mkdir(directoryPath, { recursive: true });
+          await mkdir(directoryPath, {
+            recursive: true,
+            mode: storageDirectoryMode(directoryKey),
+          });
         }
         const before = await stat(directoryPath);
         if (!before.isDirectory()) {
@@ -376,9 +380,10 @@ export async function executeFilesystemOperation(
       { operationId: claim.operationId },
     );
   }
-  await mkdir(dirname(destination), { recursive: true });
+  const directoryMode = storageDirectoryMode(destinationKey);
+  await mkdir(dirname(destination), { recursive: true, mode: directoryMode });
   if (claim.kind === "mkdir") {
-    await mkdir(destination).catch(async (error: unknown) => {
+    await mkdir(destination, { mode: directoryMode }).catch(async (error: unknown) => {
       if (!isAlreadyExists(error) || !(await stat(destination)).isDirectory()) {
         throw error;
       }
