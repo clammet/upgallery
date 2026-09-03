@@ -6,6 +6,9 @@ FROM ${NODE_ALPINE_IMAGE} AS libvips-build
 # what lets it bump the version and refresh VIPS_SHA256 in one PR.
 ARG VIPS_TAG=v8.18.6
 ARG VIPS_SHA256=3c41e1d5458081bfa4a5bc54e116c46259c75c6760a18027764555632b9dda3e
+# Cross-architecture builders can reduce compiler pressure without slowing
+# native CI builds, which keep Meson's automatic parallelism by default.
+ARG VIPS_BUILD_JOBS
 RUN apk add --no-cache \
   build-base \
   cairo-dev \
@@ -51,7 +54,11 @@ RUN meson setup /tmp/libvips-build "/tmp/vips-${VIPS_TAG#v}" \
   -Dexif=enabled \
   -Darchive=enabled \
   -Dhighway=enabled \
-  && meson compile -C /tmp/libvips-build \
+  && if [ -n "${VIPS_BUILD_JOBS}" ]; then \
+    meson compile -C /tmp/libvips-build --jobs "${VIPS_BUILD_JOBS}"; \
+  else \
+    meson compile -C /tmp/libvips-build; \
+  fi \
   && meson install -C /tmp/libvips-build
 RUN LD_LIBRARY_PATH=/opt/vips/lib /opt/vips/bin/vips --version \
   && LD_LIBRARY_PATH=/opt/vips/lib /opt/vips/bin/vips -l foreign \
