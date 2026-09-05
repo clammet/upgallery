@@ -708,7 +708,7 @@ export function GalleryPage(props: {
 
   const uploadDropped = useStableCallback(async (
     dropped: DroppedFile[],
-    openAfterPaste = false,
+    pastedUpload = false,
   ) => {
     if (!listing?.access.canUpload) return;
     const ensureFolder = async (
@@ -800,13 +800,15 @@ export function GalleryPage(props: {
           galleryId: props.gallery._id,
           folderId: targetFolderId,
           conflict:
-            policy ?? (batchChoice === "skip" ? undefined : batchChoice),
+            pastedUpload
+              ? "rename"
+              : policy ?? (batchChoice === "skip" ? undefined : batchChoice),
           onProgress: (fraction) =>
             reportTransferProgress(task.transferId, fraction),
         });
         renameTransfer(task.transferId, result.name);
         completeTransfer(task.transferId);
-        if (openAfterPaste && !openedPastedItem) {
+        if (pastedUpload && !openedPastedItem) {
           openedPastedItem = true;
           const url = new URL(
             `${pastedItemLocation.pathname}${pastedItemLocation.search}`,
@@ -897,8 +899,22 @@ export function GalleryPage(props: {
       );
       if (images.length > 0) {
         event.preventDefault();
+        const now = new Date();
+        const pad = (value: number) => String(value).padStart(2, "0");
+        const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
         void uploadDropped(
-          images.map((file) => ({ file, pathSegments: [] })),
+          images.map((file) => {
+            const extension =
+              /\.([a-z0-9]+)$/i.exec(file.name)?.[1] ??
+              file.type.slice("image/".length).split("+")[0];
+            return {
+              file: new File([file], `Clipboard-${timestamp}.${extension}`, {
+                type: file.type,
+                lastModified: file.lastModified,
+              }),
+              pathSegments: [],
+            };
+          }),
           true,
         );
       }
