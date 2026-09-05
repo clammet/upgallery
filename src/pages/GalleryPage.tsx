@@ -706,7 +706,10 @@ export function GalleryPage(props: {
     );
   };
 
-  const uploadDropped = async (dropped: DroppedFile[]) => {
+  const uploadDropped = useStableCallback(async (
+    dropped: DroppedFile[],
+    openAfterPaste = false,
+  ) => {
     if (!listing?.access.canUpload) return;
     const ensureFolder = async (
       parentId: Id<"folders">,
@@ -750,6 +753,16 @@ export function GalleryPage(props: {
       }
       return parentId;
     };
+    // Capture the destination before uploading so navigation during an upload
+    // cannot attach the new item to a different folder's URL.
+    const pastedItemLocation = galleryFolderLocation({
+      routeRoot: canonicalRouteRoot,
+      folderId: folderId === props.rootFolder._id ? null : folderId,
+      folderNames,
+      friendlyFolderUrls,
+      currentSearch: location.search,
+    });
+    let openedPastedItem = false;
     const tasks = dropped.map((item) => ({
       ...item,
       transferId: queueTransfer(item.file.name, "upload"),
@@ -793,6 +806,21 @@ export function GalleryPage(props: {
         });
         renameTransfer(task.transferId, result.name);
         completeTransfer(task.transferId);
+        if (openAfterPaste && !openedPastedItem) {
+          openedPastedItem = true;
+          const url = new URL(
+            `${pastedItemLocation.pathname}${pastedItemLocation.search}`,
+            canonicalOrigin,
+          );
+          url.searchParams.set("item", result.entryId);
+          // Clipboard denial must not turn a completed upload into a failure.
+          void copyTextToClipboard(url.toString()).catch(() => undefined);
+          if (url.origin !== window.location.origin) {
+            window.location.assign(url.toString());
+          } else {
+            void navigate({ pathname: url.pathname, search: url.search });
+          }
+        }
       } catch (reason) {
         if (isEntryExistsError(reason)) {
           if (policy === undefined && batchChoice === "skip") {
@@ -819,7 +847,7 @@ export function GalleryPage(props: {
     }
     await queue.drain();
     unregister();
-  };
+  });
 
   useEffect(() => {
     const canUpload = listing?.access.canUpload === true;
@@ -863,12 +891,16 @@ export function GalleryPage(props: {
         });
     };
     const onPaste = (event: ClipboardEvent) => {
+      if (!canUpload) return;
       const images = Array.from(event.clipboardData?.files ?? []).filter((file) =>
         file.type.startsWith("image/"),
       );
       if (images.length > 0) {
         event.preventDefault();
-        void uploadFiles(images);
+        void uploadDropped(
+          images.map((file) => ({ file, pathSegments: [] })),
+          true,
+        );
       }
     };
     window.addEventListener("dragover", onDragOver);
@@ -885,6 +917,7 @@ export function GalleryPage(props: {
     props.gallery.quickMove,
     folderId,
     selectMode,
+    uploadDropped,
   ]);
 
   useEffect(() => {
