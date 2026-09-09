@@ -1,0 +1,32 @@
+{
+  "workflow": "image-scan.yml",
+  "images": [
+    {
+      "ref": "ghcr.io/clammet/upgallery/storage:latest",
+      "scope": "storage",
+      "sarif": true,
+      "category": "trivy-image-storage"
+    },
+    {
+      "ref": "ghcr.io/clammet/upgallery/web:latest",
+      "scope": "web",
+      "sarif": true,
+      "category": "trivy-image-web"
+    },
+    {
+      "ref": "ghcr.io/clammet/upgallery/web-dist:latest",
+      "scope": "web-dist",
+      "sarif": true,
+      "category": "trivy-image-web-dist"
+    }
+  ],
+  "build_workflow": "docker.yml",
+  "filesystem": true,
+  "ci_workflow": "ci.yml",
+  "retry_workflows": [
+    "renovate.yml",
+    "image-scan.yml",
+    "ci.yml",
+    "docker.yml"
+  ]
+}

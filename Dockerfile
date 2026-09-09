@@ -101,6 +101,7 @@ RUN pnpm prune --prod \
   && node scripts/check-sharp-heic.mjs
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS web
+RUN apk upgrade --no-cache
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --chmod=755 deploy/render-config.sh /docker-entrypoint.d/40-render-config.sh
 COPY --from=web-build /app/dist /usr/share/nginx/html
@@ -115,6 +116,7 @@ FROM scratch AS web-dist
 COPY --from=web-build /app/dist /srv/www
 
 FROM ${NODE_ALPINE_IMAGE} AS storage-runtime
+RUN apk upgrade --no-cache
 WORKDIR /app
 # Dedicated fixed identity instead of the base image's `node` user (uid 1000):
 # deployments pre-chown their bind-mounted media roots to this UID/GID, and it
