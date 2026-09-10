@@ -20,8 +20,27 @@ permissions:
   contents: read
 
 jobs:
+  publication-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 42
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the current revision and its CI
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publication.py
+
   deploy:
-    if: github.ref == 'refs/heads/main'
+    needs: publication-ready
+    if: needs.publication-ready.outputs.ready == 'true' && (github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     environment:
       name: production
