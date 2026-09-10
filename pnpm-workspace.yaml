@@ -3,3 +3,7 @@ minimumReleaseAgeExclude:
 
 allowBuilds:
   esbuild: true
+
+# Security fix for request query parsing until the parents update their locks.
+overrides:
+  "qs@<6.16.0": "6.16.0"
