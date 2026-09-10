@@ -74,7 +74,7 @@ jobs:
             ghcr.io/${{ github.repository }}/storage:${{ github.sha }}
           cache-from: type=gha,scope=storage
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=storage,mode=max' || '' }}
-          no-cache-filters: storage-runtime
+          no-cache-filters: ${{ github.event_name != 'workflow_dispatch' && 'storage-runtime' || '' }}
 
       # The web image is deployment-agnostic: Convex and OAuth values are
       # injected at container startup as /config.json, not baked at build time.
