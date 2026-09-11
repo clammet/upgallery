@@ -97,7 +97,11 @@ RUN pnpm exec tsc -p storage/tsconfig.json
 # runtime image. The decode check proves pruning did not disturb the native
 # module or its link to the custom libvips build.
 FROM dependencies AS storage-dependencies
-RUN pnpm prune --prod \
+COPY scripts/storage-package.mjs ./scripts/storage-package.mjs
+# Frontend/Convex tooling can retain a TypeScript compiler even after --prod.
+# Prune against the storage service's actual dependency set instead.
+RUN node scripts/storage-package.mjs \
+  && pnpm prune --prod --config.confirmModulesPurge=false \
   && node scripts/check-sharp-heic.mjs
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS web
@@ -116,6 +120,10 @@ FROM scratch AS web-dist
 COPY --from=web-build /app/dist /srv/www
 
 FROM ${NODE_ALPINE_IMAGE} AS storage-runtime
+# Package managers are build tools; this runtime starts Node directly.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 RUN apk upgrade --no-cache
 WORKDIR /app
 # Dedicated fixed identity instead of the base image's `node` user (uid 1000):
@@ -164,7 +172,9 @@ FROM storage-runtime AS storage
 ARG GIT_COMMIT=
 ENV STORAGE_GIT_COMMIT=${GIT_COMMIT}
 RUN node scripts/check-sharp-heic.mjs --decode-smoke
+COPY scripts/check-storage-runtime.mjs ./scripts/check-storage-runtime.mjs
 USER storage
+RUN node scripts/check-storage-runtime.mjs
 EXPOSE 8787 8788
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "storage-dist/server.js"]
