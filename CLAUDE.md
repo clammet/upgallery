@@ -15,3 +15,5 @@ Convex agent skills for common tasks can be installed by running
 Do not try to fit legacy code. Refactor where needed.
 
 This project has 2 "modes": a "gallery" and a "uploader". "/up" refers to the uploader.
+
+When adding a new feature or editing how an existing feature works, please edit `docs/user.md`, the user-facing documentation to include the details in a very simple/basic easy to read way.

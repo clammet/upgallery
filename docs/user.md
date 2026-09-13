@@ -17,6 +17,7 @@ its scope.
 - [Single-file uploads](#submit-a-file-in-the-uploader)
 - [Clipboard file, image, and text uploads](#submit-a-file-in-the-uploader)
 - [File descriptions, passwords, and unlisted uploads](#submit-a-file-in-the-uploader)
+- [Upload expiry and automatic deletion](#set-uploader-expiry)
 - [Markdown rendering](#manage-your-own-uploads)
 - [Multiple-file and folder uploads](#contribute-files-to-a-gallery)
 - [Upload progress, retries, and filename conflicts](#contribute-files-to-a-gallery)
@@ -131,7 +132,8 @@ to you, the submission form appears above the file listing.
 
 1. Click **Choose a file, drop it here, or paste** to select a file, drag a file
    onto the page, or paste a copied file or image.
-2. Optionally fill in the settings below.
+2. Fill in any optional settings below. If **Expires in:** appears, choose how
+   long to keep the file before it is automatically deleted.
 3. Click **Submit** and keep the page open while it says **Uploading…**.
 4. When the upload succeeds, its viewer opens. Use **Copy link** to copy its
    viewer address.
@@ -142,9 +144,16 @@ files, only the first is selected. Folders cannot be uploaded here.
 | Setting | What it is for |
 | --- | --- |
 | **Description** | Adds explanatory text beneath the filename in the listing. |
+| **Expires in:** | Appears only when the owner has enabled expiry. Choose from the durations they allow; an expiry duration is required when this field is shown. |
 | **Password** | Requires a password to view or download the file. Leave it blank for no file password. |
 | **Unlisted** | Hides the file from other users' listings; it remains visible in yours. This controls listing visibility separately from password protection. |
 | **remove location data** | Appears when location data is detected in a selected image. Select it to remove that information from the uploaded image. |
+
+The expiry period starts when the upload completes. When it ends, the file
+disappears from the listing, its sharing and download links stop working, and
+the file and its previews are automatically deleted. This also applies to
+password-protected and unlisted files. There is no undo control. If **Expires
+in:** is hidden, new uploads have no automatic expiry.
 
 To upload clipboard text, paste onto the page while no input or description
 field is focused. The uploader creates a text file and shows a short preview.
@@ -239,6 +248,29 @@ On the owner page, find **Settings**, make your changes, then click
 | **Scoped custom CSS** | Allows owners familiar with CSS to customize styling beyond the color and layout controls. Scope selectors to the gallery's `[data-gallery="<slug>"]` container, replacing `<slug>` with its internal name. |
 
 Use the color pickers or enter six-digit hex colors, such as `#126b5a`.
+
+### Set uploader expiry
+
+For an **Uploader** (`/up`), open **Settings** on the owner page:
+
+1. Turn on **Enable expiry**. It is off by default.
+2. Under **Available expiry durations**, choose which options uploaders can use:
+   **1 day**, **3 days**, **1 week**, **3 weeks**, **1 month**, **3 months**, and
+   **1 year**. All seven start enabled. Leave at least one duration enabled.
+3. Click **Save settings**.
+
+The submission form now shows **Expires in:** with only the enabled durations.
+Every new upload must use one of those durations. Months and years use calendar
+dates; if the target month has no matching day, expiry falls on its last day.
+
+To stop requiring expiry for new uploads, turn off **Enable expiry** and click
+**Save settings**. This hides the duration controls and the submission form's
+**Expires in:** field. Your saved duration choices are remembered when you turn
+expiry back on, including any options you previously disabled.
+
+Changes apply to new uploads. Existing files keep their original expiry, so
+turning expiry off does not cancel scheduled deletions, and turning it on does
+not give older files an expiry date.
 
 ### Choose how an image gallery is browsed
 
@@ -405,3 +437,4 @@ There is no undo control.
 | A file cannot be previewed, or a text file is too large to preview | Use **Download** or **Open original** and open it with an appropriate application. |
 | An upload fails | Read the error beside the form or in transfer details. File type, size, and available storage limits can vary by site. Correct the reported problem and submit again, or use **Retry** if available. |
 | A temporary uploader file address stops working | Reopen the file from the uploader or its copied viewer link to obtain fresh access. Use **Copy link** for sharing. |
+| An uploader file has expired | Expired files are automatically deleted and their links stop working. Ask the uploader to submit the file again if it is still needed. |
