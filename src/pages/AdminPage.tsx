@@ -1,3 +1,4 @@
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, UPLOAD_EXPIRY_OPTIONS } from "../../convex/lib/uploadExpiry";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
@@ -719,6 +720,8 @@ function GallerySettingsForm(props: {
   const [initialTheme] = useState<GalleryTheme>(gallery.theme);
   const [initial, setInitial] = useState<SettingsSnapshot>(() => ({
     name: gallery.name,
+    expiryEnabled: gallery.expiryEnabled === true,
+    expiryOptions: gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS,
     maxFileSizeMib: mibValue(gallery.maxFileSize),
     maxFileSizeLimitMib: mibValue(
       gallery.maxFileSizeLimit ?? gallery.maxFileSize,
@@ -736,6 +739,8 @@ function GallerySettingsForm(props: {
       .join("\n"),
     themeJson: initialThemeJson(gallery.theme),
   }));
+  const [expiryEnabled, setExpiryEnabled] = useState(initial.expiryEnabled);
+  const [expiryOptions, setExpiryOptions] = useState(initial.expiryOptions);
   const [folderPreviewMode, setFolderPreviewMode] = useState(
     initial.folderPreviewMode,
   );
@@ -778,6 +783,8 @@ function GallerySettingsForm(props: {
     // back to the snapshot, which marks them unchanged.
     const current: SettingsSnapshot = {
       name: String(data.get("name")),
+      expiryEnabled,
+      expiryOptions,
       maxFileSizeMib: Number(data.get("maxFileSizeMib")),
       maxFileSizeLimitMib: props.isSystemAdmin
         ? Number(data.get("maxFileSizeLimitMib"))
@@ -936,6 +943,44 @@ function GallerySettingsForm(props: {
           </select>
         </label>
       ) : null}
+      {gallery.kind === "uploader" ? (
+        <div className={`${styles.spanTwo} ${styles.expirySettings}`}>
+          <label className={styles.expiryToggle}>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={expiryEnabled}
+              onChange={(event) => setExpiryEnabled(event.target.checked)}
+            />
+            Enable expiry
+          </label>
+          {expiryEnabled ? (
+            <fieldset className={styles.expiryOptions}>
+              <legend>Available expiry durations</legend>
+              {UPLOAD_EXPIRY_OPTIONS.map((option) => (
+                <label key={option.value} className={styles.expiryToggle}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={expiryOptions.includes(option.value)}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setExpiryOptions((current) => DEFAULT_UPLOAD_EXPIRY_OPTIONS.filter(
+                        (value) => value === option.value ? enabled : current.includes(value),
+                      ));
+                    }}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          <small>New uploads must choose a duration and are automatically deleted when it ends. Existing uploads keep their expiry.</small>
+          {expiryEnabled && expiryOptions.length === 0 ? (
+            <p className={layout.formError}>Enable at least one expiry duration.</p>
+          ) : null}
+        </div>
+      ) : null}
       <ThemeControls theme={initialTheme} />
       <label>Corner radius<input name="radius" type="number" min="0" max="40" defaultValue={initialTheme.radius ?? 4} /></label>
       {props.isSystemAdmin ? (
@@ -944,6 +989,7 @@ function GallerySettingsForm(props: {
       <label className={styles.spanTwo}>Scoped custom CSS<textarea name="customCss" rows={5} defaultValue={initialTheme.customCss ?? ""} /></label>
       <button
         className={settingsDirty ? styles.saveSettingsDirty : undefined}
+        disabled={expiryEnabled && expiryOptions.length === 0}
         type="submit"
       >
         Save settings

@@ -8,6 +8,7 @@ import {
   storageKind,
   systemGalleryRole,
   themeValidator,
+  uploadExpiry,
 } from "./lib/validators";
 import { formatBytes } from "./lib/format";
 import { createGalleryStats, readGalleryStats } from "./lib/galleryStats";
@@ -35,6 +36,8 @@ import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { queueFilesystemSyncJob } from "./storageJobs";
 import { scheduleSortTimestampBackfill } from "./entrySort";
 import { scheduleFolderPathKeyBackfill } from "./folderPathKeys";
+
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS } from "./lib/uploadExpiry";
 
 const hostInput = v.object({
   host: v.string(),
@@ -613,6 +616,8 @@ export const update = mutation({
     // Every setting is optional with patch semantics: omitted fields keep
     // their stored value. Clients send only what the user changed, so a
     // stale tab or an older build cannot reset settings it never touched.
+    expiryEnabled: v.optional(v.boolean()),
+    expiryOptions: v.optional(v.array(uploadExpiry)),
     name: v.optional(v.string()),
     maxFileSize: v.optional(v.number()),
     maxFileSizeLimit: v.optional(v.number()),
@@ -639,6 +644,19 @@ export const update = mutation({
         ? null
         : await ctx.db.get("folders", gallery.rootFolderId);
     const actor = await requireGalleryRole(ctx, gallery, rootFolder, "owner");
+    if (args.expiryEnabled !== undefined || args.expiryOptions !== undefined) {
+      if (gallery.kind !== "uploader") {
+        throw new Error("Expiry is only supported by uploader galleries");
+      }
+      const options = args.expiryOptions ?? gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS;
+      if (options.length !== new Set(options).size) {
+        throw new Error("Expiry options must be unique");
+      }
+      if ((args.expiryEnabled ?? gallery.expiryEnabled) && options.length === 0) {
+        throw new Error("Enable at least one expiry duration");
+      }
+    }
+
     if (args.theme !== undefined) {
       validateThumbnailFrameSize(args.theme);
     }
@@ -720,6 +738,8 @@ export const update = mutation({
       (args.maxFileSize !== undefined &&
         gallery.maxFileSizeLimit === undefined);
     await ctx.db.patch("galleries", gallery._id, {
+      ...(args.expiryEnabled === undefined ? {} : { expiryEnabled: args.expiryEnabled }),
+      ...(args.expiryOptions === undefined ? {} : { expiryOptions: args.expiryOptions }),
       ...(name === undefined ? {} : { name }),
       ...(args.maxFileSize === undefined
         ? {}

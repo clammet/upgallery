@@ -20,6 +20,7 @@ import {
   themeValidator,
   thumbnailState,
   uploadState,
+  uploadExpiry,
 } from "./lib/validators";
 
 export default defineSchema({
@@ -79,6 +80,9 @@ export default defineSchema({
     // Thumbnail ordering for image galleries. Legacy galleries default to
     // case-insensitive filename order (A-Z).
     sortOrder: v.optional(gallerySortOrder),
+    // Uploader expiry is off by default; absent options mean all durations.
+    expiryEnabled: v.optional(v.boolean()),
+    expiryOptions: v.optional(v.array(uploadExpiry)),
     theme: themeValidator,
     // Legacy counters. Live counts are in galleryStats (see
     // lib/galleryStats.ts); these only seed that row for galleries created
@@ -215,6 +219,7 @@ export default defineSchema({
     migrationAttempts: v.optional(v.number()),
     migrationRetryAt: v.optional(v.number()),
     migrationError: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
@@ -362,6 +367,8 @@ export default defineSchema({
     ownerProfileId: v.id("profiles"),
     name: v.string(),
     description: v.optional(v.string()),
+    // File lifetime, separate from the short-lived upload token expiresAt.
+    expiry: v.optional(uploadExpiry),
     declaredMimeType: v.string(),
     declaredSize: v.number(),
     removeLocationData: v.optional(v.boolean()),

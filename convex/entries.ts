@@ -44,6 +44,7 @@ import {
   readFolderStats,
 } from "./lib/folderStats";
 import {
+  uploadExpiry,
   conflictPolicy,
   disposition,
   gallerySortOrder,
@@ -55,6 +56,9 @@ import {
 } from "./lib/storageJobs";
 import { uploaderAttribution } from "./lib/profiles";
 import schema from "./schema";
+
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS } from "./lib/uploadExpiry";
+import { queueEntryDeletion } from "./lib/entryDeletion";
 
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_THUMBNAIL_TICKETS = 128;
@@ -548,10 +552,12 @@ export const createUploadIntent = mutation({
     password: v.optional(v.string()),
     removeLocationData: v.optional(v.boolean()),
     unlisted: v.optional(v.boolean()),
+    expiry: v.optional(uploadExpiry),
     // Required to proceed when the folder already holds this name; without
     // it the intent is refused with entry_exists so the client can ask.
     conflict: v.optional(conflictPolicy),
   },
+  returns: v.object({ intentId: v.id("uploadIntents"), token: v.string() }),
   handler: async (ctx, args) => {
     const { gallery, profile } = await assertCanUpload(
       ctx,
@@ -585,6 +591,15 @@ export const createUploadIntent = mutation({
         `Password must contain between 1 and ${MAX_PASSWORD_LENGTH} characters`,
       );
     }
+    const expiryEnabled = gallery.kind === "uploader" && gallery.expiryEnabled === true;
+    if (expiryEnabled) {
+      const options = gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS;
+      if (args.expiry === undefined || !options.includes(args.expiry)) {
+        throw new Error("Choose an enabled expiry duration");
+      }
+    } else if (args.expiry !== undefined) {
+      throw new Error("Expiry is not enabled for this gallery");
+    }
     const name = cleanFileName(args.name);
     // Early refusal so no bytes are sent for a name the user must decide on;
     // claimUpload repeats the check when the storage server starts.
@@ -610,6 +625,7 @@ export const createUploadIntent = mutation({
       declaredSize: args.size,
       removeLocationData: args.removeLocationData || undefined,
       unlisted: args.unlisted || undefined,
+      expiry: args.expiry,
       conflictPolicy: args.conflict,
       tokenHash: await sha256(token),
       passwordSalt: password?.salt,
@@ -1274,22 +1290,7 @@ export const remove = mutation({
         throw new Error("Incorrect password");
       }
     }
-    await ctx.db.patch("entries", entry._id, {
-      state: "deleted",
-      deletedAt: Date.now(),
-    });
-    await adjustGalleryStats(ctx, gallery, { items: -1, bytes: -entry.size });
-    await adjustFolderStats(ctx, entry, { items: -1, bytes: -entry.size });
-    await ctx.db.insert("storageDeleteJobs", {
-      entryId: entry._id,
-      storageKey: entry.storageKey,
-      thumbnailKey: entry.thumbnailKey,
-      previewKey: entry.previewKey,
-      deleteEntry: true,
-      status: "queued",
-      attempts: 0,
-      availableAt: 0,
-    });
+    await queueEntryDeletion(ctx, gallery, entry);
     return null;
   },
 });

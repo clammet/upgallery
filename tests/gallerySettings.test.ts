@@ -13,6 +13,9 @@ import { THEME_MODE_DEFAULTS } from "../src/lib/theme";
 function snapshot(): SettingsSnapshot {
   return {
     name: "Studio",
+    expiryEnabled: false,
+    expiryOptions: ["1day", "3days", "1week", "3weeks", "1month", "3months", "1year"],
+    folderPreviewRecursive: false,
     maxFileSizeMib: 100,
     maxFileSizeLimitMib: 200,
     folderPreviewMode: "first",
@@ -70,6 +73,15 @@ describe("gallery settings dirty-field detection", () => {
       name: "Renamed",
       quickMove: true,
     });
+  });
+
+  test("expiry changes preserve saved durations when switched off", () => {
+    const initial = { ...snapshot(), expiryEnabled: true, expiryOptions: ["3days", "1month"] as const };
+    const baseline = { ...initial, expiryOptions: [...initial.expiryOptions] };
+    const current = { ...baseline, expiryEnabled: false };
+    expect(diffGallerySettings(baseline, current, themeOf(current))).toEqual({ expiryEnabled: false });
+    const changed = { ...current, expiryOptions: ["1month"] as Array<"1month"> };
+    expect(diffGallerySettings(current, changed, themeOf(changed))).toEqual({ expiryOptions: ["1month"] });
   });
 
   test("custom folder preview settings are sent together", () => {

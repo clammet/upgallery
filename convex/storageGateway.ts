@@ -1,3 +1,5 @@
+import { internal } from "./_generated/api";
+import { uploadExpiresAt } from "./lib/uploadExpiry";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -204,6 +206,7 @@ export const completeUpload = internalMutation({
       existing ??= atPath;
     }
     const now = Date.now();
+    const expiresAt = intent.expiry === undefined ? undefined : uploadExpiresAt(now, intent.expiry);
     if (existing !== null) {
       const wasReady = existing.state === "ready";
       const contentChanged = existing.sha256 !== args.sha256;
@@ -252,6 +255,7 @@ export const completeUpload = internalMutation({
         passwordHash: intent.passwordHash,
         passwordIterations: intent.passwordIterations,
         unlisted: intent.unlisted,
+        expiresAt,
         state: "ready",
         deletedAt: undefined,
         updatedAt: now,
@@ -321,6 +325,9 @@ export const completeUpload = internalMutation({
         mediaKind: args.mediaKind,
         alreadyProcessed: thumbnailKey !== undefined,
       });
+      if (expiresAt !== undefined) {
+        await ctx.scheduler.runAt(expiresAt, internal.entryExpiry.expire, { entryId: existing._id, expiresAt });
+      }
       return { entryId: existing._id, name };
     }
     const entryId = await ctx.db.insert("entries", {
@@ -354,6 +361,7 @@ export const completeUpload = internalMutation({
       passwordHash: intent.passwordHash,
       passwordIterations: intent.passwordIterations,
       unlisted: intent.unlisted,
+      expiresAt,
       state: "ready",
       createdAt: now,
       updatedAt: now,
@@ -383,6 +391,9 @@ export const completeUpload = internalMutation({
       mediaKind: args.mediaKind,
       alreadyProcessed: args.thumbnailKey !== undefined,
     });
+    if (expiresAt !== undefined) {
+      await ctx.scheduler.runAt(expiresAt, internal.entryExpiry.expire, { entryId, expiresAt });
+    }
     return { entryId, name };
   },
 });
@@ -435,7 +446,7 @@ export const claimDownload = internalMutation({
       throw new Error("Download ticket is invalid or expired");
     }
     const entry = await ctx.db.get("entries", ticket.entryId);
-    if (entry === null || entry.state !== "ready") {
+    if (entry === null || entry.state !== "ready" || (entry.expiresAt !== undefined && entry.expiresAt <= Date.now())) {
       throw new Error("File not found");
     }
     const usesThumbnail = ticket.disposition === "thumbnail";

@@ -3,6 +3,7 @@
 // values against that snapshot and sends only the changed fields, so a
 // long-open tab cannot overwrite settings that were changed elsewhere.
 import { THEME_MODE_DEFAULTS, type ThemeMode } from "./theme";
+import type { UploadExpiry } from "../../convex/lib/uploadExpiry";
 import type { GallerySortOrder } from "./gallerySort";
 
 export type FolderPreviewMode =
@@ -46,6 +47,8 @@ export type ThemeFormValues = {
 
 export type SettingsSnapshot = {
   name: string;
+  expiryEnabled: boolean;
+  expiryOptions: UploadExpiry[];
   maxFileSizeMib: number;
   maxFileSizeLimitMib: number;
   folderPreviewMode: FolderPreviewMode;
@@ -62,6 +65,8 @@ export type SettingsSnapshot = {
 
 export type GallerySettingsUpdate = {
   name?: string;
+  expiryEnabled?: boolean;
+  expiryOptions?: UploadExpiry[];
   maxFileSize?: number;
   maxFileSizeLimit?: number;
   folderPreviewMode?: FolderPreviewMode;
@@ -142,6 +147,12 @@ export function diffGallerySettings(
   theme: GalleryTheme,
 ): GallerySettingsUpdate {
   return {
+    ...(current.expiryEnabled === initial.expiryEnabled
+      ? {}
+      : { expiryEnabled: current.expiryEnabled }),
+    ...(JSON.stringify(current.expiryOptions) === JSON.stringify(initial.expiryOptions)
+      ? {}
+      : { expiryOptions: current.expiryOptions }),
     ...(current.name === initial.name ? {} : { name: current.name }),
     ...(current.maxFileSizeMib === initial.maxFileSizeMib
       ? {}

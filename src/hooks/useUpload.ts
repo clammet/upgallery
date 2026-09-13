@@ -1,3 +1,4 @@
+import type { UploadExpiry } from "../../convex/lib/uploadExpiry";
 import { useCallback, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -15,6 +16,7 @@ export type UploadInput = {
   password?: string;
   removeLocationData?: boolean;
   unlisted?: boolean;
+  expiry?: UploadExpiry;
   /**
    * What to do when the folder already holds this name. Without it the
    * upload is refused with an entry_exists error before any bytes are sent.
@@ -50,6 +52,7 @@ export function useUploader() {
         password: input.password || undefined,
         removeLocationData: input.removeLocationData || undefined,
         unlisted: input.unlisted || undefined,
+        expiry: input.expiry,
         conflict: input.conflict,
       });
       const form = new FormData();

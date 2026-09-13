@@ -56,3 +56,8 @@
 .buildFooter a { color: inherit; }
 .deploymentMismatch { color: #b72d33; font-size: .8rem; margin: 0 0 .4rem; }
 .deploymentDown { color: #b72d33; }
+
+.expirySettings { display: grid; gap: .6rem; }
+.expirySettings .expiryToggle { align-items: center; display: flex; gap: .5rem; }
+.expiryToggle input { width: auto; }
+.expiryOptions { border: 1px solid var(--border); border-radius: var(--gallery-radius); display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; margin: 0; padding: .75rem; }

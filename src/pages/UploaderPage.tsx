@@ -1,3 +1,4 @@
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, UPLOAD_EXPIRY_OPTIONS, type UploadExpiry } from "../../convex/lib/uploadExpiry";
 import {
   useCallback,
   useEffect,
@@ -74,6 +75,16 @@ export function UploaderPage(props: {
   const [password, setPassword] = useState("");
   const [removeLocationData, setRemoveLocationData] = useState(false);
   const [unlisted, setUnlisted] = useState(false);
+  const [expiry, setExpiry] = useState<UploadExpiry | "">("");
+  const expiryEnabled = props.gallery.expiryEnabled === true;
+  const expiryOptions = UPLOAD_EXPIRY_OPTIONS.filter((option) =>
+    (props.gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS).includes(option.value),
+  );
+  // Reconcile a selection immediately if the owner changes the available choices.
+  const selectedExpiry = expiryEnabled
+    ? expiryOptions.find((option) => option.value === expiry)?.value ?? expiryOptions[0]?.value
+    : undefined;
+
   const [locationCheck, setLocationCheck] = useState<
     "idle" | "checking" | "found" | "not-found"
   >("idle");
@@ -400,6 +411,7 @@ export function UploaderPage(props: {
               password,
               removeLocationData,
               unlisted,
+              expiry: selectedExpiry,
             }).then((result) => {
               setFile(null);
               setDescription("");
@@ -453,6 +465,21 @@ export function UploaderPage(props: {
             </>
           ) : null}
           <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></label>
+          {expiryEnabled ? (
+            <label>Expires in:
+              <select
+                value={selectedExpiry ?? ""}
+                required
+                disabled={uploading}
+                onChange={(event) => setExpiry(event.target.value as UploadExpiry)}
+              >
+                {expiryOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <small>The file will be automatically deleted after this time.</small>
+            </label>
+          ) : null}
           <label>Password <small>(optional)</small><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
           <label className={styles.checkboxLabel}>
             <input
@@ -484,7 +511,7 @@ export function UploaderPage(props: {
           {error ?? dropError ? (
             <p className={layout.formError}>{error ?? dropError}</p>
           ) : null}
-          <button type="submit" disabled={!file || uploading}>
+          <button type="submit" disabled={!file || uploading || (expiryEnabled && selectedExpiry === undefined)}>
             {uploading ? "Uploading…" : "Submit"}
           </button>
         </form>

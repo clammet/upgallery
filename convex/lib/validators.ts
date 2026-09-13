@@ -124,3 +124,13 @@ export const entryMoveJobState = v.union(jobState, v.literal("conflict"));
 
 // A bulk operation whose remaining items all wait on a conflict policy.
 export const bulkOperationStatus = v.union(jobState, v.literal("conflict"));
+
+export const uploadExpiry = v.union(
+  v.literal("1day"),
+  v.literal("3days"),
+  v.literal("1week"),
+  v.literal("3weeks"),
+  v.literal("1month"),
+  v.literal("3months"),
+  v.literal("1year"),
+);
