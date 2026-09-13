@@ -246,8 +246,8 @@ importers:
         specifier: 10.0.5
         version: 10.0.5
       convex-test:
-        specifier: 0.0.56
-        version: 0.0.56(convex@1.45.0(react@19.2.8))
+        specifier: 0.0.57
+        version: 0.0.57(convex@1.45.0(react@19.2.8))
       node-addon-api:
         specifier: 8.9.2
         version: 8.9.2
@@ -1278,8 +1278,8 @@ packages:
       zod:
         optional: true
 
-  convex-test@0.0.56:
-    resolution: {integrity: sha512-dLYXlQjKFoGqvjAmPzyLgb2HsYI7iLo1iuNTU2DZmSrMRLWosYk94erjSU67GG5ovfP6+MjX8RJO+ebhmL6QYA==}
+  convex-test@0.0.57:
+    resolution: {integrity: sha512-yedyPgFld7RYVXjozRB4WOVStsXrYuln4JfeZJTVbRNw9SjulK3w2Y7sta7Au/e//nZzzqj3a5T+eaIuWu2sAw==}
     peerDependencies:
       convex: ^1.43.0
 
@@ -2968,7 +2968,7 @@ snapshots:
       react: 19.2.8
       typescript: 7.0.2
 
-  convex-test@0.0.56(convex@1.45.0(react@19.2.8)):
+  convex-test@0.0.57(convex@1.45.0(react@19.2.8)):
     dependencies:
       convex: 1.45.0(react@19.2.8)
 
