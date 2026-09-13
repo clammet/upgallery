@@ -1,4 +1,4 @@
-import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, UPLOAD_EXPIRY_OPTIONS } from "../../convex/lib/uploadExpiry";
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, UPLOAD_EXPIRY_OPTIONS, enabledUploadExpiryOptions } from "../../convex/lib/uploadExpiry";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
@@ -721,7 +721,7 @@ function GallerySettingsForm(props: {
   const [initial, setInitial] = useState<SettingsSnapshot>(() => ({
     name: gallery.name,
     expiryEnabled: gallery.expiryEnabled === true,
-    expiryOptions: gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS,
+    expiryOptions: enabledUploadExpiryOptions(gallery),
     maxFileSizeMib: mibValue(gallery.maxFileSize),
     maxFileSizeLimitMib: mibValue(
       gallery.maxFileSizeLimit ?? gallery.maxFileSize,
@@ -956,7 +956,7 @@ function GallerySettingsForm(props: {
           </label>
           {expiryEnabled ? (
             <fieldset className={styles.expiryOptions}>
-              <legend>Available expiry durations</legend>
+              <legend>Available expiry options</legend>
               {UPLOAD_EXPIRY_OPTIONS.map((option) => (
                 <label key={option.value} className={styles.expiryToggle}>
                   <input
@@ -975,9 +975,9 @@ function GallerySettingsForm(props: {
               ))}
             </fieldset>
           ) : null}
-          <small>New uploads must choose a duration and are automatically deleted when it ends. Existing uploads keep their expiry.</small>
+          <small>New uploads use the selected expiry option. Never keeps a file without automatic deletion. Existing uploads keep their expiry.</small>
           {expiryEnabled && expiryOptions.length === 0 ? (
-            <p className={layout.formError}>Enable at least one expiry duration.</p>
+            <p className={layout.formError}>Enable at least one expiry option.</p>
           ) : null}
         </div>
       ) : null}

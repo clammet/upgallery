@@ -126,6 +126,7 @@ export const entryMoveJobState = v.union(jobState, v.literal("conflict"));
 export const bulkOperationStatus = v.union(jobState, v.literal("conflict"));
 
 export const uploadExpiry = v.union(
+  v.literal("never"),
   v.literal("1day"),
   v.literal("3days"),
   v.literal("1week"),

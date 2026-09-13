@@ -133,7 +133,7 @@ to you, the submission form appears above the file listing.
 1. Click **Choose a file, drop it here, or paste** to select a file, drag a file
    onto the page, or paste a copied file or image.
 2. Fill in any optional settings below. If **Expires in:** appears, choose how
-   long to keep the file before it is automatically deleted.
+   long to keep the file, or choose **Never** when available.
 3. Click **Submit** and keep the page open while it says **Uploading…**.
 4. When the upload succeeds, its viewer opens. Use **Copy link** to copy its
    viewer address.
@@ -144,16 +144,16 @@ files, only the first is selected. Folders cannot be uploaded here.
 | Setting | What it is for |
 | --- | --- |
 | **Description** | Adds explanatory text beneath the filename in the listing. |
-| **Expires in:** | Appears only when the owner has enabled expiry. Choose from the durations they allow; an expiry duration is required when this field is shown. |
+| **Expires in:** | Appears only when the owner has enabled expiry. Choose from the options they allow. **Never** is selected by default when available and keeps the file without automatic expiry. |
 | **Password** | Requires a password to view or download the file. Leave it blank for no file password. |
 | **Unlisted** | Hides the file from other users' listings; it remains visible in yours. This controls listing visibility separately from password protection. |
 | **remove location data** | Appears when location data is detected in a selected image. Select it to remove that information from the uploaded image. |
 
-The expiry period starts when the upload completes. When it ends, the file
-disappears from the listing, its sharing and download links stop working, and
+For a timed expiry, the period starts when the upload completes. When it ends,
+the file disappears from the listing, its sharing and download links stop working, and
 the file and its previews are automatically deleted. This also applies to
 password-protected and unlisted files. There is no undo control. If **Expires
-in:** is hidden, new uploads have no automatic expiry.
+in:** is hidden or you choose **Never**, new uploads have no automatic expiry.
 
 To upload clipboard text, paste onto the page while no input or description
 field is focused. The uploader creates a text file and shows a short preview.
@@ -254,19 +254,22 @@ Use the color pickers or enter six-digit hex colors, such as `#126b5a`.
 For an **Uploader** (`/up`), open **Settings** on the owner page:
 
 1. Turn on **Enable expiry**. It is off by default.
-2. Under **Available expiry durations**, choose which options uploaders can use:
-   **1 day**, **3 days**, **1 week**, **3 weeks**, **1 month**, **3 months**, and
-   **1 year**. All seven start enabled. Leave at least one duration enabled.
+2. Under **Available expiry options**, choose which options uploaders can use:
+   **Never**, **1 day**, **3 days**, **1 week**, **3 weeks**, **1 month**,
+   **3 months**, and **1 year**. All eight start enabled. Leave at least one option enabled.
 3. Click **Save settings**.
 
-The submission form now shows **Expires in:** with only the enabled durations.
-Every new upload must use one of those durations. Months and years use calendar
-dates; if the target month has no matching day, expiry falls on its last day.
+The submission form now shows **Expires in:** with only the enabled options.
+**Never** appears first and is selected by default when enabled. It is also
+enabled by default for uploaders with previously saved duration choices, unless
+you have explicitly disabled it. To require every new upload to expire, turn
+**Never** off and keep at least one timed option enabled. Months and years use
+calendar dates; if the target month has no matching day, expiry falls on its last day.
 
-To stop requiring expiry for new uploads, turn off **Enable expiry** and click
-**Save settings**. This hides the duration controls and the submission form's
-**Expires in:** field. Your saved duration choices are remembered when you turn
-expiry back on, including any options you previously disabled.
+To hide expiry choices for new uploads, turn off **Enable expiry** and click
+**Save settings**. This hides the expiry option controls and the submission form's
+**Expires in:** field. Your saved choices, including **Never**, are remembered
+when you turn expiry back on, including any options you previously disabled.
 
 Changes apply to new uploads. Existing files keep their original expiry, so
 turning expiry off does not cancel scheduled deletions, and turning it on does

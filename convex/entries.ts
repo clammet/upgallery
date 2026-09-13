@@ -57,7 +57,7 @@ import {
 import { uploaderAttribution } from "./lib/profiles";
 import schema from "./schema";
 
-import { DEFAULT_UPLOAD_EXPIRY_OPTIONS } from "./lib/uploadExpiry";
+import { enabledUploadExpiryOptions } from "./lib/uploadExpiry";
 import { queueEntryDeletion } from "./lib/entryDeletion";
 
 const MAX_PASSWORD_LENGTH = 256;
@@ -593,9 +593,9 @@ export const createUploadIntent = mutation({
     }
     const expiryEnabled = gallery.kind === "uploader" && gallery.expiryEnabled === true;
     if (expiryEnabled) {
-      const options = gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS;
+      const options = enabledUploadExpiryOptions(gallery);
       if (args.expiry === undefined || !options.includes(args.expiry)) {
-        throw new Error("Choose an enabled expiry duration");
+        throw new Error("Choose an enabled expiry option");
       }
     } else if (args.expiry !== undefined) {
       throw new Error("Expiry is not enabled for this gallery");

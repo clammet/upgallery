@@ -4,7 +4,7 @@ import authComponent from "@clammet/convex-googly-auth/test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
-import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, uploadExpiresAt, type UploadExpiry } from "./lib/uploadExpiry";
+import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, enabledUploadExpiryOptions, uploadExpiresAt, type UploadExpiry } from "./lib/uploadExpiry";
 
 const modules = import.meta.glob("./**/*.ts");
 const DAY = 24 * 60 * 60 * 1000;
@@ -70,6 +70,41 @@ describe("uploader expiry", () => {
     expect((await t.run((ctx) => ctx.db.get("entries", expiring.entryId)))!.expiresAt).toBe(Date.now() + 3 * DAY);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await t.run((ctx) => ctx.db.get("entries", permanent.entryId)))!.state).toBe("ready");
+  });
+
+  test("Never is enabled for older saved options until explicitly disabled, and that preference survives off/on", async () => {
+    const { t, owner, galleryId, input } = await setup();
+    // A duration list saved before Never was introduced must retain its choices.
+    await t.run((ctx) => ctx.db.patch("galleries", galleryId, {
+      expiryEnabled: true, expiryOptions: ["3days", "1month"],
+    }));
+    let gallery = await t.run((ctx) => ctx.db.get("galleries", galleryId));
+    expect(enabledUploadExpiryOptions(gallery!)).toEqual(["never", "3days", "1month"]);
+    await expect(owner.mutation(api.entries.createUploadIntent, { ...input, expiry: "never" })).resolves.toHaveProperty("intentId");
+    await owner.mutation(api.galleries.update, { galleryId, expiryOptions: ["3days"] });
+    await owner.mutation(api.galleries.update, { galleryId, expiryEnabled: false });
+    await owner.mutation(api.galleries.update, { galleryId, expiryEnabled: true });
+    gallery = await t.run((ctx) => ctx.db.get("galleries", galleryId));
+    expect(enabledUploadExpiryOptions(gallery!)).toEqual(["3days"]);
+    await expect(owner.mutation(api.entries.createUploadIntent, { ...input, expiry: "never" })).rejects.toThrow("Choose an enabled");
+    await owner.mutation(api.galleries.update, { galleryId, expiryOptions: ["3days", "never"] });
+    gallery = await t.run((ctx) => ctx.db.get("galleries", galleryId));
+    expect(enabledUploadExpiryOptions(gallery!)).toEqual(["never", "3days"]);
+  });
+
+  test("Never uploads have no expiry or scheduled deletion, including when it is the only option", async () => {
+    const { t, owner, galleryId, upload, input } = await setup();
+    await owner.mutation(api.galleries.update, { galleryId, expiryEnabled: true, expiryOptions: ["never"] });
+    const { entryId } = await upload("never");
+    expect(uploadExpiresAt(Date.now(), "never")).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get("entries", entryId)))!.expiresAt).toBeUndefined();
+    expect(await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(10))).toHaveLength(0);
+    vi.advanceTimersByTime(366 * DAY);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run((ctx) => ctx.db.get("entries", entryId)))!.state).toBe("ready");
+    const { token } = await owner.mutation(api.entries.createDownloadTicket, { galleryId, entryId, disposition: "attachment" });
+    await expect(t.mutation(internal.storageGateway.claimDownload, { token })).resolves.toHaveProperty("entryId", entryId);
+    await expect(owner.mutation(api.entries.createUploadIntent, { ...input, expiry: "1day" })).rejects.toThrow("Choose an enabled");
   });
 
   test("image galleries reject expiry settings and upload durations", async () => {

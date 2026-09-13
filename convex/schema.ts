@@ -82,6 +82,8 @@ export default defineSchema({
     sortOrder: v.optional(gallerySortOrder),
     // Uploader expiry is off by default; absent options mean all durations.
     expiryEnabled: v.optional(v.boolean()),
+    // Missing means Never is enabled, including on older saved option lists.
+    expiryNeverEnabled: v.optional(v.boolean()),
     expiryOptions: v.optional(v.array(uploadExpiry)),
     theme: themeValidator,
     // Legacy counters. Live counts are in galleryStats (see

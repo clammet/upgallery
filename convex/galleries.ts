@@ -37,7 +37,7 @@ import { queueFilesystemSyncJob } from "./storageJobs";
 import { scheduleSortTimestampBackfill } from "./entrySort";
 import { scheduleFolderPathKeyBackfill } from "./folderPathKeys";
 
-import { DEFAULT_UPLOAD_EXPIRY_OPTIONS } from "./lib/uploadExpiry";
+import { enabledUploadExpiryOptions } from "./lib/uploadExpiry";
 
 const hostInput = v.object({
   host: v.string(),
@@ -648,12 +648,12 @@ export const update = mutation({
       if (gallery.kind !== "uploader") {
         throw new Error("Expiry is only supported by uploader galleries");
       }
-      const options = args.expiryOptions ?? gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS;
+      const options = args.expiryOptions ?? enabledUploadExpiryOptions(gallery);
       if (options.length !== new Set(options).size) {
         throw new Error("Expiry options must be unique");
       }
       if ((args.expiryEnabled ?? gallery.expiryEnabled) && options.length === 0) {
-        throw new Error("Enable at least one expiry duration");
+        throw new Error("Enable at least one expiry option");
       }
     }
 
@@ -739,7 +739,10 @@ export const update = mutation({
         gallery.maxFileSizeLimit === undefined);
     await ctx.db.patch("galleries", gallery._id, {
       ...(args.expiryEnabled === undefined ? {} : { expiryEnabled: args.expiryEnabled }),
-      ...(args.expiryOptions === undefined ? {} : { expiryOptions: args.expiryOptions }),
+      ...(args.expiryOptions === undefined ? {} : {
+        expiryOptions: args.expiryOptions,
+        expiryNeverEnabled: args.expiryOptions.includes("never"),
+      }),
       ...(name === undefined ? {} : { name }),
       ...(args.maxFileSize === undefined
         ? {}

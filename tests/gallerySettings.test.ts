@@ -14,7 +14,7 @@ function snapshot(): SettingsSnapshot {
   return {
     name: "Studio",
     expiryEnabled: false,
-    expiryOptions: ["1day", "3days", "1week", "3weeks", "1month", "3months", "1year"],
+    expiryOptions: ["never", "1day", "3days", "1week", "3weeks", "1month", "3months", "1year"],
     folderPreviewRecursive: false,
     maxFileSizeMib: 100,
     maxFileSizeLimitMib: 200,

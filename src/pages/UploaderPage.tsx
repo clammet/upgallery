@@ -1,4 +1,4 @@
-import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, UPLOAD_EXPIRY_OPTIONS, type UploadExpiry } from "../../convex/lib/uploadExpiry";
+import { enabledUploadExpiryOptions, UPLOAD_EXPIRY_OPTIONS, type UploadExpiry } from "../../convex/lib/uploadExpiry";
 import {
   useCallback,
   useEffect,
@@ -78,7 +78,7 @@ export function UploaderPage(props: {
   const [expiry, setExpiry] = useState<UploadExpiry | "">("");
   const expiryEnabled = props.gallery.expiryEnabled === true;
   const expiryOptions = UPLOAD_EXPIRY_OPTIONS.filter((option) =>
-    (props.gallery.expiryOptions ?? DEFAULT_UPLOAD_EXPIRY_OPTIONS).includes(option.value),
+    enabledUploadExpiryOptions(props.gallery).includes(option.value),
   );
   // Reconcile a selection immediately if the owner changes the available choices.
   const selectedExpiry = expiryEnabled
@@ -418,6 +418,7 @@ export function UploaderPage(props: {
               setPassword("");
               setRemoveLocationData(false);
               setUnlisted(false);
+              setExpiry("");
               setTextPreview(null);
               setViewerEntry(result.entryId, false);
             }).catch(() => undefined);
@@ -477,7 +478,9 @@ export function UploaderPage(props: {
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
-              <small>The file will be automatically deleted after this time.</small>
+              <small>{selectedExpiry === "never"
+                ? "The file will not expire automatically."
+                : "The file will be automatically deleted after this time."}</small>
             </label>
           ) : null}
           <label>Password <small>(optional)</small><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
