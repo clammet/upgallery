@@ -35,10 +35,10 @@
     "express": "5.2.1",
     "helmet": "8.3.0",
     "highlight.js": "11.12.0",
-    "lucide-react": "1.43.0",
+    "lucide-react": "1.45.0",
     "mime-types": "3.0.2",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
     "react-router-dom": "7.18.3",
     "sharp": "0.35.4"
@@ -49,23 +49,23 @@
     "@types/express": "5.0.6",
     "@types/mime-types": "3.0.1",
     "@types/node": "26.5.1",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/supertest": "7.2.1",
     "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
-    "convex-test": "0.0.56",
+    "convex-test": "0.0.58",
     "node-addon-api": "8.9.2",
     "node-gyp": "13.0.2",
     "supertest": "7.2.2",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
+    "vite": "8.3.0",
     "vite-plugin-checker": "0.14.5",
     "vitest": "5.0.0"
   },
   "engines": {
     "node": "26.8.2"
   },
-  "packageManager": "pnpm@12.4.0"
+  "packageManager": "pnpm@12.4.1"
 }
