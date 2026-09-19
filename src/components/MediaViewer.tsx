@@ -267,11 +267,17 @@ export function mediaViewerNavigationState(
   totalItemCount?: number,
   hasMoreItems = false,
   canMoveNextBeyondItems = false,
+  canMovePreviousBeyondItems = false,
+  hasPreviousItems = false,
 ) {
   return {
-    position: activeIndex + 1,
+    position:
+      hasPreviousItems && totalItemCount !== undefined
+        ? totalItemCount - loadedItemCount + activeIndex + 1
+        : activeIndex + 1,
     total: Math.max(loadedItemCount, totalItemCount ?? 0),
-    canMovePrevious: activeIndex > 0,
+    canMovePrevious:
+      activeIndex > 0 || canMovePreviousBeyondItems || hasPreviousItems,
     canMoveNext:
       activeIndex < loadedItemCount - 1 ||
       hasMoreItems ||
@@ -307,6 +313,9 @@ export function MediaViewer(props: {
   // can continue navigation in another collection (for example, a sibling
   // gallery folder).
   onMoveNextBeyondItems?: () => void;
+  onMovePreviousBeyondItems?: () => void;
+  hasPreviousItems?: boolean;
+  onLoadPreviousItems?: () => void;
   themeMode: ThemeMode;
   // Lets image zoom go past the natural size (up to OVERZOOM_MAX_SCALE).
   overzoom?: boolean;
@@ -350,12 +359,26 @@ export function MediaViewer(props: {
   // arrow keys belong to that dialog rather than to the viewer.
   shortcutsSuspended?: boolean;
 }) {
-  const [index, setIndex] = useState(() =>
-    Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
+  const requestedItemId =
+    props.items[Math.min(Math.max(props.initialIndex, 0), props.items.length - 1)]
+      ?.id;
+  // Track identity, so prepending a reverse page cannot flash another image.
+  const [selection, setSelection] = useState({
+    id: requestedItemId,
+    requestedId: requestedItemId,
+  });
+  if (selection.requestedId !== requestedItemId) {
+    setSelection({ id: requestedItemId, requestedId: requestedItemId });
+  }
+  const index = Math.max(
+    0,
+    props.items.findIndex((item) => item.id === selection.id),
   );
-  const [pendingNextFromId, setPendingNextFromId] = useState<string | null>(
-    null,
-  );
+  const [pendingMove, setPendingMove] = useState<{
+    fromId: string;
+    direction: -1 | 1;
+  } | null>(null);
+
   const activeItem = props.items[index];
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -469,41 +492,53 @@ export function MediaViewer(props: {
 
   const moveBy = useCallback(
     (direction: -1 | 1) => {
-      if (direction === 1 && index === props.items.length - 1) {
-        if (
-          props.hasMoreItems === true &&
-          props.onLoadMoreItems !== undefined
-        ) {
-          if (activeItem !== undefined && pendingNextFromId === null) {
-            setPendingNextFromId(activeItem.id);
-            props.onLoadMoreItems();
-          }
-          return;
-        }
-        props.onMoveNextBeyondItems?.();
+      const atEdge =
+        direction === 1 ? index === props.items.length - 1 : index === 0;
+      // Server-confirmed folder boundaries take precedence over page state.
+      const moveBeyond =
+        direction === 1
+          ? props.onMoveNextBeyondItems
+          : props.onMovePreviousBeyondItems;
+      if (atEdge && moveBeyond !== undefined) {
+        setPendingMove(null);
+        moveBeyond();
         return;
       }
-      if (direction === -1 && pendingNextFromId !== null) {
-        setPendingNextFromId(null);
+      const hasMore =
+        direction === 1 ? props.hasMoreItems : props.hasPreviousItems;
+      const loadMore =
+        direction === 1 ? props.onLoadMoreItems : props.onLoadPreviousItems;
+      if (atEdge && hasMore && loadMore !== undefined) {
+        if (activeItem !== undefined && pendingMove === null) {
+          setPendingMove({ fromId: activeItem.id, direction });
+          loadMore();
+        }
+        return;
       }
+      setPendingMove(null);
       const nextIndex = Math.min(
         Math.max(index + direction, 0),
         props.items.length - 1,
       );
       if (nextIndex === index) return;
-      setIndex(nextIndex);
       const nextItem = props.items[nextIndex];
-      if (nextItem !== undefined) props.onActiveItemChange?.(nextItem);
+      if (nextItem !== undefined) {
+        setSelection((current) => ({ ...current, id: nextItem.id }));
+        props.onActiveItemChange?.(nextItem);
+      }
     },
     [
       activeItem,
       index,
-      pendingNextFromId,
+      pendingMove,
       props.hasMoreItems,
       props.items,
       props.onActiveItemChange,
       props.onLoadMoreItems,
       props.onMoveNextBeyondItems,
+      props.onMovePreviousBeyondItems,
+      props.hasPreviousItems,
+      props.onLoadPreviousItems,
     ],
   );
 
@@ -553,36 +588,37 @@ export function MediaViewer(props: {
   }, [activeItem?.mediaKind, fitScale, naturalSize]);
 
   useEffect(() => {
-    setIndex(
-      Math.min(Math.max(props.initialIndex, 0), props.items.length - 1),
-    );
-  }, [props.initialIndex, props.items.length]);
-
-  useEffect(() => {
-    if (pendingNextFromId === null) return;
+    if (pendingMove === null) return;
     const previousIndex = props.items.findIndex(
-      (item) => item.id === pendingNextFromId,
+      (item) => item.id === pendingMove.fromId,
     );
-    const nextItem = props.items[previousIndex + 1];
+    const nextIndex = previousIndex + pendingMove.direction;
+    const nextItem = props.items[nextIndex];
     if (previousIndex >= 0 && nextItem !== undefined) {
-      setPendingNextFromId(null);
-      setIndex(previousIndex + 1);
+      setPendingMove(null);
+      setSelection((current) => ({ ...current, id: nextItem.id }));
       props.onActiveItemChange?.(nextItem);
       return;
     }
-    if (props.hasMoreItems !== true) {
-      setPendingNextFromId(null);
+    const hasMore =
+      pendingMove.direction === 1 ? props.hasMoreItems : props.hasPreviousItems;
+    if (!hasMore) {
+      setPendingMove(null);
       return;
     }
-    // A lightbox URL may point beyond the thumbnail pages loaded so far. Keep
-    // paging until that item's successor is present or the folder is exhausted.
-    props.onLoadMoreItems?.();
+    const loadMore =
+      pendingMove.direction === 1
+        ? props.onLoadMoreItems
+        : props.onLoadPreviousItems;
+    loadMore?.();
   }, [
-    pendingNextFromId,
+    pendingMove,
     props.hasMoreItems,
+    props.hasPreviousItems,
     props.items,
     props.onActiveItemChange,
     props.onLoadMoreItems,
+    props.onLoadPreviousItems,
   ]);
 
   useEffect(() => {
@@ -590,7 +626,6 @@ export function MediaViewer(props: {
       props.onClose();
       return;
     }
-    setIndex((current) => Math.min(current, props.items.length - 1));
   }, [props.items.length, props.onClose]);
 
   useEffect(() => {
@@ -966,6 +1001,8 @@ export function MediaViewer(props: {
     props.totalItems,
     props.hasMoreItems,
     props.onMoveNextBeyondItems !== undefined,
+    props.onMovePreviousBeyondItems !== undefined,
+    props.hasPreviousItems,
   );
   const canRenameActive =
     props.onTitleChange !== undefined && activeItem.canRename !== false;
@@ -1510,6 +1547,7 @@ export function MediaViewer(props: {
               <img
                 className={`${styles.zoomMedia} ${naturalSize === null ? styles.mediaLoading : ""}`}
                 src={sourceUrl}
+                fetchPriority="high"
                 alt={activeItem.title}
                 draggable={false}
                 style={mediaStyle}
@@ -1644,7 +1682,7 @@ export function MediaViewer(props: {
               }`}
               type="button"
               onClick={() => moveBy(-1)}
-              disabled={!navigation.canMovePrevious}
+              disabled={!navigation.canMovePrevious || pendingMove !== null}
               aria-label="Previous item"
               title="Previous"
             >
@@ -1657,7 +1695,7 @@ export function MediaViewer(props: {
               type="button"
               onClick={() => moveBy(1)}
               disabled={
-                !navigation.canMoveNext || pendingNextFromId !== null
+                !navigation.canMoveNext || pendingMove !== null
               }
               aria-label="Next item"
               title="Next"

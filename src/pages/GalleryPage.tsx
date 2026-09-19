@@ -82,7 +82,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
-import { copyTextToClipboard } from "../lib/clipboard";
+import { clipboardImageFile, copyTextToClipboard } from "../lib/clipboard";
 import {
   galleryFolderHref,
   galleryFolderLocation,
@@ -259,20 +259,32 @@ export function GalleryPage(props: {
   >([]);
   const effectiveSortOrder =
     listing?.folder.sortOrder ?? props.gallery.sortOrder ?? "nameAsc";
+  // Enter previous folders from their end, loading preceding pages on demand.
+  const [reverseViewerFolder, setReverseViewerFolder] = useState<string | null>(
+    null,
+  );
+  const reverseViewer =
+    viewerEntryId !== null && reverseViewerFolder === folderId;
+  useEffect(() => {
+    if (viewerEntryId === null) setReverseViewerFolder(null);
+  }, [viewerEntryId]);
   const entryPageArgs = {
     anonymousClaim: anonymousClaim(),
     galleryId: props.gallery._id,
     folderId,
     sortOrder: effectiveSortOrder,
+    reverse: reverseViewer,
   };
   const entryPages = usePaginatedQuery(
     api.entries.listGalleryPage,
-    infiniteScroll && !resolvingPath && !invalidPath ? entryPageArgs : "skip",
+    (infiniteScroll || reverseViewer) && !resolvingPath && !invalidPath
+      ? entryPageArgs
+      : "skip",
     { initialNumItems: pageSize },
   );
   const pagedEntries = useQuery(
     api.entries.listGalleryPage,
-    !resolvingPath && !invalidPath && !infiniteScroll
+    !resolvingPath && !invalidPath && !infiniteScroll && !reverseViewer
       ? {
           ...entryPageArgs,
           paginationOpts: {
@@ -295,9 +307,11 @@ export function GalleryPage(props: {
           folderId,
         },
   );
-  const entries = (infiniteScroll
-    ? entryPages.results
-    : (pagedEntries?.page ?? [])) as GalleryEntry[];
+  const entries = (
+    infiniteScroll || reverseViewer
+      ? entryPages.results
+      : (pagedEntries?.page ?? [])
+  ) as GalleryEntry[];
   const requestedViewerEntry = useQuery(
     api.entries.getGalleryViewerEntry,
     viewerEntryId === null || resolvingPath || invalidPath
@@ -310,7 +324,7 @@ export function GalleryPage(props: {
         },
   );
   const nextSiblingViewerTarget = useQuery(
-    api.entries.nextSiblingGalleryViewerTarget,
+    api.entries.siblingGalleryViewerTarget,
     viewerEntryId === null || resolvingPath || invalidPath
       ? "skip"
       : {
@@ -318,6 +332,19 @@ export function GalleryPage(props: {
           galleryId: props.gallery._id,
           folderId,
           currentEntryId: viewerEntryId,
+          direction: "next",
+        },
+  );
+  const previousSiblingViewerTarget = useQuery(
+    api.entries.siblingGalleryViewerTarget,
+    viewerEntryId === null || resolvingPath || invalidPath
+      ? "skip"
+      : {
+          anonymousClaim: anonymousClaim(),
+          galleryId: props.gallery._id,
+          folderId,
+          currentEntryId: viewerEntryId,
+          direction: "previous",
         },
   );
   const viewerEntries = useMemo<GalleryEntry[]>(() => {
@@ -326,10 +353,13 @@ export function GalleryPage(props: {
       requestedViewerEntry === null ||
       entries.some((entry) => entry._id === requestedViewerEntry._id)
     ) {
-      return entries;
+      return reverseViewer ? [...entries].reverse() : entries;
     }
-    return [...entries, requestedViewerEntry];
-  }, [entries, requestedViewerEntry]);
+    return reverseViewer
+      ? [requestedViewerEntry, ...entries].reverse()
+      : [...entries, requestedViewerEntry];
+  }, [entries, requestedViewerEntry, reverseViewer]);
+
   const createFolder = useMutation(api.folders.create);
   const updateFolder = useMutation(api.folders.update);
   const resetFolderAccess = useMutation(api.folders.resetAccessPolicySubtree);
@@ -489,51 +519,62 @@ export function GalleryPage(props: {
       : viewerItems.findIndex((item) => item.id === viewerEntryId);
   const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : undefined;
   const loadMoreViewerItems = useCallback(() => {
-    if (infiniteScroll && entryPages.status === "CanLoadMore") {
+    if (
+      (infiniteScroll || reverseViewer) &&
+      entryPages.status === "CanLoadMore"
+    ) {
       entryPages.loadMore(pageSize);
     }
-  }, [entryPages.loadMore, entryPages.status, infiniteScroll, pageSize]);
-  const moveViewerToNextSibling = useCallback(() => {
-    if (
-      nextSiblingViewerTarget === undefined ||
-      nextSiblingViewerTarget === null
-    ) {
-      return;
-    }
-    const targetLocation = galleryFolderLocation({
-      routeRoot: props.routeRoot,
-      folderId: nextSiblingViewerTarget.folderId,
-      folderNames: [
-        ...folderNames.slice(0, -1),
-        nextSiblingViewerTarget.folderName,
-      ],
-      friendlyFolderUrls,
-      currentSearch: location.search,
-    });
-    const params = new URLSearchParams(targetLocation.search);
-    if (nextSiblingViewerTarget.entry === null) {
-      params.delete("item");
-    } else {
-      params.set("item", nextSiblingViewerTarget.entry._id);
-    }
-    const search = params.toString();
-    void navigate(
-      {
-        pathname: targetLocation.pathname,
-        search: search === "" ? "" : `?${search}`,
-        hash: location.hash,
-      },
-      { replace: true },
-    );
   }, [
-    folderNames,
-    friendlyFolderUrls,
-    location.hash,
-    location.search,
-    navigate,
-    nextSiblingViewerTarget,
-    props.routeRoot,
+    entryPages.loadMore,
+    entryPages.status,
+    infiniteScroll,
+    reverseViewer,
+    pageSize,
   ]);
+  const moveViewerToSibling = useCallback(
+    (direction: "previous" | "next") => {
+      const target =
+        direction === "next"
+          ? nextSiblingViewerTarget
+          : previousSiblingViewerTarget;
+      if (target == null) return;
+      setReverseViewerFolder(direction === "previous" ? target.folderId : null);
+      const targetLocation = galleryFolderLocation({
+        routeRoot: props.routeRoot,
+        folderId: target.folderId,
+        folderNames: [
+          ...folderNames.slice(0, -1 - target.ancestorLevels),
+          target.folderName,
+        ],
+        friendlyFolderUrls,
+        currentSearch: location.search,
+      });
+      const params = new URLSearchParams(targetLocation.search);
+      if (target.entry === null) params.delete("item");
+      else params.set("item", target.entry._id);
+      const search = params.toString();
+      void navigate(
+        {
+          pathname: targetLocation.pathname,
+          search: search === "" ? "" : `?${search}`,
+          hash: location.hash,
+        },
+        { replace: true },
+      );
+    },
+    [
+      folderNames,
+      friendlyFolderUrls,
+      location.hash,
+      location.search,
+      navigate,
+      nextSiblingViewerTarget,
+      previousSiblingViewerTarget,
+      props.routeRoot,
+    ],
+  );
+
   const canonicalFolderHref = (
     targetFolderId: Id<"folders"> | null,
     targetFolderNames: string[],
@@ -900,21 +941,11 @@ export function GalleryPage(props: {
       if (images.length > 0) {
         event.preventDefault();
         const now = new Date();
-        const pad = (value: number) => String(value).padStart(2, "0");
-        const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
         void uploadDropped(
-          images.map((file) => {
-            const extension =
-              /\.([a-z0-9]+)$/i.exec(file.name)?.[1] ??
-              file.type.slice("image/".length).split("+")[0];
-            return {
-              file: new File([file], `Clipboard-${timestamp}.${extension}`, {
-                type: file.type,
-                lastModified: file.lastModified,
-              }),
-              pathSegments: [],
-            };
-          }),
+          images.map((file) => ({
+            file: clipboardImageFile(file, now),
+            pathSegments: [],
+          })),
           true,
         );
       }
@@ -970,6 +1001,7 @@ export function GalleryPage(props: {
 
   useEffect(() => {
     if (
+      viewerEntryId !== null ||
       !infiniteScroll ||
       entryPages.status !== "CanLoadMore" ||
       pageSentinel.current === null
@@ -991,6 +1023,7 @@ export function GalleryPage(props: {
     entryPages.status,
     infiniteScroll,
     pageSize,
+    viewerEntryId,
   ]);
 
   // Cmd/Ctrl+A selects every selectable file in the folder, not merely the
@@ -1820,6 +1853,7 @@ export function GalleryPage(props: {
               folder.name,
             ])}
             preview={folderPreviews.get(folder._id)}
+            suspendThumbnails={viewerEntryId !== null}
             selectMode={selectMode}
             selected={selectedFolderIds.has(folder._id)}
             dropTarget={
@@ -1872,6 +1906,7 @@ export function GalleryPage(props: {
           <GalleryEntryCard
             key={entry._id}
             entry={entry}
+            suspendThumbnails={viewerEntryId !== null}
             selectMode={selectMode}
             selected={
               allEntriesSelected
@@ -1945,24 +1980,34 @@ export function GalleryPage(props: {
       ) : null}
       {viewerIndex >= 0 ? (
         <MediaViewer
+          key={`${folderId}:${reverseViewer}`}
           items={viewerItems}
           initialIndex={viewerIndex}
           totalItems={
-            infiniteScroll && folderEntryCount?.exact === true
+            (infiniteScroll || reverseViewer) && folderEntryCount?.exact === true
               ? folderEntryCount.count
               : undefined
           }
           hasMoreItems={
-            infiniteScroll && entryPages.status !== "Exhausted"
+            !reverseViewer && infiniteScroll && entryPages.status !== "Exhausted"
           }
           onLoadMoreItems={
-            infiniteScroll ? loadMoreViewerItems : undefined
+            !reverseViewer && infiniteScroll ? loadMoreViewerItems : undefined
+          }
+          hasPreviousItems={
+            reverseViewer && entryPages.status !== "Exhausted"
+          }
+          onLoadPreviousItems={reverseViewer ? loadMoreViewerItems : undefined}
+          onMovePreviousBeyondItems={
+            previousSiblingViewerTarget == null
+              ? undefined
+              : () => moveViewerToSibling("previous")
           }
           onMoveNextBeyondItems={
             nextSiblingViewerTarget === undefined ||
             nextSiblingViewerTarget === null
               ? undefined
-              : moveViewerToNextSibling
+              : () => moveViewerToSibling("next")
           }
           themeMode={props.gallery.theme.mode ?? "light"}
           overzoom={profile?.overzoom === true}
@@ -2329,7 +2374,10 @@ export function GalleryPage(props: {
   );
 }
 
-function FolderPreview(props: { preview?: FolderPreviewData }) {
+function FolderPreview(props: {
+  preview?: FolderPreviewData;
+  suspended: boolean;
+}) {
   const [topIndex, setTopIndex] = useState<number | null>(null);
   const entries = props.preview?.entries ?? [];
   const isFan =
@@ -2365,13 +2413,13 @@ function FolderPreview(props: { preview?: FolderPreviewData }) {
         aria-hidden="true"
         strokeWidth={1.1}
       />
-      {props.preview?.customUrl !== undefined ? (
+      {!props.suspended && props.preview?.customUrl !== undefined ? (
         <MediaThumbnail
           className={styles.folderPreviewSingle}
           src={props.preview.customUrl}
         />
       ) : null}
-      {entries.map((entry, index) => (
+      {!props.suspended && entries.map((entry, index) => (
         <MediaThumbnail
           className={
             isFan
@@ -2400,6 +2448,7 @@ function GalleryFolderCard(props: {
   folder: Doc<"folders">;
   href: string;
   preview?: FolderPreviewData;
+  suspendThumbnails: boolean;
   selectMode: boolean;
   selected: boolean;
   dropTarget: boolean;
@@ -2415,7 +2464,10 @@ function GalleryFolderCard(props: {
 }) {
   const content = (
     <>
-      <FolderPreview preview={props.preview} />
+      <FolderPreview
+        preview={props.preview}
+        suspended={props.suspendThumbnails}
+      />
       <span className={styles.folderName}>{props.folder.name}</span>
       {props.folder.accessPolicy !== "inherit" ? (
         <small>{props.folder.accessPolicy}</small>
@@ -2479,6 +2531,7 @@ function GalleryFolderCard(props: {
 // functions and a card re-renders only when its own entry or flags change.
 const GalleryEntryCard = memo(function GalleryEntryCard(props: {
   entry: GalleryEntry;
+  suspendThumbnails: boolean;
   selectMode: boolean;
   selected: boolean;
   draggable: boolean;
@@ -2495,7 +2548,7 @@ const GalleryEntryCard = memo(function GalleryEntryCard(props: {
   const content = (
     <>
       <span className={styles.thumbnailFrame}>
-        {props.entry.mediaKind === "image" ||
+        {props.suspendThumbnails ? null : props.entry.mediaKind === "image" ||
         props.entry.mediaKind === "video" ? (
           <MediaThumbnail
             className={styles.fileThumb}

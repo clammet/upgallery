@@ -94,6 +94,25 @@ describe("media viewer paginated navigation", () => {
   });
 });
 
+describe("media viewer reverse pagination", () => {
+  test("keeps previous available at a folder or loaded-page boundary", () => {
+    expect(
+      mediaViewerNavigationState(0, 5, 5, false, false, true).canMovePrevious,
+    ).toBe(true);
+    expect(
+      mediaViewerNavigationState(0, 100, 250, false, false, false, true),
+    ).toEqual({
+      position: 151,
+      total: 250,
+      canMovePrevious: true,
+      canMoveNext: true,
+    });
+    expect(mediaViewerNavigationState(0, 250, 250, false).canMovePrevious).toBe(
+      false,
+    );
+  });
+});
+
 describe("media viewer navigation visibility", () => {
   test("only reveals navigation in the outer quarters of the content", () => {
     expect(mediaViewerNavigationZone(0, 400)).toBe("previous");

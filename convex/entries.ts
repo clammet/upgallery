@@ -321,6 +321,7 @@ export const listGalleryPage = query({
     // the persisted gallery/folder setting changes. The server still derives
     // the authoritative effective setting below.
     sortOrder: v.optional(gallerySortOrder),
+    reverse: v.optional(v.boolean()),
     paginationOpts: paginationOptsValidator,
   },
   returns: paginationResultValidator(galleryEntryValidator),
@@ -328,8 +329,11 @@ export const listGalleryPage = query({
     validateGalleryPaginationSize(args.paginationOpts.numItems);
     const { gallery, folder } = await loadViewableImageFolder(ctx, args);
     const sortOrder = folder.sortOrder ?? gallery.sortOrder ?? "nameAsc";
-    const result = await sortedFolderEntries(ctx, folder._id, sortOrder)
-      .paginate(args.paginationOpts);
+    const result = await sortedFolderEntries(
+      ctx,
+      folder._id,
+      args.reverse ? reverseGallerySortOrder(sortOrder) : sortOrder,
+    ).paginate(args.paginationOpts);
     const page = [];
     const uploaderByProfileId = new Map<Id<"profiles">, string>();
     for (const entry of result.page) {
@@ -393,21 +397,22 @@ export const getGalleryViewerEntry = query({
   },
 });
 
-// Lets the lightbox continue from the final file in one folder to the first
-// file in the next visible sibling folder. Folder sibling order matches the
-// folder listing index (creation order).
-export const nextSiblingGalleryViewerTarget = query({
+// Continue past either folder edge, climbing ancestors when siblings run out.
+// Sibling order matches the folder listing index (creation order).
+export const siblingGalleryViewerTarget = query({
   args: {
     anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
     currentEntryId: v.string(),
+    direction: v.union(v.literal("previous"), v.literal("next")),
   },
   returns: v.union(
     v.null(),
     v.object({
       folderId: v.id("folders"),
       folderName: v.string(),
+      ancestorLevels: v.number(),
       entry: v.union(v.null(), galleryEntryValidator),
     }),
   ),
@@ -424,33 +429,45 @@ export const nextSiblingGalleryViewerTarget = query({
     const finalEntry = await sortedFolderEntries(
       ctx,
       folder._id,
-      reverseGallerySortOrder(sortOrder),
+      args.direction === "next"
+        ? reverseGallerySortOrder(sortOrder)
+        : sortOrder,
     ).first();
     if (finalEntry?._id !== currentEntryId) return null;
 
-    const candidates = await ctx.db
-      .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q
-          .eq("galleryId", gallery._id)
-          .eq("parentId", folder.parentId)
-          .gt("_creationTime", folder._creationTime),
-      )
-      .take(128);
+    let branch = folder;
     let sibling: Doc<"folders"> | null = null;
-    for (const candidate of candidates) {
-      if (
-        candidate.filesystemMissingAt === undefined &&
-        (await shouldListFolder(
-          ctx,
-          candidate,
-          profile,
-          args.anonymousClaim,
-        ))
-      ) {
-        sibling = candidate;
-        break;
+    let ancestorLevels = 0;
+    // Match the existing bounded folder listing; never scan a whole gallery.
+    while (branch.parentId !== undefined && ancestorLevels < 128) {
+      const candidates = await ctx.db
+        .query("folders")
+        .withIndex("by_galleryId_and_parentId", (q) => {
+          const siblings = q
+            .eq("galleryId", gallery._id)
+            .eq("parentId", branch.parentId);
+          return args.direction === "next"
+            ? siblings.gt("_creationTime", branch._creationTime)
+            : siblings.lt("_creationTime", branch._creationTime);
+        })
+        .order(args.direction === "next" ? "asc" : "desc")
+        .take(128);
+      for (const candidate of candidates) {
+        if (
+          candidate.filesystemMissingAt === undefined &&
+          (await shouldListFolder(ctx, candidate, profile, args.anonymousClaim))
+        ) {
+          sibling = candidate;
+          break;
+        }
       }
+      if (sibling !== null) break;
+      // A truncated level is not proof that this branch has no more siblings.
+      if (candidates.length === 128) return null;
+      const parent = await ctx.db.get("folders", branch.parentId);
+      if (parent === null || parent.galleryId !== gallery._id) return null;
+      branch = parent;
+      ancestorLevels += 1;
     }
     if (sibling === null) return null;
 
@@ -459,12 +476,15 @@ export const nextSiblingGalleryViewerTarget = query({
     const firstEntry = await sortedFolderEntries(
       ctx,
       sibling._id,
-      siblingSortOrder,
+      args.direction === "previous"
+        ? reverseGallerySortOrder(siblingSortOrder)
+        : siblingSortOrder,
     ).first();
     if (firstEntry === null) {
       return {
         folderId: sibling._id,
         folderName: sibling.name,
+        ancestorLevels,
         entry: null,
       };
     }
@@ -479,6 +499,7 @@ export const nextSiblingGalleryViewerTarget = query({
     return {
       folderId: sibling._id,
       folderName: sibling.name,
+      ancestorLevels,
       entry: galleryEntryForViewer(
         firstEntry,
         uploaderProfile === null

@@ -42,7 +42,7 @@ import {
 } from "../lib/metadata";
 import { uploaderItemUrl } from "../lib/uploaderRoutes";
 import { friendlyError } from "../lib/errors";
-import { copyTextToClipboard } from "../lib/clipboard";
+import { clipboardImageFile, copyTextToClipboard } from "../lib/clipboard";
 import {
   canToggleTextMarkdown,
   fileNameWithMarkdownMode,
@@ -164,7 +164,11 @@ export function UploaderPage(props: {
       const pastedFile = event.clipboardData?.files[0];
       if (pastedFile) {
         event.preventDefault();
-        setFile(pastedFile);
+        setFile(
+          pastedFile.type.startsWith("image/")
+            ? clipboardImageFile(pastedFile)
+            : pastedFile,
+        );
         setDropError(null);
         setTextPreview(null);
         return;

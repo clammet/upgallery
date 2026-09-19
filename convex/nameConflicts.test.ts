@@ -750,16 +750,18 @@ describe("gallery lightbox folder navigation", () => {
     });
 
     await expect(
-      authed.query(api.entries.nextSiblingGalleryViewerTarget, {
+      authed.query(api.entries.siblingGalleryViewerTarget, {
         galleryId,
         folderId: firstFolder.folderId,
+        direction: "next",
         currentEntryId: first.entry._id,
       }),
     ).resolves.toBeNull();
     await expect(
-      authed.query(api.entries.nextSiblingGalleryViewerTarget, {
+      authed.query(api.entries.siblingGalleryViewerTarget, {
         galleryId,
         folderId: firstFolder.folderId,
+        direction: "next",
         currentEntryId: last.entry._id,
       }),
     ).resolves.toMatchObject({
@@ -771,5 +773,117 @@ describe("gallery lightbox folder navigation", () => {
         passwordProtected: false,
       },
     });
+    await expect(
+      authed.query(api.entries.siblingGalleryViewerTarget, {
+        galleryId,
+        folderId: secondFolder.folderId,
+        direction: "previous",
+        currentEntryId: siblingFirst.entry._id,
+      }),
+    ).resolves.toMatchObject({
+      folderId: firstFolder.folderId,
+      ancestorLevels: 0,
+      entry: { _id: last.entry._id },
+    });
+    const reversePage = await authed.query(api.entries.listGalleryPage, {
+      galleryId,
+      folderId: firstFolder.folderId,
+      reverse: true,
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    expect(reversePage.page.map((entry) => entry._id)).toEqual([
+      last.entry._id,
+    ]);
+    const precedingPage = await authed.query(api.entries.listGalleryPage, {
+      galleryId,
+      folderId: firstFolder.folderId,
+      reverse: true,
+      paginationOpts: { numItems: 1, cursor: reversePage.continueCursor },
+    });
+    expect(precedingPage.page.map((entry) => entry._id)).toEqual([
+      first.entry._id,
+    ]);
   });
+});
+
+describe("gallery lightbox ancestor navigation", () => {
+  test.each(["previous", "next"] as const)(
+    "climbs multiple levels for %s and respects visibility and destination sort",
+    async (direction) => {
+      const t = setupTest();
+      const { authed } = await seedAdmin(t);
+      const { galleryId, rootFolderId } = await createGallery(t, authed, {
+        slug: `ancestor-${direction}`,
+        kind: "image",
+      });
+      const createFolder = async (name: string, parentId = rootFolderId) => {
+        const result = await authed.mutation(api.folders.create, {
+          galleryId,
+          parentId,
+          name,
+          accessPolicy: "public",
+          discoverability: "listed",
+        });
+        if (result.kind !== "complete")
+          throw new Error("Expected inline creation");
+        return result.folderId;
+      };
+      // Creation order is the folder listing order.
+      const first = await createFolder("First");
+      const missing = await createFolder("Missing");
+      const hidden = await createFolder("Hidden");
+      const restricted = await createFolder("Restricted");
+      const second = await createFolder("Second");
+      const source = direction === "next" ? first : second;
+      const destination = direction === "next" ? second : first;
+      const middle = await createFolder("Middle", source);
+      const leaf = await createFolder("Leaf", middle);
+      const current = await uploadFile(t, authed, {
+        galleryId,
+        folderId: leaf,
+        name: "current.jpg",
+        sha: "current",
+      });
+      const a = await uploadFile(t, authed, {
+        galleryId,
+        folderId: destination,
+        name: "a.jpg",
+        sha: "a",
+      });
+      const z = await uploadFile(t, authed, {
+        galleryId,
+        folderId: destination,
+        name: "z.jpg",
+        sha: "z",
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.patch("folders", missing, { filesystemMissingAt: 1 });
+        await ctx.db.patch("folders", hidden, { discoverability: "unlisted" });
+        await ctx.db.patch("folders", restricted, {
+          accessPolicy: "restricted",
+        });
+        await ctx.db.patch("folders", destination, { sortOrder: "nameDesc" });
+      });
+      await expect(
+        t.query(api.entries.siblingGalleryViewerTarget, {
+          galleryId,
+          folderId: leaf,
+          direction,
+          currentEntryId: current.entry._id,
+        }),
+      ).resolves.toMatchObject({
+        folderId: destination,
+        ancestorLevels: 2,
+        entry: { _id: direction === "next" ? z.entry._id : a.entry._id },
+      });
+      await expect(
+        t.query(api.entries.siblingGalleryViewerTarget, {
+          galleryId,
+          folderId: leaf,
+          direction: direction === "next" ? "previous" : "next",
+          currentEntryId: current.entry._id,
+        }),
+      ).resolves.toBeNull();
+    },
+  );
 });

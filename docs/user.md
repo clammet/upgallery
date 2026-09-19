@@ -108,6 +108,13 @@ Preview support depends on the file and browser. For unsupported files, use
 | **Show information** | Viewer toolbar; opens file details and a location map when location metadata is available. |
 | **Close** | Viewer toolbar; returns to the listing. |
 
+In a gallery, **Next** after the last file opens the next visible sibling folder.
+**Previous** before the first file opens the previous sibling's last file. If
+there are no more siblings in that direction, navigation checks the parent's
+siblings, continuing upward if needed. Files follow each folder's sort order.
+An empty destination opens its folder listing. While the viewer is open, gallery
+thumbnails wait so the current image and nearby image preloads get priority.
+
 Use the mouse wheel over an image or video to zoom, then drag to pan when zoomed
 in. On a touch screen, swipe left or right while zoomed out to change files.
 
@@ -140,6 +147,9 @@ to you, the submission form appears above the file listing.
 
 The uploader accepts one file per submission. When dropping or pasting multiple
 files, only the first is selected. Folders cannot be uploaded here.
+Pasted images use the same name in galleries and the uploader:
+`Clipboard-YYYYMMDD-HHMMSS` followed by the image extension (for example,
+`Clipboard-20260920-143005.png`). The timestamp uses your local time.
 
 | Setting | What it is for |
 | --- | --- |
