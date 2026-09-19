@@ -48,7 +48,7 @@
     "@types/busboy": "1.5.4",
     "@types/express": "5.0.6",
     "@types/mime-types": "3.0.1",
-    "@types/node": "26.5.1",
+    "@types/node": "26.6.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/supertest": "7.2.1",
@@ -65,7 +65,7 @@
     "vitest": "5.0.1"
   },
   "engines": {
-    "node": "26.8.2"
+    "node": "26.9.0"
   },
   "packageManager": "pnpm@12.4.2"
 }
