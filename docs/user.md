@@ -259,6 +259,15 @@ On the owner page, find **Settings**, make your changes, then click
 
 Use the color pickers or enter six-digit hex colors, such as `#126b5a`.
 
+Your browser remembers the colors and layout for recently visited gallery and
+uploader addresses, so they appear sooner when you return. The latest settings
+replace the saved appearance as the page loads. After an owner changes the theme,
+you may briefly see the previous colors. Custom CSS loads with the latest settings.
+Saved appearances expire after 30 days and are removed when you clear site data.
+
+Gallery and uploader pages also start loading sooner. Administration tools load
+only when you open administration.
+
 ### Set uploader expiry
 
 For an **Uploader** (`/up`), open **Settings** on the owner page:

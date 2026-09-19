@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api } from "../convex/_generated/api";
@@ -6,11 +6,14 @@ import { anonymousClaim, authClient } from "./lib/authClient";
 import { publicGalleryRoute } from "./lib/galleryRoutes";
 import { GalleryPage } from "./pages/GalleryPage";
 import { UploaderPage } from "./pages/UploaderPage";
-import { AdminPage } from "./pages/AdminPage";
 import { PageFrame } from "./components/PageFrame";
 import { AuthCallbackPage } from "./components/AuthCallbackPage";
 import { AccessDenied } from "./components/AccessDenied";
 import { GalleryErrorScope } from "./components/GalleryErrorBoundary";
+
+const AdminPage = lazy(() =>
+  import("./pages/AdminPage").then((module) => ({ default: module.AdminPage })),
+);
 
 export function App() {
   return (
@@ -19,7 +22,11 @@ export function App() {
       <GalleryErrorScope>
         <Routes>
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
-          <Route path="/admin/*" element={<AdminPage />} />
+          <Route path="/admin/*" element={
+            <Suspense fallback={<PageFrame><p>Loading administration…</p></PageFrame>}>
+              <AdminPage />
+            </Suspense>
+          } />
           <Route path="/g/:slug/*" element={<SlugGallery expectedKind="image" />} />
           <Route path="/up/:slug" element={<SlugGallery expectedKind="uploader" />} />
           <Route path="*" element={<HostGallery />} />
@@ -137,7 +144,7 @@ function HostGallery() {
 }
 
 function Loading() {
-  return <PageFrame><p>Loading…</p></PageFrame>;
+  return <PageFrame loading><p>Loading…</p></PageFrame>;
 }
 
 function NotFound() {

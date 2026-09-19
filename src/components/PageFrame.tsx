@@ -1,9 +1,9 @@
-import type { CSSProperties, ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useLayoutEffect, type CSSProperties, type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { AuthControls } from "./AuthControls";
 import { TransferStatus } from "./TransferStatus";
-import { THEME_MODE_DEFAULTS } from "../lib/theme";
+import { galleryThemeProperties } from "../lib/theme";
 import styles from "../styles/layout.module.css";
 
 type Props = {
@@ -11,6 +11,7 @@ type Props = {
   galleryRoot?: string;
   breadcrumb?: ReactNode;
   actions?: ReactNode;
+  loading?: boolean;
   children: ReactNode;
 };
 
@@ -20,34 +21,22 @@ export function PageFrame({
   breadcrumb,
   actions,
   children,
+  loading = false,
 }: Props) {
+  const { pathname } = useLocation();
   const theme = gallery?.theme;
-  const mode = theme?.mode ?? "light";
-  const modeDefaults = THEME_MODE_DEFAULTS[mode];
-  const style = {
-    "--gallery-accent": gallery ? theme?.accent ?? modeDefaults.accent : undefined,
-    "--gallery-secondary": gallery
-      ? theme?.secondary ?? modeDefaults.secondary
-      : undefined,
-    "--gallery-bg": gallery ? theme?.background ?? modeDefaults.background : undefined,
-    "--gallery-fg": gallery ? theme?.foreground ?? modeDefaults.foreground : undefined,
-    "--gallery-surface": gallery ? theme?.surface ?? modeDefaults.surface : undefined,
-    "--gallery-muted": gallery ? theme?.muted ?? modeDefaults.muted : undefined,
-    "--gallery-header-divider": gallery
-      ? theme?.headerDivider ?? modeDefaults.headerDivider
-      : undefined,
-    "--gallery-cell-border": gallery
-      ? theme?.cellBorder ?? modeDefaults.cellBorder
-      : undefined,
-    "--shadow": gallery ? modeDefaults.shadow : undefined,
-    "--gallery-radius": theme?.radius === undefined ? undefined : `${theme.radius}px`,
-    "--gallery-gap": theme?.density === "comfortable" ? "1rem" : "0.5rem",
-    "--thumbnail-frame-size":
-      theme?.thumbnailFrameSize === undefined
-        ? undefined
-        : `${theme.thumbnailFrameSize}px`,
-    colorScheme: gallery ? mode : undefined,
-  } as CSSProperties;
+  useLayoutEffect(() => {
+    if (theme) {
+      window.upgalleryTheme?.save(galleryThemeProperties(theme));
+    } else if (loading) {
+      window.upgalleryTheme?.restore();
+    } else {
+      window.upgalleryTheme?.clear();
+    }
+  }, [theme, pathname, loading]);
+  const { "color-scheme": colorScheme, ...properties } =
+    gallery ? galleryThemeProperties(gallery.theme) : {};
+  const style = { ...properties, colorScheme } as CSSProperties;
   return (
     <div
       className={styles.page}

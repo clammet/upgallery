@@ -2,6 +2,71 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="preload" href="/config.json" as="fetch" crossorigin="anonymous" />
+    <script id="gallery-theme-bootstrap">
+      // Runs before stylesheets and React, and also handles in-app navigation.
+      (() => {
+        const key = "upgallery:themes:v1";
+        const maxAge = 30 * 24 * 60 * 60 * 1000;
+        const properties = [
+          "color-scheme", "--gallery-accent", "--gallery-secondary",
+          "--gallery-bg", "--gallery-fg", "--gallery-surface", "--gallery-muted",
+          "--gallery-header-divider", "--gallery-cell-border", "--gallery-radius",
+          "--gallery-gap", "--thumbnail-frame-size", "--shadow",
+        ];
+        const isGalleryPath = () => !/^\/(admin|auth)(\/|$)/.test(location.pathname);
+        const read = () => {
+          try {
+            const entries = JSON.parse(localStorage.getItem(key) || "[]");
+            const now = Date.now();
+            return Array.isArray(entries) ? entries.filter((entry) =>
+              entry && typeof entry.path === "string" &&
+              typeof entry.savedAt === "number" &&
+              entry.savedAt <= now && now - entry.savedAt < maxAge &&
+              entry.values && properties.every((name) =>
+                typeof entry.values[name] === "string" &&
+                entry.values[name].length <= 256
+              ) && ["light", "dark"].includes(entry.values["color-scheme"])
+            ).slice(0, 20) : [];
+          } catch {
+            return [];
+          }
+        };
+        const write = (entries) => {
+          try {
+            localStorage.setItem(key, JSON.stringify(entries));
+          } catch {
+            // Storage can be unavailable or full; live themes still work.
+          }
+        };
+        const apply = (values) => {
+          for (const name of properties) {
+            if (values) document.documentElement.style.setProperty(name, values[name]);
+            else document.documentElement.style.removeProperty(name);
+          }
+        };
+        window.upgalleryTheme = {
+          restore() {
+            const entry = isGalleryPath() && read().find((entry) => entry.path === location.pathname);
+            apply(entry ? entry.values : null);
+          },
+          save(values) {
+            if (!isGalleryPath()) return;
+            apply(values);
+            write([
+              { path: location.pathname, savedAt: Date.now(), values },
+              ...read().filter((entry) => entry.path !== location.pathname),
+            ].slice(0, 20));
+          },
+          clear() {
+            apply(null);
+            // Forget routes that no longer resolve to a gallery.
+            write(read().filter((entry) => entry.path !== location.pathname));
+          },
+        };
+        window.upgalleryTheme.restore();
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <meta name="description" content="Minimal multi-gallery file hosting" />

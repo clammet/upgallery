@@ -1,4 +1,17 @@
+import type { GalleryTheme } from "./gallerySettings";
+
 export type ThemeMode = "light" | "dark";
+
+declare global {
+  interface Window {
+    // Installed by the inline script in index.html before the first paint.
+    upgalleryTheme?: {
+      restore(): void;
+      save(values: Record<string, string>): void;
+      clear(): void;
+    };
+  }
+}
 
 export const THEME_MODE_DEFAULTS = {
   light: {
@@ -37,3 +50,23 @@ export const THEME_MODE_DEFAULTS = {
     shadow: string;
   }
 >;
+
+export function galleryThemeProperties(theme: GalleryTheme): Record<string, string> {
+  const mode = theme.mode ?? "light";
+  const modeDefaults = THEME_MODE_DEFAULTS[mode];
+  return {
+    "--gallery-accent": theme.accent ?? modeDefaults.accent,
+    "--gallery-secondary": theme.secondary ?? modeDefaults.secondary,
+    "--gallery-bg": theme.background ?? modeDefaults.background,
+    "--gallery-fg": theme.foreground ?? modeDefaults.foreground,
+    "--gallery-surface": theme.surface ?? modeDefaults.surface,
+    "--gallery-muted": theme.muted ?? modeDefaults.muted,
+    "--gallery-header-divider": theme.headerDivider ?? modeDefaults.headerDivider,
+    "--gallery-cell-border": theme.cellBorder ?? modeDefaults.cellBorder,
+    "--shadow": modeDefaults.shadow,
+    "--gallery-radius": `${theme.radius ?? 5}px`,
+    "--gallery-gap": theme.density === "comfortable" ? "1rem" : "0.5rem",
+    "--thumbnail-frame-size": `${theme.thumbnailFrameSize ?? 218}px`,
+    "color-scheme": mode,
+  };
+}
