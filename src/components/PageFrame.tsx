@@ -26,9 +26,9 @@ export function PageFrame({
   const { pathname } = useLocation();
   const theme = gallery?.theme;
   useLayoutEffect(() => {
-    if (theme) {
-      window.upgalleryTheme?.save(galleryThemeProperties(theme));
-    } else if (loading) {
+    // Resolved routes save live themes with their gallery root in useGalleryTheme.
+    if (theme) return;
+    if (loading) {
       window.upgalleryTheme?.restore();
     } else {
       window.upgalleryTheme?.clear();

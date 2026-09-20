@@ -7,7 +7,7 @@ declare global {
     // Installed by the inline script in index.html before the first paint.
     upgalleryTheme?: {
       restore(): void;
-      save(values: Record<string, string>): void;
+      save(rootPath: string, values: Record<string, string>): void;
       clear(): void;
     };
   }

@@ -6,7 +6,8 @@
     <script id="gallery-theme-bootstrap">
       // Runs before stylesheets and React, and also handles in-app navigation.
       (() => {
-        const key = "upgallery:themes:v1";
+        // v1 stored individual visited paths, which cannot identify gallery roots.
+        const key = "upgallery:themes:v2";
         const maxAge = 30 * 24 * 60 * 60 * 1000;
         const properties = [
           "color-scheme", "--gallery-accent", "--gallery-secondary",
@@ -14,13 +15,21 @@
           "--gallery-header-divider", "--gallery-cell-border", "--gallery-radius",
           "--gallery-gap", "--thumbnail-frame-size", "--shadow",
         ];
-        const isGalleryPath = () => !/^\/(admin|auth)(\/|$)/.test(location.pathname);
+        const isGalleryPath = () => !/^\/(admin|auth)(\/|$)/i.test(location.pathname);
+        const matches = (rootPath) => {
+          const path = location.pathname;
+          // Explicit gallery URLs must never inherit a host gallery's theme.
+          const slugRoute = path.match(/^\/(?:g|up)\/[^/]+/i)?.[0];
+          if (slugRoute && rootPath !== slugRoute) return false;
+          return rootPath === "/" || path === rootPath || path.startsWith(rootPath + "/");
+        };
         const read = () => {
           try {
             const entries = JSON.parse(localStorage.getItem(key) || "[]");
             const now = Date.now();
             return Array.isArray(entries) ? entries.filter((entry) =>
-              entry && typeof entry.path === "string" &&
+              entry && typeof entry.rootPath === "string" &&
+              entry.rootPath.startsWith("/") &&
               typeof entry.savedAt === "number" &&
               entry.savedAt <= now && now - entry.savedAt < maxAge &&
               entry.values && properties.every((name) =>
@@ -45,23 +54,28 @@
             else document.documentElement.style.removeProperty(name);
           }
         };
+        const current = () => isGalleryPath() && read()
+          .filter((entry) => matches(entry.rootPath))
+          .sort((a, b) => b.rootPath.length - a.rootPath.length)[0];
         window.upgalleryTheme = {
           restore() {
-            const entry = isGalleryPath() && read().find((entry) => entry.path === location.pathname);
+            const entry = current();
             apply(entry ? entry.values : null);
           },
-          save(values) {
-            if (!isGalleryPath()) return;
+          save(rootPath, values) {
+            rootPath = rootPath.replace(/\/+$/, "") || "/";
+            if (!isGalleryPath() || !matches(rootPath)) return;
             apply(values);
             write([
-              { path: location.pathname, savedAt: Date.now(), values },
-              ...read().filter((entry) => entry.path !== location.pathname),
+              { rootPath, savedAt: Date.now(), values },
+              ...read().filter((entry) => entry.rootPath !== rootPath),
             ].slice(0, 20));
           },
           clear() {
             apply(null);
             // Forget routes that no longer resolve to a gallery.
-            write(read().filter((entry) => entry.path !== location.pathname));
+            const entry = current();
+            if (entry) write(read().filter((cached) => cached.rootPath !== entry.rootPath));
           },
         };
         window.upgalleryTheme.restore();

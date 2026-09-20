@@ -10,6 +10,7 @@ import { PageFrame } from "./components/PageFrame";
 import { AuthCallbackPage } from "./components/AuthCallbackPage";
 import { AccessDenied } from "./components/AccessDenied";
 import { GalleryErrorScope } from "./components/GalleryErrorBoundary";
+import { useGalleryTheme } from "./hooks/useGalleryTheme";
 
 const AdminPage = lazy(() =>
   import("./pages/AdminPage").then((module) => ({ default: module.AdminPage })),
@@ -67,6 +68,12 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
     slug,
     currentHost: window.location.host,
   });
+  useGalleryTheme(
+    resolved?.rootFolder && resolved.gallery.kind === props.expectedKind
+      ? resolved.gallery
+      : undefined,
+    `/${props.expectedKind === "image" ? "g" : "up"}/${slug}`,
+  );
   if (resolved === undefined || canonicalHostRoute === undefined) {
     return <Loading />;
   }
@@ -117,6 +124,10 @@ function HostGallery() {
     host: window.location.host,
     path: location.pathname,
   });
+  useGalleryTheme(
+    resolved?.rootFolder ? resolved.gallery : undefined,
+    resolved?.routeRoot,
+  );
   if (resolved === undefined) return <Loading />;
   if (resolved === null || resolved.rootFolder === null) {
     return <Landing />;
