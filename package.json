@@ -29,7 +29,7 @@
   "dependencies": {
     "@clammet/convex-googly-auth": "1.0.1",
     "busboy": "1.6.0",
-    "convex": "1.45.0",
+    "convex": "1.46.0",
     "convex-helpers": "0.1.124",
     "exifr": "7.1.3",
     "express": "5.2.1",
