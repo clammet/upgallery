@@ -82,6 +82,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { friendlyError, isEntryExistsError } from "../lib/errors";
 import { anonymousClaim } from "../lib/authClient";
+import { filterFolderTree } from "../lib/folderSearch";
 import { clipboardImageFile, copyTextToClipboard } from "../lib/clipboard";
 import {
   galleryFolderHref,
@@ -2808,6 +2809,7 @@ function MoveDialog(props: {
   );
   const [galleryId, setGalleryId] = useState<Id<"galleries"> | null>(null);
   const [folderId, setFolderId] = useState<Id<"folders"> | null>(null);
+  const [folderSearch, setFolderSearch] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
   const folders = useQuery(
     api.folders.listOwnedMoveDestinations,
@@ -2873,13 +2875,26 @@ function MoveDialog(props: {
     return ordered;
   }, [folders, galleries, galleryId, props.selectedFolderIds]);
 
+  const visibleFolders = useMemo(
+    () => filterFolderTree(orderedFolders, folderSearch),
+    [orderedFolders, folderSearch],
+  );
+  const destinationVisible = visibleFolders.some(
+    (folder) => folder._id === folderId,
+  );
+
   return (
     <Dialog title={`Move ${props.selectionSummary}`} onClose={props.onClose}>
       <form
         className={layout.form}
         onSubmit={(event) => {
           event.preventDefault();
-          if (galleryId === null || folderId === null) return;
+          if (
+            props.pending ||
+            galleryId === null ||
+            folderId === null ||
+            !destinationVisible
+          ) return;
           setDialogError(null);
           void props.onMove(galleryId, folderId).catch((reason: unknown) => {
             setDialogError(
@@ -2913,8 +2928,20 @@ function MoveDialog(props: {
           </section>
           <section className={styles.moveColumn}>
             <h3>Folder</h3>
+            <div className={styles.moveSearch}>
+              <input
+                type="search"
+                aria-label="Search destination folders"
+                placeholder="Search folders…"
+                value={folderSearch}
+                onChange={(event) => setFolderSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.preventDefault();
+                }}
+              />
+            </div>
             <div className={styles.moveOptions}>
-              {orderedFolders.map((folder) => (
+              {visibleFolders.map((folder) => (
                 <button
                   className={folder._id === folderId ? styles.moveOptionSelected : ""}
                   style={{
@@ -2928,6 +2955,9 @@ function MoveDialog(props: {
                   {folder.name}
                 </button>
               ))}
+              {folders !== undefined && visibleFolders.length === 0 ? (
+                <p role="status">No matching folders.</p>
+              ) : null}
             </div>
           </section>
         </div>
@@ -2942,6 +2972,7 @@ function MoveDialog(props: {
               props.pending ||
               galleryId === null ||
               folderId === null ||
+              !destinationVisible ||
               galleries?.length === 0
             }
           >

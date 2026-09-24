@@ -3,6 +3,18 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 export type FolderStats = { itemCount: number; totalBytes: number };
 
+export async function markFolderModified(
+  ctx: MutationCtx,
+  folderId: Id<"folders">,
+): Promise<void> {
+  const folder = await ctx.db.get("folders", folderId);
+  if (folder === null) return;
+  const gallery = await ctx.db.get("galleries", folder.galleryId);
+  // Filesystem timestamps come from disk, never from a scan/import's wall clock.
+  if (gallery?.storageKind === "user") return;
+  await ctx.db.patch("folders", folderId, { modifiedAt: Date.now() });
+}
+
 /**
  * Live ready-file count and byte total per folder.
  *
@@ -46,6 +58,7 @@ export async function adjustFolderStats(
 ): Promise<void> {
   const items = delta.items ?? 0;
   const bytes = delta.bytes ?? 0;
+  await markFolderModified(ctx, folder.folderId);
   if (items === 0 && bytes === 0) return;
   const stats = await statsRow(ctx, folder.folderId);
   if (stats === null) {

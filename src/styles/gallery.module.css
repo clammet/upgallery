@@ -61,6 +61,7 @@
 .moveColumn { min-width: 0; }
 .moveColumn + .moveColumn { border-left: 1px solid var(--border); }
 .moveColumn h3 { border-bottom: 1px solid var(--border); font-size: .78rem; margin: 0; padding: .5rem .6rem; }
+.moveSearch { border-bottom: 1px solid var(--border); padding: .5rem .6rem; }
 .moveOptions { display: grid; max-height: 320px; overflow: auto; padding: .3rem; }
 .moveOptions button { background: transparent; border: 0; border-radius: calc(var(--gallery-radius) - 2px); color: inherit; overflow: hidden; padding: .45rem .55rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .moveOptions button:hover { background: color-mix(in srgb, var(--gallery-accent) 8%, transparent); }

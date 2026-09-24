@@ -61,6 +61,7 @@ async function uploadFile(
     folderId: Id<"folders">;
     name: string;
     sha: string;
+    size?: number;
     conflict?: "replace" | "rename";
   },
 ) {
@@ -69,7 +70,7 @@ async function uploadFile(
     folderId: input.folderId,
     name: input.name,
     mimeType: "image/jpeg",
-    size: 10,
+    size: input.size ?? 10,
     conflict: input.conflict,
   });
   const claim = await t.mutation(internal.storageGateway.claimUpload, intent);
@@ -79,7 +80,7 @@ async function uploadFile(
     actualMimeType: "image/jpeg",
     extension: "jpg",
     mediaKind: "image",
-    size: 10,
+    size: input.size ?? 10,
     sha256,
     storageKey: `public/shared/root/${sha256}.jpg`,
   });
@@ -706,6 +707,130 @@ describe("uploader attribution", () => {
 });
 
 describe("gallery lightbox folder navigation", () => {
+  test("shared folder modified time follows content changes, not display settings", async () => {
+    const t = setupTest();
+    const { authed } = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createGallery(t, authed, {
+      slug: "folder-modified-time", kind: "image",
+    });
+    const resetTime = () => t.run(async (ctx) => {
+      await ctx.db.patch("folders", rootFolderId, { modifiedAt: 1 });
+    });
+    const modifiedAt = () => t.run(async (ctx) =>
+      (await ctx.db.get("folders", rootFolderId))!.modifiedAt,
+    );
+    await resetTime();
+    const uploaded = await uploadFile(t, authed, {
+      galleryId, folderId: rootFolderId, name: "photo.jpg", sha: "a",
+    });
+    expect(await modifiedAt()).toBeGreaterThan(1);
+    await resetTime();
+    await authed.mutation(api.folders.update, {
+      folderId: rootFolderId, name: "folder-modified-time",
+      accessPolicy: "inherit", discoverability: "listed", sortOrder: "dateDesc",
+    });
+    expect(await modifiedAt()).toBe(1);
+    await authed.mutation(api.entries.rename, {
+      galleryId, entryId: uploaded.entry._id, name: "renamed.jpg",
+    });
+    expect(await modifiedAt()).toBeGreaterThan(1);
+    await resetTime();
+    await uploadFile(t, authed, {
+      galleryId, folderId: rootFolderId, name: "renamed.jpg", sha: "b",
+      conflict: "replace",
+    });
+    expect(await modifiedAt()).toBeGreaterThan(1);
+    await resetTime();
+    await authed.mutation(api.entries.remove, { entryId: uploaded.entry._id });
+    expect(await modifiedAt()).toBeGreaterThan(1);
+  });
+
+  test("folder listing and viewer follow every gallery order and parent override", async () => {
+    const t = setupTest();
+    const { authed } = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createGallery(t, authed, {
+      slug: "all-folder-orders",
+      kind: "image",
+    });
+    const createFolder = async (name: string, parentId = rootFolderId) => {
+      const result = await authed.mutation(api.folders.create, {
+        galleryId, parentId, name,
+        accessPolicy: "public", discoverability: "listed",
+      });
+      if (result.kind !== "complete") throw new Error("Expected inline creation");
+      return result.folderId;
+    };
+    const banana = await createFolder("Banana");
+    const cherry = await createFolder("cherry");
+    const apple = await createFolder("apple");
+    const nested = await createFolder("nested", apple);
+    const deep = await createFolder("deep", nested);
+    const entries = new Map<Id<"folders">, Id<"entries">>();
+    for (const [folderId, size, sha] of [
+      [apple, 10, "a"], [banana, 10, "b"], [cherry, 20, "c"], [deep, 20, "d"],
+    ] as const) {
+      const uploaded = await uploadFile(t, authed, {
+        galleryId, folderId, size, sha, name: "photo.jpg",
+      });
+      entries.set(folderId, uploaded.entry._id);
+    }
+    await t.run(async (ctx) => {
+      // Legacy folders without counters still contribute their full size.
+      const stats = await ctx.db.query("folderStats")
+        .withIndex("by_folderId", (q) => q.eq("folderId", deep)).unique();
+      await ctx.db.delete("folderStats", stats!._id);
+      for (const [id, modifiedAt] of [[apple, 200], [banana, 300], [cherry, 100]] as const) {
+        await ctx.db.patch("folders", id, { modifiedAt });
+      }
+    });
+    const assertOrder = async (expected: Id<"folders">[]) => {
+      const listing = await authed.query(api.folders.list, {
+        galleryId, folderId: rootFolderId, includeEntries: false,
+      });
+      expect(listing.folders.map((folder) => folder._id)).toEqual(expected);
+      for (let i = 0; i < expected.length; i += 1) {
+        for (const direction of ["previous", "next"] as const) {
+          const neighbor = expected[i + (direction === "next" ? 1 : -1)];
+          const target = await authed.query(api.entries.siblingGalleryViewerTarget, {
+            galleryId, folderId: expected[i]!, direction,
+            currentEntryId: entries.get(expected[i]!)!,
+          });
+          if (neighbor === undefined) expect(target).toBeNull();
+          else expect(target).toMatchObject({
+            folderId: neighbor, entry: { _id: entries.get(neighbor) },
+          });
+        }
+      }
+    };
+    for (const [sortOrder, expected] of [
+      ["nameAsc", [apple, banana, cherry]],
+      ["nameDesc", [cherry, banana, apple]],
+      ["sizeAsc", [banana, cherry, apple]],
+      ["sizeDesc", [apple, cherry, banana]],
+      ["dateAsc", [cherry, apple, banana]],
+      ["dateDesc", [banana, apple, cherry]],
+    ] as const) {
+      await authed.mutation(api.galleries.update, { galleryId, sortOrder });
+      await assertOrder([...expected]);
+    }
+    await authed.mutation(api.folders.update, {
+      folderId: rootFolderId, name: "all-folder-orders",
+      accessPolicy: "inherit", discoverability: "listed", sortOrder: "sizeDesc",
+    });
+    await assertOrder([apple, cherry, banana]);
+    // The child's own setting controls its contents, not its position in the parent.
+    await authed.mutation(api.folders.update, {
+      folderId: apple, name: "apple", accessPolicy: "public",
+      discoverability: "listed", sortOrder: "nameDesc",
+    });
+    await assertOrder([apple, cherry, banana]);
+    await authed.mutation(api.folders.update, {
+      folderId: rootFolderId, name: "all-folder-orders",
+      accessPolicy: "inherit", discoverability: "listed", sortOrder: null,
+    });
+    await assertOrder([banana, apple, cherry]);
+  });
+
   test("continues from a folder's final entry into its next sibling", async () => {
     const t = setupTest();
     const { authed } = await seedAdmin(t);
@@ -713,23 +838,32 @@ describe("gallery lightbox folder navigation", () => {
       slug: "sibling-lightbox-navigation",
       kind: "image",
     });
-    const firstFolder = await authed.mutation(api.folders.create, {
-      galleryId,
-      parentId: rootFolderId,
-      name: "First",
-      accessPolicy: "public",
-      discoverability: "listed",
-    });
     const secondFolder = await authed.mutation(api.folders.create, {
       galleryId,
       parentId: rootFolderId,
-      name: "Second",
+      name: "Banana",
+      accessPolicy: "public",
+      discoverability: "listed",
+    });
+    const firstFolder = await authed.mutation(api.folders.create, {
+      galleryId,
+      parentId: rootFolderId,
+      name: "apple",
       accessPolicy: "public",
       discoverability: "listed",
     });
     if (firstFolder.kind !== "complete" || secondFolder.kind !== "complete") {
       throw new Error("Expected shared-storage folders to complete inline");
     }
+    const listing = await authed.query(api.folders.list, {
+      galleryId,
+      folderId: rootFolderId,
+      includeEntries: false,
+    });
+    expect(listing.folders.map((folder) => folder.name)).toEqual([
+      "apple",
+      "Banana",
+    ]);
     const first = await uploadFile(t, authed, {
       galleryId,
       folderId: firstFolder.folderId,
@@ -766,7 +900,7 @@ describe("gallery lightbox folder navigation", () => {
       }),
     ).resolves.toMatchObject({
       folderId: secondFolder.folderId,
-      folderName: "Second",
+      folderName: "Banana",
       entry: {
         _id: siblingFirst.entry._id,
         name: "next.jpg",
@@ -828,7 +962,7 @@ describe("gallery lightbox ancestor navigation", () => {
           throw new Error("Expected inline creation");
         return result.folderId;
       };
-      // Creation order is the folder listing order.
+      // Hidden and missing folders are skipped in alphabetical order.
       const first = await createFolder("First");
       const missing = await createFolder("Missing");
       const hidden = await createFolder("Hidden");

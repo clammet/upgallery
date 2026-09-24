@@ -33,6 +33,7 @@ import type * as lib_entryNames from "../lib/entryNames.js";
 import type * as lib_entrySort from "../lib/entrySort.js";
 import type * as lib_filesystem from "../lib/filesystem.js";
 import type * as lib_filesystemSyncStatus from "../lib/filesystemSyncStatus.js";
+import type * as lib_folderOrder from "../lib/folderOrder.js";
 import type * as lib_folderPath from "../lib/folderPath.js";
 import type * as lib_folderStats from "../lib/folderStats.js";
 import type * as lib_format from "../lib/format.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   "lib/entrySort": typeof lib_entrySort;
   "lib/filesystem": typeof lib_filesystem;
   "lib/filesystemSyncStatus": typeof lib_filesystemSyncStatus;
+  "lib/folderOrder": typeof lib_folderOrder;
   "lib/folderPath": typeof lib_folderPath;
   "lib/folderStats": typeof lib_folderStats;
   "lib/format": typeof lib_format;

@@ -211,12 +211,15 @@ export const compareFilesystemDirectory = internalMutation({
     if (!Number.isFinite(args.modifiedAt) || args.modifiedAt < 0) {
       throw new Error("Invalid directory modification time");
     }
-    const { state } = await requireActiveSync(
+    const { state, folder } = await requireActiveSync(
       ctx,
       args.galleryId,
       args.folderId,
       args.syncId,
     );
+    if (folder.modifiedAt !== args.modifiedAt) {
+      await ctx.db.patch("folders", folder._id, { modifiedAt: args.modifiedAt });
+    }
     if (state.knownModifiedAt === args.modifiedAt) {
       await ctx.db.patch("filesystemSyncStates", state._id, {
         activeSyncId: undefined,
@@ -257,6 +260,7 @@ export const reconcileFilesystemDirectory = internalMutation({
     syncId: v.string(),
     name: v.string(),
     identity: v.string(),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { gallery, folder: parent } = await requireActiveSync(
@@ -266,6 +270,12 @@ export const reconcileFilesystemDirectory = internalMutation({
       args.syncId,
     );
     const name = validateFilesystemSegment(args.name);
+    if (
+      args.modifiedAt !== undefined &&
+      (!Number.isFinite(args.modifiedAt) || args.modifiedAt < 0)
+    ) {
+      throw new Error("Invalid directory modification time");
+    }
     if (args.identity.length < 1 || args.identity.length > 200) {
       throw new Error("Invalid filesystem identity");
     }
@@ -296,6 +306,7 @@ export const reconcileFilesystemDirectory = internalMutation({
         filesystemIdentity: args.identity,
         filesystemSyncId: args.syncId,
         filesystemMissingAt: undefined,
+        ...(args.modifiedAt === undefined ? {} : { modifiedAt: args.modifiedAt }),
       });
       return existing._id;
     }
@@ -309,6 +320,7 @@ export const reconcileFilesystemDirectory = internalMutation({
       discoverability: "listed",
       filesystemIdentity: args.identity,
       filesystemSyncId: args.syncId,
+      modifiedAt: args.modifiedAt,
     });
     await createFolderStats(ctx, folderId, gallery._id);
     return folderId;
@@ -693,6 +705,7 @@ export const completeFilesystemSync = internalMutation({
       lastCompletedAt: now,
       error: undefined,
     });
+    await ctx.db.patch("folders", folder._id, { modifiedAt: args.modifiedAt });
     return { done: true as const };
   },
 });
@@ -1040,6 +1053,12 @@ export const completeFilesystemOperation = internalMutation({
     if (operation.kind !== "rmdir" && args.identity === undefined) {
       throw new Error("Filesystem operation result has no identity");
     }
+    if (
+      args.modifiedAt !== undefined &&
+      (!Number.isFinite(args.modifiedAt) || args.modifiedAt < 0)
+    ) {
+      throw new Error("Invalid directory modification time");
+    }
     const [gallery, parent] = await Promise.all([
       ctx.db.get("galleries", operation.galleryId),
       ctx.db.get("folders", operation.parentId),
@@ -1192,6 +1211,14 @@ export const completeFilesystemOperation = internalMutation({
       await ctx.scheduler.runAfter(0, internal.folders.reparentSubtree, {
         folderId,
       });
+    }
+    if (
+      folderId !== undefined &&
+      operation.kind !== "rmdir" &&
+      operation.kind !== "fileRename" &&
+      args.modifiedAt !== undefined
+    ) {
+      await ctx.db.patch("folders", folderId, { modifiedAt: args.modifiedAt });
     }
     await ctx.db.patch("filesystemOperations", operation._id, {
       state: "complete",

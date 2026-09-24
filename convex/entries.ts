@@ -42,6 +42,7 @@ import {
   adjustFolderStats,
   adjustFolderStatsForEntries,
   readFolderStats,
+  markFolderModified,
 } from "./lib/folderStats";
 import {
   uploadExpiry,
@@ -55,6 +56,7 @@ import {
   requestMediaPreview,
 } from "./lib/storageJobs";
 import { uploaderAttribution } from "./lib/profiles";
+import { FOLDER_LIST_LIMIT, sortedChildFolders } from "./lib/folderOrder";
 import schema from "./schema";
 
 import { enabledUploadExpiryOptions } from "./lib/uploadExpiry";
@@ -398,7 +400,7 @@ export const getGalleryViewerEntry = query({
 });
 
 // Continue past either folder edge, climbing ancestors when siblings run out.
-// Sibling order matches the folder listing index (creation order).
+// Sibling order follows the containing folder's effective thumbnail order.
 export const siblingGalleryViewerTarget = query({
   args: {
     anonymousClaim: v.optional(v.string()),
@@ -440,18 +442,21 @@ export const siblingGalleryViewerTarget = query({
     let ancestorLevels = 0;
     // Match the existing bounded folder listing; never scan a whole gallery.
     while (branch.parentId !== undefined && ancestorLevels < 128) {
-      const candidates = await ctx.db
-        .query("folders")
-        .withIndex("by_galleryId_and_parentId", (q) => {
-          const siblings = q
-            .eq("galleryId", gallery._id)
-            .eq("parentId", branch.parentId);
-          return args.direction === "next"
-            ? siblings.gt("_creationTime", branch._creationTime)
-            : siblings.lt("_creationTime", branch._creationTime);
-        })
-        .order(args.direction === "next" ? "asc" : "desc")
-        .take(128);
+      const parent = await ctx.db.get("folders", branch.parentId);
+      if (parent === null || parent.galleryId !== gallery._id) return null;
+      const siblings = await sortedChildFolders(
+        ctx,
+        gallery,
+        parent,
+      );
+      const branchIndex = siblings.findIndex(
+        (candidate) => candidate._id === branch._id,
+      );
+      if (branchIndex === -1) return null;
+      const candidates =
+        args.direction === "next"
+          ? siblings.slice(branchIndex + 1)
+          : siblings.slice(0, branchIndex).reverse();
       for (const candidate of candidates) {
         if (
           candidate.filesystemMissingAt === undefined &&
@@ -463,9 +468,7 @@ export const siblingGalleryViewerTarget = query({
       }
       if (sibling !== null) break;
       // A truncated level is not proof that this branch has no more siblings.
-      if (candidates.length === 128) return null;
-      const parent = await ctx.db.get("folders", branch.parentId);
-      if (parent === null || parent.galleryId !== gallery._id) return null;
+      if (siblings.length === FOLDER_LIST_LIMIT) return null;
       branch = parent;
       ancestorLevels += 1;
     }
@@ -1201,6 +1204,7 @@ export const rename = mutation({
       extension: fileExtensionFromName(name, entry.extension),
       updatedAt: now,
     });
+    await markFolderModified(ctx, folder._id);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "entry.renamed",
@@ -1262,6 +1266,7 @@ export const setMarkdownMode = mutation({
       extension: args.markdown ? "md" : "txt",
       updatedAt: Date.now(),
     });
+    await markFolderModified(ctx, entry.folderId);
     return { name };
   },
 });

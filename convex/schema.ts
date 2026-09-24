@@ -136,6 +136,8 @@ export default defineSchema({
     previewSource: v.optional(v.string()),
     // Undefined inherits the gallery's thumbnail ordering.
     sortOrder: v.optional(gallerySortOrder),
+    // Directory mtime for filesystem folders; content-change time for shared folders.
+    modifiedAt: v.optional(v.number()),
     filesystemIdentity: v.optional(v.string()),
     filesystemSyncId: v.optional(v.string()),
     filesystemMissingAt: v.optional(v.number()),

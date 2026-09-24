@@ -499,7 +499,8 @@ http.route({
       typeof body.parentId !== "string" ||
       typeof body.syncId !== "string" ||
       typeof body.name !== "string" ||
-      typeof body.identity !== "string"
+      typeof body.identity !== "string" ||
+      (body.modifiedAt !== undefined && typeof body.modifiedAt !== "number")
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
@@ -512,6 +513,7 @@ http.route({
           syncId: body.syncId,
           name: body.name,
           identity: body.identity,
+          modifiedAt: body.modifiedAt,
         },
       ),
     });

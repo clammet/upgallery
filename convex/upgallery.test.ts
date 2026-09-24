@@ -3681,8 +3681,8 @@ describe("upgallery backend", () => {
       const gallery = await ctx.db.get("galleries", galleryId);
       const folderId = gallery!.rootFolderId!;
       for (const entry of [
-        { name: "beta.jpg", size: 30, sortTimestamp: 300 },
-        { name: "Alpha.jpg", size: 20, sortTimestamp: 100 },
+        { name: "Beta.jpg", size: 30, sortTimestamp: 300 },
+        { name: "alpha.jpg", size: 20, sortTimestamp: 100 },
         { name: "charlie.jpg", size: 10, sortTimestamp: 200 },
       ]) {
         await ctx.db.insert("entries", {
@@ -3706,26 +3706,39 @@ describe("upgallery backend", () => {
       }
       return folderId;
     });
-    const names = async () =>
-      (
-        await ownerClient.query(api.entries.listGalleryPage, {
+    // Raw name sorting would put Beta before alpha. Read one entry per
+    // page so the assertion also catches sorting only within each page.
+    const names = async () => {
+      const result: string[] = [];
+      let cursor: string | null = null;
+      for (let pageNumber = 0; pageNumber < 4; pageNumber += 1) {
+        const page: {
+          page: Array<{ name: string }>;
+          isDone: boolean;
+          continueCursor: string;
+        } = await ownerClient.query(api.entries.listGalleryPage, {
           galleryId,
           folderId: rootFolderId,
-          paginationOpts: { numItems: 10, cursor: null },
-        })
-      ).page.map((entry) => entry.name);
+          paginationOpts: { numItems: 1, cursor },
+        });
+        result.push(...page.page.map((entry) => entry.name));
+        if (page.isDone) return result;
+        cursor = page.continueCursor;
+      }
+      throw new Error("Expected pagination to finish");
+    };
 
     await expect(names()).resolves.toEqual([
-      "Alpha.jpg",
-      "beta.jpg",
+      "alpha.jpg",
+      "Beta.jpg",
       "charlie.jpg",
     ]);
     for (const [sortOrder, expected] of [
-      ["nameDesc", ["charlie.jpg", "beta.jpg", "Alpha.jpg"]],
-      ["sizeAsc", ["charlie.jpg", "Alpha.jpg", "beta.jpg"]],
-      ["sizeDesc", ["beta.jpg", "Alpha.jpg", "charlie.jpg"]],
-      ["dateAsc", ["Alpha.jpg", "charlie.jpg", "beta.jpg"]],
-      ["dateDesc", ["beta.jpg", "charlie.jpg", "Alpha.jpg"]],
+      ["nameDesc", ["charlie.jpg", "Beta.jpg", "alpha.jpg"]],
+      ["sizeAsc", ["charlie.jpg", "alpha.jpg", "Beta.jpg"]],
+      ["sizeDesc", ["Beta.jpg", "alpha.jpg", "charlie.jpg"]],
+      ["dateAsc", ["alpha.jpg", "charlie.jpg", "Beta.jpg"]],
+      ["dateDesc", ["Beta.jpg", "charlie.jpg", "alpha.jpg"]],
     ] as const) {
       await ownerClient.mutation(api.galleries.update, {
         galleryId,
@@ -3742,8 +3755,8 @@ describe("upgallery backend", () => {
       sortOrder: "nameAsc",
     });
     await expect(names()).resolves.toEqual([
-      "Alpha.jpg",
-      "beta.jpg",
+      "alpha.jpg",
+      "Beta.jpg",
       "charlie.jpg",
     ]);
     await ownerClient.mutation(api.folders.update, {
@@ -3754,9 +3767,9 @@ describe("upgallery backend", () => {
       sortOrder: null,
     });
     await expect(names()).resolves.toEqual([
-      "beta.jpg",
+      "Beta.jpg",
       "charlie.jpg",
-      "Alpha.jpg",
+      "alpha.jpg",
     ]);
   });
 

@@ -75,6 +75,16 @@ Click **Log out** in the header to sign out.
 
 Open a gallery link to see its folders and files in a thumbnail grid.
 
+Folders appear before files. Both groups follow **Thumbnail order**, using the
+gallery setting unless the current folder has its own setting. Name sorting
+ignores uppercase and lowercase. Folder size includes all files in nested
+subfolders; folder date means its modified date. The viewer follows the same
+folder order when moving between folders.
+
+For filesystem folders, the modified date comes from disk and updates on a scan.
+For other folders, it updates when files or subfolders are added, removed, moved,
+or renamed. Until a modified date is available, the folder's creation date is used.
+
 - Click a folder to open it. Use the folder trail in the header to return to a
   parent folder.
 - Click a file thumbnail to open the **viewer**, also called the lightbox.
@@ -306,7 +316,7 @@ These additional controls are in **Settings** for image galleries. Click
 | **Filename/URL** | Appears for a **Custom** preview. Supply an image filename or URL; filename suggestions are offered while typing when available. |
 | **Subfolder previews** | Allows images in nested subfolders to fill folder previews. |
 | **Quick move** | Allows users with move permission to drag files and folders into folders without first entering select mode. It does not grant move permission. |
-| **Thumbnail order** | Sorts files by filename/title, size, or date taken, in either direction. Individual folders can choose a different order. |
+| **Thumbnail order** | Sorts both folders and files by name, size, or date, in either direction, with folders first. Names ignore uppercase and lowercase. Folder size includes nested contents; folder dates use modified time, while files use date taken when available. Individual folders can choose a different order for their contents. |
 | **Infinite scroll** | Automatically loads more gallery files as visitors scroll. Turning it off uses **Previous** and **Next** page navigation and disables the account-level infinite-scroll switch for this gallery. |
 | **Files per page** | Chooses how many files are requested per page or scrolling batch: 50, 100, 150, 200, or 250. |
 | **Folder URLs** | Chooses **Internal folder IDs** or **Friendly folder paths** for navigation and copied folder links. Friendly paths use the folder names in the address. |
@@ -375,7 +385,7 @@ folder. Click **Save** to apply form changes.
 | **Discoverability: Listed** | Shows the folder in its parent's listing to users who can view it. |
 | **Discoverability: Unlisted — hidden from viewers** | Hides the folder from viewers' listings; editors and owners can still see it. Users with view access can still open its link, so this is separate from restricting access. |
 | **Folder preview** | Uses the gallery default or a first-image, random-image, three-image, or custom preview for this folder. **Custom** requires a **Filename/URL**. |
-| **Thumbnail order** | Uses the gallery default or overrides file sorting for this folder by name, size, or date taken. |
+| **Thumbnail order** | Uses the gallery default or overrides sorting for both files and subfolders inside this folder by name, size, or date. |
 
 The root folder's access is controlled through gallery permissions, so it does
 not offer the access override or discoverability dropdowns.
@@ -406,6 +416,10 @@ uploading and creating folders:
   folder, then click **Move here**. Files can move to another image gallery you
   own. A selection containing folders must stay within its current gallery;
   a folder cannot move into itself or one of its descendants.
+  Use **Search folders…** above the folder list to filter by folder name.
+  Matching folders keep their parent folders visible so you can see where they
+  belong. Clear the search to show all folders again. Select a visible destination
+  to enable **Move here**.
 - **Drag to move:** In select mode, drag selected items onto a folder card or
   an ancestor in the folder trail. With **Quick move** enabled, dragging is also
   available outside select mode.

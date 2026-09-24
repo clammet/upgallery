@@ -159,6 +159,33 @@ describe("filesystem scanner", () => {
     expect(cleanFilesystemSegment("＜staging＞")).toBe("<staging>");
   });
 
+  test("directory scans preserve disk modified time even when a scan is skipped", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createUserGallery(
+      t, admin.googleSubject, "directory-mtime",
+    );
+    const claim = await claimSync(t, galleryId, rootFolderId);
+    await t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
+      galleryId, folderId: rootFolderId, syncId: claim.syncId, modifiedAt: 1234,
+    });
+    await completeSync(t, {
+      galleryId, folderId: rootFolderId, syncId: claim.syncId, modifiedAt: 2345,
+    });
+    expect(await t.run(async (ctx) => ctx.db.get("folders", rootFolderId)))
+      .toMatchObject({ modifiedAt: 2345 });
+    // Simulate a folder from before modifiedAt was recorded on folder documents.
+    await t.run(async (ctx) => {
+      await ctx.db.patch("folders", rootFolderId, { modifiedAt: undefined });
+    });
+    const unchanged = await claimSync(t, galleryId, rootFolderId);
+    await expect(t.mutation(internal.filesystemSync.compareFilesystemDirectory, {
+      galleryId, folderId: rootFolderId, syncId: unchanged.syncId, modifiedAt: 2345,
+    })).resolves.toEqual({ shouldScan: false });
+    expect(await t.run(async (ctx) => ctx.db.get("folders", rootFolderId)))
+      .toMatchObject({ modifiedAt: 2345 });
+  });
+
   test("scanned directories and files keep fullwidth names verbatim", async () => {
     const t = setupTest();
     const admin = await seedAdmin(t);
@@ -177,10 +204,11 @@ describe("filesystem scanner", () => {
         syncId: claim.syncId,
         name: "＜staging＞",
         identity: "9:100",
+        modifiedAt: 1234,
       },
     );
     const staging = await t.run(async (ctx) => ctx.db.get("folders", stagingId));
-    expect(staging?.name).toBe("＜staging＞");
+    expect(staging).toMatchObject({ name: "＜staging＞", modifiedAt: 1234 });
 
     const fileName = "写真！　１.jpg";
     const storageKey = `public/users/verbatim-mount/${fileName}`;

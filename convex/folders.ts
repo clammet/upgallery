@@ -25,8 +25,9 @@ import {
   validateFilesystemSegment,
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
-import { createFolderStats } from "./lib/folderStats";
+import { createFolderStats, markFolderModified } from "./lib/folderStats";
 import { folderPathKey } from "./lib/folderPath";
+import { sortedChildFolders } from "./lib/folderOrder";
 import {
   assertCanManageGallery,
   canManageGallery,
@@ -399,12 +400,11 @@ export const list = query({
     const canUpload =
       gallery.pendingMigrationId === undefined && roleAtLeast(role, "editor");
 
-    const candidateFolders = await ctx.db
-      .query("folders")
-      .withIndex("by_galleryId_and_parentId", (q) =>
-        q.eq("galleryId", gallery._id).eq("parentId", folder._id),
-      )
-      .take(128);
+    const candidateFolders = await sortedChildFolders(
+      ctx,
+      gallery,
+      folder,
+    );
     const folders = [];
     for (const child of candidateFolders) {
       if (
@@ -741,6 +741,7 @@ export const create = mutation({
         args.previewMode === "custom" ? previewSource : undefined,
     });
     await createFolderStats(ctx, folderId, gallery._id);
+    await markFolderModified(ctx, parent._id);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "folder.created",
@@ -826,6 +827,7 @@ export const removeMany = mutation({
       return { kind: "filesystem" as const, operations };
     }
     for (const folder of folders) {
+      await markFolderModified(ctx, folder.parentId!);
       // filesystemMissingAt doubles as the tombstone for app-initiated
       // deletes: every listing and destination check already excludes it,
       // and cleanupMissingFolder removes the subtree behind it.
@@ -1042,6 +1044,7 @@ export const moveMany = mutation({
       };
     }
     for (const folder of movingFolders) {
+      await markFolderModified(ctx, folder.parentId!);
       await ctx.db.patch("folders", folder._id, {
         parentId: destination._id,
         ancestorIds: [...destination.ancestorIds, destination._id],
@@ -1050,6 +1053,7 @@ export const moveMany = mutation({
         folderId: folder._id,
       });
     }
+    await markFolderModified(ctx, destination._id);
     await ctx.db.insert("auditEvents", {
       actorProfileId: actor._id,
       action: "folders.moved",
@@ -1275,6 +1279,9 @@ export const update = mutation({
         ? {}
         : { sortOrder: args.sortOrder ?? undefined }),
     });
+    if (name !== folder.name && folder.parentId !== undefined) {
+      await markFolderModified(ctx, folder.parentId);
+    }
     if (args.sortOrder?.startsWith("date")) {
       await scheduleSortTimestampBackfill(ctx, gallery._id);
     }

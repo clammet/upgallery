@@ -182,6 +182,7 @@ async function syncUserDirectory(
               syncId: claim.syncId,
               name: child.name,
               identity: filesystemIdentity(metadata),
+              modifiedAt: metadata.mtimeMs,
             },
           );
           childFolderIds.push(reconciled.folderId);
