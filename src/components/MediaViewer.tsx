@@ -19,8 +19,11 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  EyeOff,
   Info,
   Link2,
+  LockKeyhole,
+  MapPin,
   X,
 } from "lucide-react";
 import { MoveIcon, TrashIcon } from "./ActionIcons";
@@ -38,6 +41,7 @@ import {
   parseMetadataJson,
 } from "../lib/metadata";
 import { MarkdownToggle } from "./MarkdownToggle";
+import { ExpiryIndicator } from "./ExpiryIndicator";
 import styles from "../styles/viewer.module.css";
 
 const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
@@ -60,6 +64,8 @@ export type MediaViewerItem = {
   sourceUrl?: string;
   downloadUrl?: string;
   passwordProtected?: boolean;
+  unlisted?: boolean;
+  expiresAt?: number;
   canToggleMarkdown?: boolean;
   previewReady?: boolean;
   previewError?: string;
@@ -1349,6 +1355,42 @@ export function MediaViewer(props: {
               </button>
             ) : null}
           </div>
+          {activeItem.unlisted ||
+          activeItem.passwordProtected ||
+          activeItem.expiresAt !== undefined ||
+          location !== null ? (
+            <div className={styles.itemStatuses}>
+              {activeItem.unlisted ? (
+                <span title="Unlisted" aria-label="Unlisted" tabIndex={0}>
+                  <EyeOff aria-hidden="true" size={14} />
+                </span>
+              ) : null}
+              {activeItem.passwordProtected ? (
+                <span
+                  title="Password protected"
+                  aria-label="Password protected"
+                  tabIndex={0}
+                >
+                  <LockKeyhole aria-hidden="true" size={14} />
+                </span>
+              ) : null}
+              {activeItem.expiresAt !== undefined ? (
+                <ExpiryIndicator
+                  key={activeItem.id}
+                  expiresAt={activeItem.expiresAt}
+                />
+              ) : null}
+              {location !== null ? (
+                <span
+                  title="Contains GPS location metadata"
+                  aria-label="Contains GPS location metadata"
+                  tabIndex={0}
+                >
+                  <MapPin aria-hidden="true" size={14} />
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <span className={styles.position}>
             {navigation.position.toLocaleString()} /{" "}
             {navigation.total.toLocaleString()}
@@ -1636,8 +1678,20 @@ export function MediaViewer(props: {
             >
               <div ref={infoContentRef} className={styles.infoContent}>
                 <h3>Information</h3>
-                {infoRows.length > 0 ? (
+                {infoRows.length > 0 || activeItem.expiresAt !== undefined ? (
                   <dl className={styles.infoList}>
+                    {activeItem.expiresAt !== undefined ? (
+                      <div className={styles.infoRow}>
+                        <dt>Expires</dt>
+                        <dd>
+                          <ExpiryIndicator
+                            key={activeItem.id}
+                            expiresAt={activeItem.expiresAt}
+                            showDate
+                          />
+                        </dd>
+                      </div>
+                    ) : null}
                     {infoRows.map((row) => (
                       <div className={styles.infoRow} key={row.key}>
                         <dt>{row.label}</dt>

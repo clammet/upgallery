@@ -102,6 +102,15 @@ show that an update is queued, in progress, or complete.
 The viewer is available from gallery thumbnails and from the filename or **View**
 area of an uploader entry.
 
+Special status icons appear just left of the viewer's file count: a crossed-out
+eye for unlisted files, a lock for password protection, a clock for expiry, and
+a map pin for files with GPS location metadata.
+Hover over an icon for details. Files without these statuses have no extra icons.
+Hover over the clock to see **Expires in:** followed by the remaining time.
+The information panel also shows an **Expires** row with the date and time in
+your local time zone; hover over it to see the remaining time. Files that never
+expire have no expiry icon or row.
+
 Images, browser-supported video and audio, PDFs, plain text, Markdown, and source
 code can be previewed. Video and audio use playback controls. Markdown is shown
 as formatted content, and recognized source code has syntax highlighting.
@@ -182,6 +191,11 @@ formatted Markdown. This changes the file extension between `.txt` and `.md`.
 
 The listing shows filenames, descriptions, file sizes, and view counts. A lock
 icon marks password protection; a crossed-out eye marks your unlisted files.
+A clock marks files that expire. Hover over it to see **Expires in:** and the
+remaining time. **View metadata** also shows the expiry date and time in your
+local time zone, with the remaining time on hover.
+A map pin marks files with GPS location metadata. Hover over it to see
+**Contains GPS location metadata**. Open **View metadata** to see the location.
 
 ### Manage your own uploads
 

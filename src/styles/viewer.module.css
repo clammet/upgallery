@@ -114,6 +114,17 @@
   color: #ffb1b5;
 }
 
+.itemStatuses,
+.itemStatuses > span {
+  align-items: center;
+  display: flex;
+}
+
+.itemStatuses {
+  color: var(--gallery-muted);
+  gap: 0.35rem;
+}
+
 .position {
   color: var(--gallery-muted);
   font-size: 0.7rem;

@@ -486,6 +486,9 @@ export function GalleryPage(props: {
           downloadUrl: sourceUrl,
           mediaKind: entry.mediaKind,
           mimeType: entry.mimeType,
+          passwordProtected: entry.passwordProtected,
+          unlisted: entry.unlisted,
+          expiresAt: entry.expiresAt,
           previewReady:
             !heif || nativeHeifPreview || entry.previewKey !== undefined,
           previewError: nativeHeifPreview ? undefined : entry.previewError,

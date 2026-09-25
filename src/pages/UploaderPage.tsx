@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Eye, EyeOff, Info, LockKeyhole, X } from "lucide-react";
+import { Eye, EyeOff, Info, LockKeyhole, MapPin, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -23,6 +23,7 @@ import {
 } from "../components/MediaViewer";
 import { TrashIcon } from "../components/ActionIcons";
 import { MarkdownToggle } from "../components/MarkdownToggle";
+import { ExpiryIndicator } from "../components/ExpiryIndicator";
 import {
   completeFilesystemOperation,
   formatBytes,
@@ -241,6 +242,8 @@ export function UploaderPage(props: {
           canToggleTextMarkdown(entry.mediaKind, entry.name),
         canRename: entry.canDelete,
         passwordProtected: entry.passwordProtected,
+        unlisted: entry.unlisted,
+        expiresAt: entry.expiresAt,
         previewReady:
           !isHeifImage(entry.mimeType, entry.name) ||
           shouldUseNativeHeifPreview(entry.mimeType, entry.name) ||
@@ -573,11 +576,13 @@ export function UploaderPage(props: {
       </div>
       {metadataEntry !== undefined &&
       (metadataEntry.metadataJson !== undefined ||
+        metadataEntry.expiresAt !== undefined ||
         metadataEntry.uploader !== undefined) ? (
         <MetadataDialog
           entryName={metadataEntry.name}
           metadataJson={metadataEntry.metadataJson}
           uploader={metadataEntry.uploader}
+          expiresAt={metadataEntry.expiresAt}
           canRemoveLocation={
             metadataEntry.canDelete && metadataEntry.mediaKind === "image"
           }
@@ -628,6 +633,12 @@ function UploaderEntry(props: {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const hasLocation = useMemo(
+    () =>
+      props.entry.metadataJson !== undefined &&
+      metadataLocation(parseMetadataJson(props.entry.metadataJson) ?? {}) !== null,
+    [props.entry.metadataJson],
+  );
   const itemUrl = uploaderItemUrl(props.routeRoot, props.entry._id);
   const openLightbox = (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (!shouldOpenMediaViewer(event)) return;
@@ -682,6 +693,7 @@ function UploaderEntry(props: {
               </span>
             ) : null}
             {props.entry.metadataJson !== undefined ||
+            props.entry.expiresAt !== undefined ||
             props.entry.uploader !== undefined ? (
               <button
                 className={styles.metadataButton}
@@ -699,6 +711,18 @@ function UploaderEntry(props: {
                 aria-label="Unlisted — visible only to you in the listing"
               >
                 <EyeOff aria-hidden="true" size={14} />
+              </span>
+            ) : null}
+            {props.entry.expiresAt !== undefined ? (
+              <ExpiryIndicator expiresAt={props.entry.expiresAt} />
+            ) : null}
+            {hasLocation ? (
+              <span
+                title="Contains GPS location metadata"
+                aria-label="Contains GPS location metadata"
+                tabIndex={0}
+              >
+                <MapPin aria-hidden="true" size={14} />
               </span>
             ) : null}
             {props.entry.canDelete ? (
@@ -791,6 +815,7 @@ function MetadataDialog(props: {
   entryName: string;
   metadataJson?: string;
   uploader?: string;
+  expiresAt?: number;
   canRemoveLocation: boolean;
   onClose: () => void;
   onRemoveLocation: () => Promise<void>;
@@ -864,7 +889,7 @@ function MetadataDialog(props: {
 
   return (
     <Dialog title="Metadata" onClose={props.onClose}>
-      {rows.length > 0 ? (
+      {rows.length > 0 || props.expiresAt !== undefined ? (
         <div className={styles.metadataContent}>
           {removeRequested ? (
             <p className={layout.notice}>
@@ -876,6 +901,14 @@ function MetadataDialog(props: {
           <div className={styles.metadataTableFrame}>
             <table className={styles.metadataTable}>
               <tbody>
+                {props.expiresAt !== undefined ? (
+                  <tr>
+                    <th scope="row">Expires</th>
+                    <td>
+                      <ExpiryIndicator expiresAt={props.expiresAt} showDate />
+                    </td>
+                  </tr>
+                ) : null}
                 {rows.map((row) => (
                   <tr key={row.key}>
                     <th scope="row">{row.label}</th>
