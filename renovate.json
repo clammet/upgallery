@@ -5,13 +5,18 @@
     "customManagers:githubActionsVersions"
   ],
   "osvVulnerabilityAlerts": true,
-  "platformAutomerge": false,
+  "platformAutomerge": true,
+  "internalChecksFilter": "strict",
+  "statusCheckWhen": {
+    "artifactError": "always"
+  },
   "prHourlyLimit": 0,
   "rangeStrategy": "pin",
   "minimumReleaseAge": "3 days",
   "rebaseWhen": "behind-base-branch",
   "dependencyDashboard": true,
   "lockFileMaintenance": {
+    "minimumReleaseAge": null,
     "enabled": true,
     "automerge": true,
     "rebaseWhen": "behind-base-branch"
