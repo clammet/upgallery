@@ -1,7 +1,7 @@
 import { internal } from "./_generated/api";
 import { uploadExpiresAt } from "./lib/uploadExpiry";
-import { internalMutation } from "./_generated/server";
-import { v } from "convex/values";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sha256 } from "./lib/crypto";
 import { adjustGalleryStats } from "./lib/galleryStats";
@@ -17,7 +17,7 @@ import {
   reservedNameKeys,
   resolveLandingName,
 } from "./lib/entryNames";
-import { entryNameKey, fileExtensionFromName } from "./lib/normalize";
+import { entryNameKey, fileExtensionFromName, normalizeHost } from "./lib/normalize";
 import { folderPathKey } from "./lib/folderPath";
 import {
   replaceMediaProcessingJob,
@@ -433,6 +433,13 @@ export const renewUpload = internalMutation({
 
 export const claimDownload = internalMutation({
   args: { token: v.string() },
+  returns: v.object({
+    entryId: v.id("entries"),
+    storageKey: v.string(),
+    mimeType: v.string(),
+    fileName: v.string(),
+    disposition: v.union(v.literal("inline"), v.literal("attachment"), v.literal("thumbnail"), v.literal("preview")),
+  }),
   handler: async (ctx, args) => {
     const tokenHash = await sha256(args.token);
     const ticket = await ctx.db
@@ -443,11 +450,11 @@ export const claimDownload = internalMutation({
       ticket === null ||
       ticket.expiresAt < Date.now()
     ) {
-      throw new Error("Download ticket is invalid or expired");
+      throw new ConvexError({ code: "download_expired", message: "Download ticket is invalid or expired" });
     }
     const entry = await ctx.db.get("entries", ticket.entryId);
     if (entry === null || entry.state !== "ready" || (entry.expiresAt !== undefined && entry.expiresAt <= Date.now())) {
-      throw new Error("File not found");
+      throw new ConvexError({ code: "download_not_found", message: "File not found" });
     }
     const usesThumbnail = ticket.disposition === "thumbnail";
     const usesPreview = ticket.disposition === "preview";
@@ -488,6 +495,41 @@ export const claimDownload = internalMutation({
       fileName: entry.name,
       disposition: ticket.disposition,
     };
+  },
+});
+
+// This only resolves an app page. It never grants file access or renews a
+// ticket, so password and gallery access checks still happen in the lightbox.
+export const uploaderHotlinkTarget = internalQuery({
+  args: { entryId: v.string(), host: v.string(), now: v.number() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("entries", args.entryId);
+    const entry = id === null ? null : await ctx.db.get("entries", id);
+    const gallery = entry === null ? null : await ctx.db.get("galleries", entry.galleryId);
+    if (gallery !== null && gallery.kind !== "uploader") return null;
+    const routes = await ctx.db.query("galleryHosts")
+      .withIndex("by_host", (q) => q.eq("host", normalizeHost(args.host)))
+      .take(32);
+    if (gallery !== null && gallery.deletedAt === undefined) {
+      const matching = routes.filter((route) => route.galleryId === gallery._id);
+      const route = matching.find((route) => route.rootPath === "/") ?? matching[0];
+      const root = route?.rootPath ?? `/up/${gallery.slug}`;
+      return entry !== null && entry.state === "ready" &&
+        (entry.expiresAt === undefined || entry.expiresAt > args.now)
+        ? `${root}?item=${encodeURIComponent(entry._id)}`
+        : `${root}?notice=item-not-found`;
+    }
+    // Once the entry and ticket have been removed, the host's /up route is
+    // the only remaining context carried by old direct links.
+    routes.sort((a, b) => Number(b.rootPath === "/up") - Number(a.rootPath === "/up"));
+    for (const route of routes) {
+      const candidate = await ctx.db.get("galleries", route.galleryId);
+      if (candidate?.kind === "uploader" && candidate.deletedAt === undefined) {
+        return `${route.rootPath}?notice=item-not-found`;
+      }
+    }
+    return "/up/?notice=item-not-found";
   },
 });
 

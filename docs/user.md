@@ -473,5 +473,5 @@ There is no undo control.
 | **Preparing full-resolution preview…** | Wait for the preview to finish processing. Some image formats require preparation before they can be displayed. |
 | A file cannot be previewed, or a text file is too large to preview | Use **Download** or **Open original** and open it with an appropriate application. |
 | An upload fails | Read the error beside the form or in transfer details. File type, size, and available storage limits can vary by site. Correct the reported problem and submit again, or use **Retry** if available. |
-| A temporary uploader file address stops working | Reopen the file from the uploader or its copied viewer link to obtain fresh access. Use **Copy link** for sharing. |
+| A temporary uploader file address expires | Opening it in your browser takes you to the file's viewer. If the file was deleted or has expired, you return to the uploader with an **Item not found** message. Use **Copy link** for sharing. |
 | An uploader file has expired | Expired files are automatically deleted and their links stop working. Ask the uploader to submit the file again if it is still needed. |

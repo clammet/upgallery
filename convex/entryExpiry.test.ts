@@ -9,7 +9,10 @@ import { DEFAULT_UPLOAD_EXPIRY_OPTIONS, enabledUploadExpiryOptions, uploadExpire
 const modules = import.meta.glob("./**/*.ts");
 const DAY = 24 * 60 * 60 * 1000;
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 async function setup(kind: "image" | "uploader" = "uploader") {
   const t = convexTest(schema, modules);
@@ -40,6 +43,79 @@ async function setup(kind: "image" | "uploader" = "uploader") {
 }
 
 describe("uploader expiry", () => {
+  test("expired and cleaned-up hotlinks resolve to the lightbox; deleted files resolve to the uploader", async () => {
+    const { t, owner, galleryId, upload } = await setup();
+    const { entryId } = await upload();
+    const { token } = await owner.mutation(api.entries.createDownloadTicket, { galleryId, entryId, disposition: "inline" });
+    vi.advanceTimersByTime(6 * 60_000);
+    await expect(t.mutation(internal.storageGateway.claimDownload, { token })).rejects.toThrow("Download ticket is invalid or expired");
+    const secret = "test-storage-secret-with-more-than-24-characters";
+    vi.stubEnv("STORAGE_INTERNAL_SECRET", secret);
+    const rejected = await t.fetch("/internal/storage/claim-download", {
+      method: "POST", headers: { "x-upgallery-storage-secret": secret }, body: JSON.stringify({ token }),
+    });
+    expect(await rejected.json()).toEqual({ code: "download_expired", error: "Download ticket is invalid or expired" });
+    const denied = await t.fetch("/internal/storage/uploader-hotlink-target", {
+      method: "POST", body: JSON.stringify({ entryId, host: "expiry.example.com" }),
+    });
+    expect(denied.status).toBe(401);
+    const resolved = await t.fetch("/internal/storage/uploader-hotlink-target", {
+      method: "POST", headers: { "x-upgallery-storage-secret": secret }, body: JSON.stringify({ entryId, host: "expiry.example.com" }),
+    });
+    expect(await resolved.json()).toBe(`/up?item=${entryId}`);
+    const target = () => t.query(internal.storageGateway.uploaderHotlinkTarget, { entryId, host: "expiry.example.com:3000", now: Date.now() });
+    expect(await target()).toBe(`/up?item=${entryId}`);
+    await t.mutation(internal.ticketMaintenance.cleanupExpired, {});
+    expect(await target()).toBe(`/up?item=${entryId}`);
+    expect(await t.query(internal.storageGateway.uploaderHotlinkTarget, { entryId, host: "other.example.com", now: Date.now() })).toBe(`/up/expiry?item=${entryId}`);
+    await t.run((ctx) => ctx.db.patch("entries", entryId, { expiresAt: Date.now() }));
+    expect(await target()).toBe("/up?notice=item-not-found");
+    await t.run((ctx) => ctx.db.delete("entries", entryId));
+    expect(await target()).toBe("/up?notice=item-not-found");
+    expect(await t.query(internal.storageGateway.uploaderHotlinkTarget, { entryId: "invalid", host: "expiry.example.com", now: Date.now() })).toBe("/up?notice=item-not-found");
+  });
+
+  test("direct lookup finds older uploads outside the listing and rejects missing or foreign IDs", async () => {
+    const { t, owner, galleryId, input, upload } = await setup();
+    const { entryId } = await upload();
+    await t.run(async (ctx) => {
+      const original = (await ctx.db.get("entries", entryId))!;
+      const { _id, _creationTime, ...entry } = original;
+      for (let i = 0; i < 128; i += 1) {
+        await ctx.db.insert("entries", { ...entry, name: `newer-${i}.jpg`, nameKey: `newer-${i}.jpg` });
+      }
+    });
+    const listing = await owner.query(api.folders.list, { galleryId, folderId: input.folderId });
+    expect(listing.entries.some((entry) => entry._id === entryId)).toBe(false);
+    const lookup = { galleryId, requestedEntryId: entryId, now: Date.now() };
+    expect(await owner.query(api.entries.getUploaderViewerEntry, lookup)).toHaveProperty("_id", entryId);
+    expect(await owner.query(api.entries.getUploaderViewerEntry, { ...lookup, requestedEntryId: "invalid" })).toBeNull();
+    const otherGalleryId = await t.run(async (ctx) => {
+      const { _id, _creationTime, ...gallery } = (await ctx.db.get("galleries", galleryId))!;
+      return ctx.db.insert("galleries", { ...gallery, slug: "other" });
+    });
+    expect(await owner.query(api.entries.getUploaderViewerEntry, { ...lookup, galleryId: otherGalleryId })).toBeNull();
+    await t.run((ctx) => ctx.db.delete("entries", entryId));
+    expect(await owner.query(api.entries.getUploaderViewerEntry, lookup)).toBeNull();
+  });
+
+  test("direct uploader lookup finds unlisted uploads while preserving password and gallery access checks", async () => {
+    const { t, owner, galleryId, input, upload } = await setup();
+    const { entryId } = await upload(undefined, { unlisted: true, password: "secret" });
+    const anonymousClaim = "d".repeat(64);
+    const lookup = { anonymousClaim, galleryId, requestedEntryId: entryId, now: Date.now() };
+    expect((await t.query(api.folders.list, { anonymousClaim, galleryId, folderId: input.folderId })).entries).toHaveLength(0);
+    const entry = await t.query(api.entries.getUploaderViewerEntry, lookup);
+    expect(entry).toMatchObject({ _id: entryId, passwordProtected: true, canDelete: false });
+    expect(entry).not.toHaveProperty("passwordHash");
+    expect(entry).not.toHaveProperty("passwordSalt");
+    expect(entry?.metadataJson).toBeUndefined();
+    await expect(t.mutation(api.entries.createDownloadTicket, { anonymousClaim, galleryId, entryId, disposition: "inline" })).rejects.toThrow("Incorrect password");
+    await t.run((ctx) => ctx.db.patch("galleries", galleryId, { anonymousRole: "none" }));
+    expect(await t.query(api.entries.getUploaderViewerEntry, lookup)).toBeNull();
+    expect(await owner.query(api.entries.getUploaderViewerEntry, lookup)).toMatchObject({ _id: entryId, canDelete: true });
+  });
+
   test("owners and admins configure expiry, preserve choices across off/on, and require a duration", async () => {
     const { t, owner, admin, galleryId } = await setup();
     await owner.mutation(api.galleries.update, { galleryId, expiryEnabled: true });

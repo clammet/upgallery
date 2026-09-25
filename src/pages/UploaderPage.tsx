@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Eye, EyeOff, Info, LockKeyhole } from "lucide-react";
+import { Eye, EyeOff, Info, LockKeyhole, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -93,6 +93,27 @@ export function UploaderPage(props: {
     useState<Id<"entries"> | null>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const viewerEntryId = searchParams.get("item");
+  const [notice, setNotice] = useState<string | null>(null);
+  const viewerLookupTime = useMemo(() => Date.now(), [viewerEntryId]);
+  const linkedEntry = useQuery(api.entries.getUploaderViewerEntry,
+    viewerEntryId === null ? "skip" : {
+      anonymousClaim: anonymousClaim(),
+      galleryId: props.gallery._id,
+      requestedEntryId: viewerEntryId,
+      now: viewerLookupTime,
+    },
+  );
+  useEffect(() => {
+    const missingItem = viewerEntryId !== null && linkedEntry === null;
+    if (!missingItem && searchParams.get("notice") !== "item-not-found") return;
+    setNotice("Item not found");
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("notice");
+      if (missingItem) next.delete("item");
+      return next;
+    }, { replace: true });
+  }, [linkedEntry, searchParams, setSearchParams, viewerEntryId]);
   const thumbnailRequest = useRef("");
   const createThumbnailTickets = useMutation(
     api.entries.createThumbnailTickets,
@@ -205,8 +226,11 @@ export function UploaderPage(props: {
       : listing?.entries.find((entry) => entry._id === metadataEntryId);
   const thumbnailRequestKey = `${props.gallery._id}:${props.rootFolder._id}:${thumbnailEntryIds.join(",")}`;
   const viewerItems = useMemo<MediaViewerItem[]>(
-    () =>
-      (listing?.entries ?? []).map((entry) => ({
+    () => {
+      const entries = listing?.entries ?? [];
+      const viewerEntries = linkedEntry && !entries.some((entry) => entry._id === linkedEntry._id)
+        ? [...entries, linkedEntry] : entries;
+      return viewerEntries.map((entry) => ({
         id: entry._id,
         title: entry.name,
         href: uploaderItemUrl(props.routeRoot, entry._id),
@@ -224,8 +248,9 @@ export function UploaderPage(props: {
         previewError: entry.previewError,
         metadataJson: entry.metadataJson,
         uploader: entry.uploader,
-      })),
-    [listing?.entries, props.routeRoot],
+      }));
+    },
+    [listing?.entries, linkedEntry, props.routeRoot],
   );
   const viewerIndex =
     viewerEntryId === null
@@ -401,6 +426,14 @@ export function UploaderPage(props: {
 
   return (
     <PageFrame gallery={props.gallery}>
+      {notice !== null && (
+        <div className={`${layout.notice} ${layout.noticeBar}`} role="status">
+          <span>{notice}</span>
+          <button className={layout.iconButton} type="button" onClick={() => setNotice(null)} aria-label="Dismiss message" title="Dismiss">
+            <X aria-hidden="true" size={16} />
+          </button>
+        </div>
+      )}
       {listing.access.canUpload ? (
         <form
           className={styles.uploadForm}

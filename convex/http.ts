@@ -37,7 +37,7 @@ function errorResponse(error: unknown, fallback: string) {
   if (error instanceof ConvexError && isRecord(error.data)) {
     const message = error.data.message;
     return json(
-      { error: typeof message === "string" ? message : fallback },
+      { error: typeof message === "string" ? message : fallback, code: error.data.code },
       error.data.code === "unauthorized" ? 403 : 400,
     );
   }
@@ -227,11 +227,24 @@ http.route({
         }),
       );
     } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Download rejected" },
-        400,
-      );
+      return errorResponse(error, "Download rejected");
     }
+  }),
+});
+
+http.route({
+  path: "/internal/storage/uploader-hotlink-target",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) return json({ error: "Unauthorized" }, 401);
+    const body: unknown = await request.json();
+    if (!isRecord(body) || typeof body.entryId !== "string" ||
+      body.entryId.length > 100 || typeof body.host !== "string" || body.host.length > 255) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    return json(await ctx.runQuery(internal.storageGateway.uploaderHotlinkTarget, {
+      entryId: body.entryId, host: body.host, now: Date.now(),
+    }));
   }),
 });
 

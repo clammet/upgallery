@@ -399,6 +399,43 @@ export const getGalleryViewerEntry = query({
   },
 });
 
+// Resolve uploader lightbox links independently of the first listing page,
+// including unlisted files whose IDs were shared directly.
+export const getUploaderViewerEntry = query({
+  args: {
+    anonymousClaim: v.optional(v.string()),
+    galleryId: v.id("galleries"),
+    requestedEntryId: v.string(),
+    now: v.number(),
+  },
+  returns: v.union(v.null(), galleryEntryValidator),
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("entries", args.requestedEntryId);
+    const entry = id === null ? null : await ctx.db.get("entries", id);
+    if (entry === null || entry.galleryId !== args.galleryId ||
+      entry.state !== "ready" || (entry.expiresAt !== undefined && entry.expiresAt <= args.now)) return null;
+    const [gallery, folder, profile] = await Promise.all([
+      ctx.db.get("galleries", entry.galleryId),
+      ctx.db.get("folders", entry.folderId),
+      getCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (gallery === null || gallery.kind !== "uploader" || gallery.deletedAt !== undefined ||
+      folder === null || !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))) {
+      return null;
+    }
+    const [counter, owner] = await Promise.all([
+      ctx.db.query("entryCounters").withIndex("by_entryId", (q) => q.eq("entryId", entry._id)).unique(),
+      ctx.db.get("profiles", entry.ownerProfileId),
+    ]);
+    const canDelete = profile !== null && isOwningProfile(entry.ownerProfileId, profile._id);
+    return {
+      ...galleryEntryForViewer(entry, owner === null ? "Unknown" : uploaderAttribution(owner), counter?.views ?? 0),
+      canDelete,
+      metadataJson: entry.passwordHash !== undefined && !canDelete ? undefined : entry.metadataJson,
+    };
+  },
+});
+
 // Continue past either folder edge, climbing ancestors when siblings run out.
 // Sibling order follows the containing folder's effective thumbnail order.
 export const siblingGalleryViewerTarget = query({

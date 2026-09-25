@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
-import { callConvex, type DownloadClaim } from "./convex.js";
+import { callConvex, ConvexRequestError, type DownloadClaim } from "./convex.js";
 import {
   contentDispositionForDownload,
   contentTypeForDownload,
@@ -73,6 +73,27 @@ export async function handleDownload(
     await pipeline(createReadStream(path), response);
   } catch (error) {
     if (!response.headersSent) {
+      const destination = request.header("sec-fetch-dest");
+      const pageNavigation = request.method === "GET" && (
+        destination === "document" ||
+        (destination === undefined && request.header("accept")?.includes("text/html") === true)
+      );
+      if (pageNavigation && error instanceof ConvexRequestError &&
+        (error.code === "download_expired" || error.code === "download_not_found")) {
+        try {
+          const target = await callConvex<string | null>(
+            "/internal/storage/uploader-hotlink-target",
+            { entryId: request.params.entryId, host: request.header("host") ?? "" },
+          );
+          if (target !== null) {
+            response.setHeader("cache-control", "private, no-store");
+            response.redirect(302, target);
+            return;
+          }
+        } catch {
+          // Keep the original download failure if route lookup is unavailable.
+        }
+      }
       response.status(404).json({
         error: error instanceof Error ? error.message : "File not found",
       });
