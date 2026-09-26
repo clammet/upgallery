@@ -3554,7 +3554,12 @@ describe("upgallery backend", () => {
     });
   });
 
-  test("uploader deletion is visible and authorized only for the uploader", async () => {
+  test.each([
+    { anonymous: true, locked: false },
+    { anonymous: true, locked: true },
+    { anonymous: false, locked: false },
+    { anonymous: false, locked: true },
+  ])("uploader deletion requires ownership, not a password (anonymous=$anonymous, locked=$locked)", async ({ anonymous, locked }) => {
     const t = setupTest();
     const admin = await seedProfile(t, {
       email: "admin@example.com",
@@ -3572,12 +3577,19 @@ describe("upgallery backend", () => {
     const gallery = await t.run(async (ctx) =>
       ctx.db.get("galleries", galleryId),
     );
-    const uploader = await seedProfile(t, { anonymous: true });
+    const uploader = await seedProfile(t, { anonymous, email: "uploader@example.com" });
+    const uploaderClient = anonymous
+      ? t
+      : asUser(t, uploader.googleSubject, "uploader@example.com");
+    const password = locked ? await createPasswordHash("secret") : undefined;
     const entryId = await t.run(async (ctx) => {
       const id = await ctx.db.insert("entries", {
         galleryId,
         folderId: gallery!.rootFolderId!,
         ownerProfileId: uploader.profileId,
+        passwordHash: password?.hash,
+        passwordSalt: password?.salt,
+        passwordIterations: password?.iterations,
         name: "mine.txt",
         nameKey: "mine.txt",
         mimeType: "text/plain",
@@ -3598,7 +3610,7 @@ describe("upgallery backend", () => {
       return id;
     });
 
-    const uploaderListing = await t.query(api.folders.list, {
+    const uploaderListing = await uploaderClient.query(api.folders.list, {
       anonymousClaim: uploader.anonymousClaim,
       galleryId,
       folderId: gallery!.rootFolderId!,
@@ -3606,6 +3618,7 @@ describe("upgallery backend", () => {
     expect(uploaderListing.entries[0]).toMatchObject({
       _id: entryId,
       canDelete: true,
+      passwordProtected: locked,
     });
     const adminListing = await authed.query(api.folders.list, {
       galleryId,
@@ -3625,8 +3638,16 @@ describe("upgallery backend", () => {
       authed.mutation(api.entries.remove, { entryId }),
     ).rejects.toThrow("Unauthorized");
 
+    const otherUploader = await seedProfile(t, { anonymous: true });
     await expect(
-      t.mutation(api.entries.setMarkdownMode, {
+      t.mutation(api.entries.remove, {
+        anonymousClaim: otherUploader.anonymousClaim,
+        entryId,
+      }),
+    ).rejects.toThrow("Unauthorized");
+
+    await expect(
+      uploaderClient.mutation(api.entries.setMarkdownMode, {
         anonymousClaim: uploader.anonymousClaim,
         entryId,
         markdown: true,
@@ -3636,14 +3657,14 @@ describe("upgallery backend", () => {
       t.run(async (ctx) => ctx.db.get("entries", entryId)),
     ).resolves.toMatchObject({ name: "mine.md", extension: "md" });
     await expect(
-      t.mutation(api.entries.setMarkdownMode, {
+      uploaderClient.mutation(api.entries.setMarkdownMode, {
         anonymousClaim: uploader.anonymousClaim,
         entryId,
         markdown: false,
       }),
     ).resolves.toEqual({ name: "mine.txt" });
 
-    await t.mutation(api.entries.remove, {
+    await uploaderClient.mutation(api.entries.remove, {
       anonymousClaim: uploader.anonymousClaim,
       entryId,
     });

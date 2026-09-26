@@ -211,7 +211,8 @@ The following controls appear when you have permission for the file:
   **Remove location data** beside the location details, when available. Confirm
   **Remove** to rewrite the stored image permanently; this cannot be undone.
 - **Delete file:** Click the trash icon on the listing entry, then confirm
-  **Delete**. Enter the file password if prompted. Deletion cannot be undone.
+  **Delete**. You do not need the file password to delete your own uploads.
+  Deletion cannot be undone.
 
 ## Contribute files to a gallery
 

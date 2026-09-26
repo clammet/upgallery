@@ -630,7 +630,6 @@ function UploaderEntry(props: {
 }) {
   const removeEntry = useMutation(api.entries.remove);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const hasLocation = useMemo(
@@ -646,99 +645,101 @@ function UploaderEntry(props: {
     props.onOpen();
   };
   return (
-    <article className={styles.entry}>
-      <a
-        className={styles.previewLink}
-        href={itemUrl}
-        aria-label={`View ${props.entry.name}`}
-        onClick={openLightbox}
-      >
-        <span className={styles.thumbnail}>
-          {props.entry.mediaKind === "image" ||
-          props.entry.mediaKind === "video" ? (
-            <MediaThumbnail
-              className={styles.mediaThumbnail}
-              src={props.thumbnailUrl}
-              state={props.entry.thumbnailState}
-            />
-          ) : (
-            <FileGlyph
-              extension={props.entry.extension}
-              galleryId={props.entry.galleryId}
-            />
-          )}
-        </span>
-        <span className={styles.viewAction}>View</span>
-      </a>
-      <div className={styles.entryFooter}>
-        <div className={styles.entryTitle}>
-          <a href={itemUrl} title={props.entry.name} onClick={openLightbox}>
-            {props.entry.name}
-          </a>
-          {props.entry.description ? <p>{props.entry.description}</p> : null}
-        </div>
-        <div className={styles.entryMetadata}>
-          <span>{formatBytes(props.entry.size)}</span>
-          <span className={styles.metadataLine}>
-            <span
-              title={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
-              aria-label={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
-            >
-              {props.entry.views}
-              <Eye aria-hidden="true" size={13} />
-            </span>
-            {props.entry.passwordProtected ? (
-              <span title="Password protected" aria-label="Password protected">
-                <LockKeyhole aria-hidden="true" size={13} />
-              </span>
-            ) : null}
-            {props.entry.metadataJson !== undefined ||
-            props.entry.expiresAt !== undefined ||
-            props.entry.uploader !== undefined ? (
-              <button
-                className={styles.metadataButton}
-                type="button"
-                onClick={props.onMetadata}
-                title="View metadata"
-                aria-label={`View metadata for ${props.entry.name}`}
-              >
-                <Info aria-hidden="true" size={14} />
-              </button>
-            ) : null}
-            {props.entry.unlisted ? (
-              <span
-                title="Unlisted — visible only to you in the listing"
-                aria-label="Unlisted — visible only to you in the listing"
-              >
-                <EyeOff aria-hidden="true" size={14} />
-              </span>
-            ) : null}
-            {props.entry.expiresAt !== undefined ? (
-              <ExpiryIndicator expiresAt={props.entry.expiresAt} />
-            ) : null}
-            {hasLocation ? (
-              <span
-                title="Contains GPS location metadata"
-                aria-label="Contains GPS location metadata"
-                tabIndex={0}
-              >
-                <MapPin aria-hidden="true" size={14} />
-              </span>
-            ) : null}
-            {props.entry.canDelete ? (
-              <button
-                className={`${styles.metadataButton} ${styles.deleteButton}`}
-                type="button"
-                onClick={() => setConfirmDelete(true)}
-                title="Delete file"
-                aria-label={`Delete ${props.entry.name}`}
-              >
-                <TrashIcon />
-              </button>
-            ) : null}
+    <>
+      <article className={styles.entry}>
+        <a
+          className={styles.previewLink}
+          href={itemUrl}
+          aria-label={`View ${props.entry.name}`}
+          onClick={openLightbox}
+        >
+          <span className={styles.thumbnail}>
+            {props.entry.mediaKind === "image" ||
+            props.entry.mediaKind === "video" ? (
+              <MediaThumbnail
+                className={styles.mediaThumbnail}
+                src={props.thumbnailUrl}
+                state={props.entry.thumbnailState}
+              />
+            ) : (
+              <FileGlyph
+                extension={props.entry.extension}
+                galleryId={props.entry.galleryId}
+              />
+            )}
           </span>
+          <span className={styles.viewAction}>View</span>
+        </a>
+        <div className={styles.entryFooter}>
+          <div className={styles.entryTitle}>
+            <a href={itemUrl} title={props.entry.name} onClick={openLightbox}>
+              {props.entry.name}
+            </a>
+            {props.entry.description ? <p>{props.entry.description}</p> : null}
+          </div>
+          <div className={styles.entryMetadata}>
+            <span>{formatBytes(props.entry.size)}</span>
+            <span className={styles.metadataLine}>
+              <span
+                title={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
+                aria-label={`${props.entry.views} ${props.entry.views === 1 ? "view" : "views"}`}
+              >
+                {props.entry.views}
+                <Eye aria-hidden="true" size={13} />
+              </span>
+              {props.entry.passwordProtected ? (
+                <span title="Password protected" aria-label="Password protected">
+                  <LockKeyhole aria-hidden="true" size={13} />
+                </span>
+              ) : null}
+              {props.entry.metadataJson !== undefined ||
+              props.entry.expiresAt !== undefined ||
+              props.entry.uploader !== undefined ? (
+                <button
+                  className={styles.metadataButton}
+                  type="button"
+                  onClick={props.onMetadata}
+                  title="View metadata"
+                  aria-label={`View metadata for ${props.entry.name}`}
+                >
+                  <Info aria-hidden="true" size={14} />
+                </button>
+              ) : null}
+              {props.entry.unlisted ? (
+                <span
+                  title="Unlisted — visible only to you in the listing"
+                  aria-label="Unlisted — visible only to you in the listing"
+                >
+                  <EyeOff aria-hidden="true" size={14} />
+                </span>
+              ) : null}
+              {props.entry.expiresAt !== undefined ? (
+                <ExpiryIndicator expiresAt={props.entry.expiresAt} />
+              ) : null}
+              {hasLocation ? (
+                <span
+                  title="Contains GPS location metadata"
+                  aria-label="Contains GPS location metadata"
+                  tabIndex={0}
+                >
+                  <MapPin aria-hidden="true" size={14} />
+                </span>
+              ) : null}
+              {props.entry.canDelete ? (
+                <button
+                  className={`${styles.metadataButton} ${styles.deleteButton}`}
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  title="Delete file"
+                  aria-label={`Delete ${props.entry.name}`}
+                >
+                  <TrashIcon />
+                </button>
+              ) : null}
+            </span>
+          </div>
         </div>
-      </div>
+      </article>
       {confirmDelete ? (
         <Dialog
           title="Delete file?"
@@ -746,7 +747,6 @@ function UploaderEntry(props: {
             if (!deleting) {
               setConfirmDelete(false);
               setDeleteError(null);
-              setDeletePassword("");
             }
           }}
         >
@@ -759,7 +759,6 @@ function UploaderEntry(props: {
               void removeEntry({
                 anonymousClaim: anonymousClaim(),
                 entryId: props.entry._id,
-                password: deletePassword || undefined,
               })
                 .then(() => setConfirmDelete(false))
                 .catch((reason: unknown) => {
@@ -773,18 +772,6 @@ function UploaderEntry(props: {
             <p className={styles.deletePrompt}>
               Delete <strong>{props.entry.name}</strong>? This cannot be undone.
             </p>
-            {props.entry.passwordProtected ? (
-              <label>
-                File password
-                <input
-                  type="password"
-                  autoFocus
-                  value={deletePassword}
-                  onChange={(event) => setDeletePassword(event.target.value)}
-                  required
-                />
-              </label>
-            ) : null}
             {deleteError ? (
               <p className={layout.formError}>{deleteError}</p>
             ) : null}
@@ -807,7 +794,7 @@ function UploaderEntry(props: {
           </form>
         </Dialog>
       ) : null}
-    </article>
+    </>
   );
 }
 

@@ -1312,8 +1312,8 @@ export const remove = mutation({
   args: {
     anonymousClaim: v.optional(v.string()),
     entryId: v.id("entries"),
-    password: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
     const entry = await ctx.db.get("entries", args.entryId);
@@ -1338,21 +1338,7 @@ export const remove = mutation({
     if (entry.migrationState === "moving") {
       throw new Error("File is currently being moved");
     }
-    if (entry.passwordHash !== undefined) {
-      if (
-        args.password === undefined ||
-        entry.passwordSalt === undefined ||
-        entry.passwordIterations === undefined ||
-        !(await verifyPassword(
-          args.password,
-          entry.passwordSalt,
-          entry.passwordHash,
-          entry.passwordIterations,
-        ))
-      ) {
-        throw new Error("Incorrect password");
-      }
-    }
+    // File passwords protect access to content; deletion is authorized above.
     await queueEntryDeletion(ctx, gallery, entry);
     return null;
   },
