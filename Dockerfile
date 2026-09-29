@@ -4,8 +4,8 @@ FROM ${NODE_ALPINE_IMAGE} AS libvips-build
 # VIPS_TAG holds the upstream git tag (v-prefixed) rather than the bare
 # version: Renovate's release lookup resolves the tag literally, so this is
 # what lets it bump the version and refresh VIPS_SHA256 in one PR.
-ARG VIPS_TAG=v8.18.6
-ARG VIPS_SHA256=3c41e1d5458081bfa4a5bc54e116c46259c75c6760a18027764555632b9dda3e
+ARG VIPS_TAG=v8.18.7
+ARG VIPS_SHA256=5baaead3b0bb20ffdb9e9ff09aa9fda08620923df77b63b436654cb5e0b3bf94
 # Cross-architecture builders can reduce compiler pressure without slowing
 # native CI builds, which keep Meson's automatic parallelism by default.
 ARG VIPS_BUILD_JOBS
