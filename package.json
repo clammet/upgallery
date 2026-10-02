@@ -41,14 +41,14 @@
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
     "react-router-dom": "7.18.4",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
     "@types/busboy": "1.5.4",
     "@types/express": "5.0.6",
     "@types/mime-types": "3.0.1",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.3",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/supertest": "7.2.1",
@@ -62,10 +62,10 @@
     "typescript": "7.0.2",
     "vite": "8.3.1",
     "vite-plugin-checker": "0.14.5",
-    "vitest": "5.0.1"
+    "vitest": "5.0.2"
   },
   "engines": {
     "node": "26.10.0"
   },
-  "packageManager": "pnpm@12.6.0"
+  "packageManager": "pnpm@12.8.1"
 }
