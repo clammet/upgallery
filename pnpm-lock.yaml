@@ -171,16 +171,16 @@ importers:
     dependencies:
       '@clammet/convex-googly-auth':
         specifier: 1.0.1
-        version: 1.0.1(convex@1.46.0(react@19.3.0))(react@19.3.0)
+        version: 1.0.1(convex@1.46.0(react@19.3.1))(react@19.3.1)
       busboy:
         specifier: 1.6.0
         version: 1.6.0
       convex:
         specifier: 1.46.0
-        version: 1.46.0(react@19.3.0)
+        version: 1.46.0(react@19.3.1)
       convex-helpers:
         specifier: 0.1.128
-        version: 0.1.128(convex@1.46.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
+        version: 0.1.128(convex@1.46.0(react@19.3.1))(react@19.3.1)(typescript@7.0.2)
       exifr:
         specifier: 7.1.3
         version: 7.1.3
@@ -195,22 +195,22 @@ importers:
         version: 11.12.0
       lucide-react:
         specifier: 1.57.0
-        version: 1.57.0(@types/react@19.3.0)(react@19.3.0)
+        version: 1.57.0(@types/react@19.3.0)(react@19.3.1)
       mime-types:
         specifier: 3.0.2
         version: 3.0.2
       react:
-        specifier: 19.3.0
-        version: 19.3.0
+        specifier: 19.3.1
+        version: 19.3.1
       react-dom:
-        specifier: 19.3.0
-        version: 19.3.0(react@19.3.0)
+        specifier: 19.3.1
+        version: 19.3.1(react@19.3.1)
       react-markdown:
         specifier: 10.1.0
-        version: 10.1.0(@types/react@19.3.0)(react@19.3.0)(supports-color@10.2.2)
+        version: 10.1.0(@types/react@19.3.0)(react@19.3.1)(supports-color@10.2.2)
       react-router-dom:
         specifier: 7.18.4
-        version: 7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       sharp:
         specifier: 0.35.5
         version: 0.35.5(@types/node@26.6.5)
@@ -247,7 +247,7 @@ importers:
         version: 10.0.6
       convex-test:
         specifier: 0.0.61
-        version: 0.0.61(convex@1.46.0(react@19.3.0))
+        version: 0.0.61(convex@1.46.0(react@19.3.1))
       node-addon-api:
         specifier: 8.9.2
         version: 8.9.2
@@ -1883,10 +1883,10 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
-  react-dom@19.3.0:
-    resolution: {integrity: sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==}
+  react-dom@19.3.1:
+    resolution: {integrity: sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==}
     peerDependencies:
-      react: ^19.3.0
+      react: ^19.3.1
 
   react-markdown@10.1.0:
     resolution: {integrity: sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==}
@@ -1911,8 +1911,8 @@ packages:
       react-dom:
         optional: true
 
-  react@19.3.0:
-    resolution: {integrity: sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==}
+  react@19.3.1:
+    resolution: {integrity: sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==}
     engines: {node: '>=0.10.0'}
 
   readdirp@5.1.1:
@@ -2311,10 +2311,10 @@ snapshots:
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@clammet/convex-googly-auth@1.0.1(convex@1.46.0(react@19.3.0))(react@19.3.0)':
+  '@clammet/convex-googly-auth@1.0.1(convex@1.46.0(react@19.3.1))(react@19.3.1)':
     dependencies:
-      convex: 1.46.0(react@19.3.0)
-      react: 19.3.0
+      convex: 1.46.0(react@19.3.1)
+      react: 19.3.1
 
   '@edge-runtime/primitives@6.0.0': {}
 
@@ -2933,24 +2933,24 @@ snapshots:
 
   content-type@2.1.0: {}
 
-  convex-helpers@0.1.128(convex@1.46.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2):
+  convex-helpers@0.1.128(convex@1.46.0(react@19.3.1))(react@19.3.1)(typescript@7.0.2):
     dependencies:
-      convex: 1.46.0(react@19.3.0)
+      convex: 1.46.0(react@19.3.1)
     optionalDependencies:
-      react: 19.3.0
+      react: 19.3.1
       typescript: 7.0.2
 
-  convex-test@0.0.61(convex@1.46.0(react@19.3.0)):
+  convex-test@0.0.61(convex@1.46.0(react@19.3.1)):
     dependencies:
-      convex: 1.46.0(react@19.3.0)
+      convex: 1.46.0(react@19.3.1)
 
-  convex@1.46.0(react@19.3.0):
+  convex@1.46.0(react@19.3.1):
     dependencies:
       esbuild: 0.27.0
       prettier: 3.9.10
       ws: 8.21.0
     optionalDependencies:
-      react: 19.3.0
+      react: 19.3.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -3328,9 +3328,9 @@ snapshots:
 
   longest-streak@3.1.0: {}
 
-  lucide-react@1.57.0(@types/react@19.3.0)(react@19.3.0):
+  lucide-react@1.57.0(@types/react@19.3.0)(react@19.3.1):
     dependencies:
-      react: 19.3.0
+      react: 19.3.1
     optionalDependencies:
       '@types/react': 19.3.0
 
@@ -3697,12 +3697,12 @@ snapshots:
       iconv-lite: 0.7.3
       unpipe: 1.0.0
 
-  react-dom@19.3.0(react@19.3.0):
+  react-dom@19.3.1(react@19.3.1):
     dependencies:
-      react: 19.3.0
+      react: 19.3.1
       scheduler: 0.28.0
 
-  react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.0)(supports-color@10.2.2):
+  react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.1)(supports-color@10.2.2):
     dependencies:
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
@@ -3711,7 +3711,7 @@ snapshots:
       hast-util-to-jsx-runtime: 2.3.6(supports-color@10.2.2)
       html-url-attributes: 3.0.1
       mdast-util-to-hast: 13.2.1
-      react: 19.3.0
+      react: 19.3.1
       remark-parse: 11.0.0(supports-color@10.2.2)
       remark-rehype: 11.1.2
       unified: 11.0.5
@@ -3720,21 +3720,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-router-dom@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  react-router-dom@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
-      react: 19.3.0
-      react-dom: 19.3.0(react@19.3.0)
-      react-router: 7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
+      react-router: 7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
 
-  react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       cookie: 1.1.1
-      react: 19.3.0
+      react: 19.3.1
       set-cookie-parser: 2.7.2
     optionalDependencies:
-      react-dom: 19.3.0(react@19.3.0)
+      react-dom: 19.3.1(react@19.3.1)
 
-  react@19.3.0: {}
+  react@19.3.1: {}
 
   readdirp@5.1.1: {}
 
