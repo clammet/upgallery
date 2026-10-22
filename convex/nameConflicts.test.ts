@@ -664,7 +664,7 @@ describe("uploader attribution", () => {
     ).resolves.toBeNull();
   });
 
-  test("gallery and uploader listings use the profile's latest display name", async () => {
+  test("gallery grids stay compact while detail and uploader listings retain attribution", async () => {
     const t = setupTest();
     const { authed } = await seedAdmin(t);
     const imageGallery = await createGallery(t, authed, {
@@ -675,11 +675,18 @@ describe("uploader attribution", () => {
       slug: "attributed-uploader",
       kind: "uploader",
     });
-    await uploadFile(t, authed, {
+    const uploaded = await uploadFile(t, authed, {
       galleryId: imageGallery.galleryId,
       folderId: imageGallery.rootFolderId,
       name: "gallery.jpg",
       sha: "1",
+    });
+    const metadataJson = JSON.stringify({ width: 4000, camera: "Example camera" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("entries", uploaded.entry._id, { metadataJson });
+      const counter = await ctx.db.query("entryCounters")
+        .withIndex("by_entryId", (q) => q.eq("entryId", uploaded.entry._id)).unique();
+      await ctx.db.patch("entryCounters", counter!._id, { views: 42 });
     });
     await uploadFile(t, authed, {
       galleryId: uploaderGallery.galleryId,
@@ -701,7 +708,15 @@ describe("uploader attribution", () => {
       galleryId: uploaderGallery.galleryId,
       folderId: uploaderGallery.rootFolderId,
     });
-    expect(galleryPage.page[0]?.uploader).toBe("Newest Display Name");
+    const detail = await authed.query(api.entries.getGalleryViewerEntry, {
+      galleryId: imageGallery.galleryId,
+      folderId: imageGallery.rootFolderId,
+      requestedEntryId: galleryPage.page[0]!._id,
+    });
+    expect(detail).toMatchObject({ uploader: "Newest Display Name", metadataJson, views: 42 });
+    for (const field of ["uploader", "metadataJson", "views", "sha256", "ownerProfileId", "filesystemSyncId", "createdAt", "updatedAt"]) {
+      expect(galleryPage.page[0]).not.toHaveProperty(field);
+    }
     expect(uploaderListing.entries[0]?.uploader).toBe("Newest Display Name");
   });
 });

@@ -9,6 +9,7 @@ import {
 import {
   assertCanManageGallery,
   canViewFolder,
+  createFolderAccessResolver,
   getCurrentProfile,
   getEffectiveRole,
   isOwningProfile,
@@ -16,7 +17,6 @@ import {
   requireGalleryManager,
   requireGalleryRole,
   roleAtLeast,
-  shouldListFolder,
   unauthorizedError,
 } from "./lib/permissions";
 import {
@@ -76,6 +76,41 @@ const galleryEntryValidator = schema
     canDelete: v.boolean(),
     views: v.number(),
   });
+
+// The grid reads media locations and display fields only. Detail/attribution is
+// fetched for the open viewer, so profile activity and counters cannot fan out
+// through every loaded page.
+const galleryGridEntryValidator = schema
+  .doc("entries")
+  .pick(
+    "_id", "_creationTime", "galleryId", "folderId", "name", "mimeType",
+    "extension", "mediaKind", "size", "storageKey", "thumbnailKey",
+    "thumbnailState", "previewKey", "previewError", "filesystemModifiedAt",
+    "metadataVersion",
+  )
+  .extend({ passwordProtected: v.boolean() });
+
+function galleryGridEntry(entry: Doc<"entries">) {
+  return {
+    _id: entry._id,
+    _creationTime: entry._creationTime,
+    galleryId: entry.galleryId,
+    folderId: entry.folderId,
+    name: entry.name,
+    mimeType: entry.mimeType,
+    extension: entry.extension,
+    mediaKind: entry.mediaKind,
+    size: entry.size,
+    storageKey: entry.storageKey,
+    thumbnailKey: entry.thumbnailKey,
+    thumbnailState: entry.thumbnailState,
+    previewKey: entry.previewKey,
+    previewError: entry.previewError,
+    filesystemModifiedAt: entry.filesystemModifiedAt,
+    metadataVersion: entry.metadataVersion,
+    passwordProtected: entry.passwordHash !== undefined,
+  };
+}
 
 function galleryEntryForViewer(
   entry: Doc<"entries">,
@@ -196,7 +231,8 @@ async function loadViewableImageFolder(
     gallery.kind !== "image" ||
     folder === null ||
     folder.galleryId !== gallery._id ||
-    !(await canViewFolder(ctx, folder, profile, args.anonymousClaim))
+    folder.filesystemMissingAt !== undefined ||
+    !(await createFolderAccessResolver(ctx, gallery, profile, args.anonymousClaim).resolve(folder)).canView
   ) {
     throw new Error("Folder not found");
   }
@@ -326,7 +362,7 @@ export const listGalleryPage = query({
     reverse: v.optional(v.boolean()),
     paginationOpts: paginationOptsValidator,
   },
-  returns: paginationResultValidator(galleryEntryValidator),
+  returns: paginationResultValidator(galleryGridEntryValidator),
   handler: async (ctx, args) => {
     validateGalleryPaginationSize(args.paginationOpts.numItems);
     const { gallery, folder } = await loadViewableImageFolder(ctx, args);
@@ -336,23 +372,7 @@ export const listGalleryPage = query({
       folder._id,
       args.reverse ? reverseGallerySortOrder(sortOrder) : sortOrder,
     ).paginate(args.paginationOpts);
-    const page = [];
-    const uploaderByProfileId = new Map<Id<"profiles">, string>();
-    for (const entry of result.page) {
-      const counterPromise = ctx.db
-        .query("entryCounters")
-        .withIndex("by_entryId", (q) => q.eq("entryId", entry._id))
-        .unique();
-      let uploader = uploaderByProfileId.get(entry.ownerProfileId);
-      if (uploader === undefined) {
-        const profile = await ctx.db.get("profiles", entry.ownerProfileId);
-        uploader =
-          profile === null ? "Unknown" : uploaderAttribution(profile);
-        uploaderByProfileId.set(entry.ownerProfileId, uploader);
-      }
-      const counter = await counterPromise;
-      page.push(galleryEntryForViewer(entry, uploader, counter?.views ?? 0));
-    }
+    const page = result.page.map(galleryGridEntry);
     return { ...result, page };
   },
 });
@@ -461,6 +481,7 @@ export const siblingGalleryViewerTarget = query({
       args,
     );
     if (folder.parentId === undefined) return null;
+    const access = createFolderAccessResolver(ctx, gallery, profile, args.anonymousClaim);
 
     const currentEntryId = ctx.db.normalizeId("entries", args.currentEntryId);
     if (currentEntryId === null) return null;
@@ -497,7 +518,7 @@ export const siblingGalleryViewerTarget = query({
       for (const candidate of candidates) {
         if (
           candidate.filesystemMissingAt === undefined &&
-          (await shouldListFolder(ctx, candidate, profile, args.anonymousClaim))
+          (await access.shouldList(candidate))
         ) {
           sibling = candidate;
           break;

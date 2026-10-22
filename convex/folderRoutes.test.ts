@@ -123,3 +123,43 @@ describe("friendly folder route resolution", () => {
     });
   });
 });
+
+test("host resolution returns live route boundaries and keeps access authoritative", async () => {
+  const t = convexTest(schema, modules);
+  const ids = await t.run(async ctx => {
+    const galleryId = await ctx.db.insert("galleries", {
+      name: "Public", slug: "public", kind: "image", storageKind: "shared",
+      storageRoot: "public", maxFileSize: 1024, theme: {},
+    });
+    const rootId = await ctx.db.insert("folders", {
+      galleryId, name: "Public", slug: "", ancestorIds: [], accessPolicy: "public", discoverability: "listed",
+    });
+    await ctx.db.patch("galleries", galleryId, { rootFolderId: rootId });
+    const nestedId = await ctx.db.insert("galleries", {
+      name: "Restricted", slug: "restricted", kind: "image", storageKind: "shared",
+      storageRoot: "restricted", maxFileSize: 1024, theme: {},
+    });
+    const restrictedRootId = await ctx.db.insert("folders", {
+      galleryId: nestedId, name: "Restricted", slug: "", ancestorIds: [], accessPolicy: "restricted", discoverability: "listed",
+    });
+    await ctx.db.patch("galleries", nestedId, { rootFolderId: restrictedRootId });
+    await ctx.db.insert("galleryHosts", { galleryId, host: "photos.example.com", rootPath: "/gallery" });
+    const nestedRouteId = await ctx.db.insert("galleryHosts", { galleryId: nestedId, host: "photos.example.com", rootPath: "/gallery/private" });
+    return { galleryId, nestedId, rootId, nestedRouteId };
+  });
+  const args = { host: "photos.example.com:5173", path: "/gallery/trip/day1" };
+  const resolved = await t.query(api.galleries.resolveByHost, args);
+  expect(resolved?.gallery._id).toBe(ids.galleryId);
+  expect(resolved?.hostRouteRoots).toEqual(["/gallery", "/gallery/private"]);
+  expect(resolved?.access.canView).toBe(true);
+  const restricted = await t.query(api.galleries.resolveByHost, { ...args, path: "/gallery/private/album" });
+  expect(restricted?.gallery._id).toBe(ids.nestedId);
+  expect(restricted?.access.canView).toBe(false);
+  await t.run(async ctx => {
+    await ctx.db.delete("galleryHosts", ids.nestedRouteId);
+    await ctx.db.patch("folders", ids.rootId, { accessPolicy: "restricted" });
+  });
+  const changed = await t.query(api.galleries.resolveByHost, args);
+  expect(changed?.hostRouteRoots).toEqual(["/gallery"]);
+  expect(changed?.access.canView).toBe(false);
+});

@@ -40,10 +40,17 @@ export default defineSchema({
     // means off.
     overzoom: v.optional(v.boolean()),
     isSystemAdmin: v.boolean(),
-    lastSeenAt: v.number(),
+    // Legacy activity value retained as a fallback for existing records.
+    lastSeenAt: v.optional(v.number()),
   })
     .index("by_identityId", ["identityId"])
     .index("by_email", ["email"]),
+
+  // Activity updates must not invalidate access checks or uploader attribution.
+  profileActivity: defineTable({
+    profileId: v.id("profiles"),
+    lastSeenAt: v.number(),
+  }).index("by_profileId", ["profileId"]),
 
   galleries: defineTable({
     name: v.string(),
@@ -112,9 +119,27 @@ export default defineSchema({
     galleryId: v.id("galleries"),
     itemCount: v.number(),
     totalBytes: v.number(),
+    // Absent on existing rows until their bounded subtree rebuild finishes.
+    subtreeBytes: v.optional(v.number()),
+    // False only while a missing/explicitly rebuilt direct counter is counted.
+    directReady: v.optional(v.boolean()),
+    revision: v.optional(v.number()),
   })
     .index("by_folderId", ["folderId"])
     .index("by_galleryId", ["galleryId"]),
+
+  // Rebuild cursors do not belong on records subscribed to by gallery views.
+  folderStatsRebuilds: defineTable({
+    folderId: v.id("folders"),
+    revision: v.number(),
+    phase: v.union(v.literal("entries"), v.literal("children"), v.literal("waiting")),
+    cursor: v.union(v.string(), v.null()),
+    items: v.number(),
+    bytes: v.number(),
+    subtreeBytes: v.number(),
+    pendingChildren: v.boolean(),
+    scheduled: v.boolean(),
+  }).index("by_folderId", ["folderId"]),
 
   galleryHosts: defineTable({
     galleryId: v.id("galleries"),
@@ -230,6 +255,7 @@ export default defineSchema({
   })
     .index("by_folderId_and_state", ["folderId", "state"])
     .index("by_folderId_and_filesystemIdentity", ["folderId", "filesystemIdentity"])
+    .index("by_folderId_and_filesystemIdentity_and_state", ["folderId", "filesystemIdentity", "state"])
     .index("by_folderId_and_state_and_nameKey", ["folderId", "state", "nameKey"])
     .index("by_folderId_and_state_and_moveJobId_and_createdAt", [
       "folderId",
@@ -307,11 +333,21 @@ export default defineSchema({
     .index("by_previewKey", ["previewKey"])
     .index("by_ownerProfileId", ["ownerProfileId"]),
 
+  // Ephemeral scan bookkeeping stays separate from documents read by galleries.
+  // Rows are scoped to a lease generation and removed in bounded background batches.
+  filesystemScanItems: defineTable({
+    folderId: v.id("folders"),
+    syncId: v.string(),
+    itemId: v.union(v.id("entries"), v.id("folders")),
+  }).index("by_folderId_and_syncId_and_itemId", ["folderId", "syncId", "itemId"]),
+
   filesystemSyncStates: defineTable({
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
     knownModifiedAt: v.optional(v.number()),
     activeSyncId: v.optional(v.string()),
+    // Absent only for a scan already in flight when isolated bookkeeping deployed.
+    bookkeepingVersion: v.optional(v.literal(1)),
     leaseExpiresAt: v.optional(v.number()),
     lastCheckedAt: v.optional(v.number()),
     lastCompletedAt: v.optional(v.number()),

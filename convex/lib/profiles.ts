@@ -1,3 +1,4 @@
+import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
@@ -59,6 +60,19 @@ export async function ensureUnknownUploaderProfile(
   return profile;
 }
 
+export const publicProfileValidator = v.object({
+  _id: v.id("profiles"),
+  displayName: v.optional(v.string()),
+  email: v.optional(v.string()),
+  image: v.optional(v.string()),
+  isAnonymous: v.boolean(),
+  isPlaceholder: v.boolean(),
+  invitedAt: v.optional(v.number()),
+  isSystemAdmin: v.boolean(),
+  infiniteScroll: v.boolean(),
+  overzoom: v.boolean(),
+});
+
 export function publicProfile(profile: Doc<"profiles">) {
   return {
     _id: profile._id,
@@ -69,7 +83,6 @@ export function publicProfile(profile: Doc<"profiles">) {
     isPlaceholder: isPlaceholderProfile(profile),
     invitedAt: isPlaceholderProfile(profile) ? profile._creationTime : undefined,
     isSystemAdmin: profile.isSystemAdmin,
-    lastSeenAt: profile.lastSeenAt,
     infiniteScroll: profile.infiniteScroll !== false,
     overzoom: profile.overzoom === true,
   };

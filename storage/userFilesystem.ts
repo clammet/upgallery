@@ -25,9 +25,9 @@ import {
   userFilesystemStorageKey,
 } from "./paths.js";
 
-// Bounds a single scan's runtime; the backend reconciles files one call at a
-// time, so this is a worker-side safety valve rather than a data limit.
+// Bound each directory traversal and each metadata transaction independently.
 const MAX_DIRECTORY_ITEMS = 10_000;
+const SCAN_BATCH_SIZE = 32;
 const MAX_RECURSIVE_DIRECTORIES = 2_000;
 
 type SyncClaim =
@@ -167,94 +167,72 @@ async function syncUserDirectory(
         }
 
         const childFolderIds: string[] = [];
-        for (const child of children.filter((item) => item.isDirectory())) {
+        const directories = children.filter(item => item.isDirectory());
+        for (let offset = 0; offset < directories.length; offset += SCAN_BATCH_SIZE) {
           syncSignal.throwIfAborted();
-          const childPath = absoluteStoragePath(`${directoryKey}/${child.name}`);
-          const metadata = await lstat(childPath);
-          if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-            continue;
-          }
-          const reconciled = await callConvex<{ folderId: string }>(
-            "/internal/storage/reconcile-filesystem-directory",
-            {
-              galleryId,
-              parentId: folderId,
-              syncId: claim.syncId,
-              name: child.name,
-              identity: filesystemIdentity(metadata),
-              modifiedAt: metadata.mtimeMs,
-            },
+          const metadata = await Promise.all(directories.slice(offset, offset + SCAN_BATCH_SIZE).map(async child => {
+            const value = await lstat(absoluteStoragePath(`${directoryKey}/${child.name}`));
+            return value.isDirectory() && !value.isSymbolicLink()
+              ? { name: child.name, identity: filesystemIdentity(value), modifiedAt: value.mtimeMs }
+              : null;
+          }));
+          const batch = metadata.filter(value => value !== null);
+          if (batch.length === 0) continue;
+          const reconciled = await callConvex<{ folderIds: string[] }>(
+            "/internal/storage/reconcile-filesystem-directories",
+            { galleryId, parentId: folderId, syncId: claim.syncId, directories: batch },
           );
-          childFolderIds.push(reconciled.folderId);
+          childFolderIds.push(...reconciled.folderIds);
         }
 
-        for (const child of children.filter((item) => item.isFile())) {
+        const files = children.filter(item => item.isFile());
+        for (let offset = 0; offset < files.length; offset += SCAN_BATCH_SIZE) {
           syncSignal.throwIfAborted();
-          const storageKey = userFilesystemStorageKey(
-            claim.storageRoot,
-            claim.folderSegments,
-            child.name,
-          );
-          const filePath = absoluteStoragePath(storageKey);
-          const beforeFile = await lstat(filePath);
-          if (!beforeFile.isFile() || beforeFile.isSymbolicLink()) {
-            continue;
-          }
-          if (beforeFile.size > claim.maxFileSize) {
-            console.warn(
-              `Skipping oversized user-backed file ${storageKey} (${beforeFile.size} bytes)`,
-            );
-            continue;
-          }
-          const identity = filesystemIdentity(beforeFile);
-          const check = await callConvex<FileCheck>(
-            "/internal/storage/check-filesystem-file",
+          const metadata = await Promise.all(files.slice(offset, offset + SCAN_BATCH_SIZE).map(async child => {
+            const storageKey = userFilesystemStorageKey(claim.storageRoot, claim.folderSegments, child.name);
+            const filePath = absoluteStoragePath(storageKey);
+            const beforeFile = await lstat(filePath);
+            if (!beforeFile.isFile() || beforeFile.isSymbolicLink()) return null;
+            if (beforeFile.size > claim.maxFileSize) {
+              console.warn(`Skipping oversized user-backed file ${storageKey} (${beforeFile.size} bytes)`);
+              return null;
+            }
+            return { child, storageKey, filePath, beforeFile, identity: filesystemIdentity(beforeFile) };
+          }));
+          const batch = metadata.filter(value => value !== null);
+          if (batch.length === 0) continue;
+          const checked = await callConvex<{ results: FileCheck[] }>(
+            "/internal/storage/check-filesystem-files",
             {
-              galleryId,
-              folderId,
-              syncId: claim.syncId,
-              name: child.name,
-              storageKey,
-              size: beforeFile.size,
-              modifiedAt: beforeFile.mtimeMs,
-              identity,
+              galleryId, folderId, syncId: claim.syncId,
+              files: batch.map(item => ({
+                name: item.child.name, storageKey: item.storageKey, size: item.beforeFile.size,
+                modifiedAt: item.beforeFile.mtimeMs, identity: item.identity,
+              })),
             },
           );
-          if (check.kind === "unchanged") {
-            continue;
+          if (checked.results.length !== batch.length) {
+            throw new Error("Filesystem comparison returned an incomplete batch");
           }
-
-          const sha256 = await hashFile(filePath, syncSignal);
-          const afterFile = await stat(filePath);
-          if (
-            afterFile.size !== beforeFile.size ||
-            afterFile.mtimeMs !== beforeFile.mtimeMs
-          ) {
-            throw new Error(
-              `File changed while it was being indexed: ${child.name}`,
-            );
+          for (let index = 0; index < batch.length; index += 1) {
+            syncSignal.throwIfAborted();
+            const check = checked.results[index]!;
+            if (check.kind === "unchanged") continue;
+            const { child, storageKey, filePath, beforeFile, identity } = batch[index]!;
+            const sha256 = await hashFile(filePath, syncSignal);
+            const afterFile = await stat(filePath);
+            if (afterFile.size !== beforeFile.size || afterFile.mtimeMs !== beforeFile.mtimeMs) {
+              throw new Error(`File changed while it was being indexed: ${child.name}`);
+            }
+            const mimeType = resolveMimeType(child.name, "application/octet-stream");
+            await callConvex("/internal/storage/reconcile-filesystem-file", {
+              galleryId, folderId, syncId: claim.syncId, entryId: check.entryId,
+              name: child.name, storageKey, size: beforeFile.size,
+              modifiedAt: beforeFile.mtimeMs, identity, mimeType,
+              extension: resolveExtension(child.name, mimeType),
+              mediaKind: classifyMedia(mimeType), sha256,
+            });
           }
-          const mimeType = resolveMimeType(
-            child.name,
-            "application/octet-stream",
-          );
-          const extension = resolveExtension(child.name, mimeType);
-          const kind = classifyMedia(mimeType);
-          await callConvex("/internal/storage/reconcile-filesystem-file", {
-            galleryId,
-            folderId,
-            syncId: claim.syncId,
-            entryId: check.entryId,
-            name: child.name,
-            storageKey,
-            size: beforeFile.size,
-            modifiedAt: beforeFile.mtimeMs,
-            identity,
-            mimeType,
-            extension,
-            mediaKind: kind,
-            sha256,
-          });
         }
 
         const after = await stat(directoryPath);

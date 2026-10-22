@@ -73,13 +73,17 @@ Click **Log out** in the header to sign out.
 
 ## Browse a gallery
 
-Open a gallery link to see its folders and files in a thumbnail grid.
+Open a gallery link to see its folders and files in a thumbnail grid. Folder
+artwork loads separately as you scroll, so you can start browsing while previews
+are still appearing. Moving between folders keeps the same gallery open.
 
 Folders appear before files. Both groups follow **Thumbnail order**, using the
 gallery setting unless the current folder has its own setting. Name sorting
 ignores uppercase and lowercase. Folder size includes all files in nested
 subfolders; folder date means its modified date. The viewer follows the same
-folder order when moving between folders.
+folder order when moving between folders. If folder sizes are still being
+prepared, you will see **Calculating folder sizes…** and folders temporarily
+appear in name order. The chosen size order appears when the totals are ready.
 
 For filesystem folders, the modified date comes from disk and updates on a scan.
 For other folders, it updates when files or subfolders are added, removed, moved,
@@ -90,12 +94,15 @@ or renamed. Until a modified date is available, the folder's creation date is us
 - Click a file thumbnail to open the **viewer**, also called the lightbox.
 - Scroll down to load more files, or use **Previous** and **Next** below the grid
   when page navigation is enabled.
-- Click a file's **View metadata** information icon, when present, to see details
-  such as the uploader, image dimensions, camera information, and recorded
-  location. Available details vary by file.
+- Click a file's **View metadata** information icon to load details such as the
+  uploader, image dimensions, camera information, and recorded location.
+  Available details vary by file.
 
 Some galleries update their file listings in the background. The header may
 show that an update is queued, in progress, or complete.
+
+During a site update, a gallery may briefly show an error. Once the update has
+finished, refresh the page to load the latest version.
 
 ## View, download, and share files
 
@@ -464,6 +471,11 @@ galleries offer **Scan folder** in **Folder settings**, and beside **Items** on
 the owner page for scanning from the gallery root. Use it to refresh the gallery
 after files have been added, changed, or removed outside the website. The icon
 shows when the scan is queued or running.
+
+Opening a folder also checks for changes in the background. Automatic checks
+reuse a successful check from the last 30 seconds. **Scan folder** always requests
+a fresh check. Scan progress updates the indicator; files and folders change only
+when their content or settings change.
 
 Files discovered in that directory may show **Unknown** as their uploader.
 In **Permissions**, **Take Unknown** beside a whole-gallery Owner grant assigns

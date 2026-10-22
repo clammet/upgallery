@@ -11,8 +11,14 @@ import {
   createFolderStats,
   deleteFolderStats,
   readFolderStats,
+  readSubtreeBytes,
+  reparentFolderStats,
+  requestFolderStatsRebuild,
+  statsRebuildRow,
   settleReadyEntry,
 } from "./lib/folderStats";
+
+import { sortedChildFoldersResult } from "./lib/folderOrder";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -115,7 +121,8 @@ describe("folderStats", () => {
         totalBytes: 15,
       });
 
-      // A folder without a row gets one from its first delta.
+      // Newly created empty folders have explicit zero counters.
+      await createFolderStats(ctx, childId, galleryId);
       await adjustFolderStats(
         ctx,
         { folderId: childId, galleryId },
@@ -184,6 +191,8 @@ describe("folderStats", () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
       const { galleryId, rootId, childId } = await seedGalleryWithFolders(ctx);
+      await createFolderStats(ctx, rootId, galleryId);
+      await createFolderStats(ctx, childId, galleryId);
       await adjustFolderStatsForEntries(
         ctx,
         [
@@ -269,9 +278,80 @@ describe("folderStats", () => {
           .withIndex("by_galleryId", (q) => q.eq("galleryId", ids.galleryId))
           .collect();
         expect(rows).toHaveLength(2);
+        expect(await readSubtreeBytes(ctx, ids.rootId)).toBe(2_427);
+        expect(await readSubtreeBytes(ctx, ids.childId)).toBe(21);
       });
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+
+test("rebuild restarts after an entry change between pages and initializes unknown totals", async () => {
+  vi.useFakeTimers();
+  try {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async ctx => {
+      const ids = await seedGalleryWithFolders(ctx);
+      await ctx.db.patch("galleries", ids.galleryId, { sortOrder: "sizeDesc" });
+      await seedEntries(ctx, { galleryId: ids.galleryId, folderId: ids.childId, count: 201, size: 10, prefix: "existing" });
+      await seedEntries(ctx, { galleryId: ids.galleryId, folderId: ids.childId, count: 1, size: 7, prefix: "new" });
+      await adjustFolderStats(ctx, { galleryId: ids.galleryId, folderId: ids.childId }, { items: 1, bytes: 7 });
+      expect(await readFolderStats(ctx, ids.childId)).toBeNull();
+      const listing = await sortedChildFoldersResult(ctx, (await ctx.db.get("galleries", ids.galleryId))!, (await ctx.db.get("folders", ids.rootId))!);
+      expect(listing.sizeSortPending).toBe(true);
+      const job = await statsRebuildRow(ctx, ids.childId);
+      return { ...ids, jobId: job!._id };
+    });
+    // Read the first bounded page before changing an already counted entry.
+    await t.mutation(internal.folderStats.rebuild, { jobId: ids.jobId });
+    await t.run(async ctx => {
+      const entry = await ctx.db.query("entries").withIndex("by_folderId_and_state", q => q.eq("folderId", ids.childId).eq("state", "ready")).first();
+      await ctx.db.patch("entries", entry!._id, { size: 20 });
+      await settleReadyEntry(ctx, { galleryId: ids.galleryId, folderId: ids.childId, size: 20, previous: entry! });
+      // Repeated preparation coalesces into the existing rebuild.
+      await requestFolderStatsRebuild(ctx, ids.childId);
+      expect((await statsRebuildRow(ctx, ids.childId))!._id).toBe(ids.jobId);
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    await t.run(async ctx => {
+      expect(await readFolderStats(ctx, ids.childId)).toEqual({ itemCount: 202, totalBytes: 2_027 });
+      expect(await readSubtreeBytes(ctx, ids.rootId)).toBe(2_027);
+      expect(await readSubtreeBytes(ctx, ids.childId)).toBe(2_027);
+      expect(await statsRebuildRow(ctx, ids.childId)).toBeNull();
+    });
+  } finally { vi.useRealTimers(); }
+});
+
+test("subtree totals follow moves, stale ancestor arrays, tombstones, and revival", async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async ctx => {
+    const { galleryId, rootId, childId } = await seedGalleryWithFolders(ctx);
+    const siblingId = await ctx.db.insert("folders", {
+      galleryId, parentId: rootId, ancestorIds: [rootId], name: "Sibling", slug: "sibling", accessPolicy: "inherit", discoverability: "listed",
+    });
+    const leafId = await ctx.db.insert("folders", {
+      galleryId, parentId: childId, ancestorIds: [rootId, childId], name: "Leaf", slug: "leaf", accessPolicy: "inherit", discoverability: "listed",
+    });
+    for (const folderId of [rootId, childId, siblingId, leafId]) await createFolderStats(ctx, folderId, galleryId);
+    await adjustFolderStats(ctx, { galleryId, folderId: leafId }, { items: 1, bytes: 10 });
+    const child = (await ctx.db.get("folders", childId))!;
+    await reparentFolderStats(ctx, child, { parentId: siblingId });
+    await ctx.db.patch("folders", childId, { parentId: siblingId });
+    // The background ancestorIds repair has not run yet.
+    await adjustFolderStats(ctx, { galleryId, folderId: leafId }, { bytes: 5 });
+    for (const folderId of [rootId, childId, siblingId, leafId]) expect(await readSubtreeBytes(ctx, folderId)).toBe(15);
+    await reparentFolderStats(ctx, (await ctx.db.get("folders", childId))!, { filesystemMissingAt: 1 });
+    await ctx.db.patch("folders", childId, { filesystemMissingAt: 1 });
+    expect(await readSubtreeBytes(ctx, rootId)).toBe(0);
+    // Deleting content in a detached subtree must not subtract from its old ancestors again.
+    await adjustFolderStats(ctx, { galleryId, folderId: leafId }, { bytes: -5 });
+    expect(await readSubtreeBytes(ctx, rootId)).toBe(0);
+    expect(await readSubtreeBytes(ctx, childId)).toBe(10);
+    await reparentFolderStats(ctx, (await ctx.db.get("folders", childId))!, { filesystemMissingAt: undefined });
+    await ctx.db.patch("folders", childId, { filesystemMissingAt: undefined });
+    expect(await readSubtreeBytes(ctx, rootId)).toBe(10);
+    expect(await readSubtreeBytes(ctx, siblingId)).toBe(10);
   });
 });

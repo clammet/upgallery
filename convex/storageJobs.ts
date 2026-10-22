@@ -12,11 +12,14 @@ import {
   storageJobRetryDelay,
 } from "./lib/storageJobs";
 
+const AUTOMATIC_SYNC_FRESHNESS_MS = 30_000;
+
 export async function queueFilesystemSyncJob(
   ctx: MutationCtx,
   args: {
     galleryId: Id<"galleries">;
     folderId: Id<"folders">;
+    force?: boolean;
   },
 ) {
     const [gallery, folder] = await Promise.all([
@@ -46,6 +49,15 @@ export async function queueFilesystemSyncJob(
     if (active !== undefined) {
       return { queued: false, jobId: active._id };
     }
+    if (args.force === false) {
+      const state = await ctx.db.query("filesystemSyncStates")
+        .withIndex("by_folderId", q => q.eq("folderId", folder._id)).unique();
+      const age = Date.now() - (state?.lastCheckedAt ?? 0);
+      if (state?.error === undefined && state?.knownModifiedAt !== undefined &&
+          state.activeSyncId === undefined && age >= 0 && age < AUTOMATIC_SYNC_FRESHNESS_MS) {
+        return { queued: false, jobId: null };
+      }
+    }
     const reusable = existingJobs.find((job) => job.status === "failed");
     if (reusable !== undefined) {
       await ctx.db.patch("filesystemSyncJobs", reusable._id, {
@@ -72,7 +84,9 @@ export const queueFilesystemSync = internalMutation({
   args: {
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
+    force: v.optional(v.boolean()),
   },
+  returns: v.object({ queued: v.boolean(), jobId: v.union(v.id("filesystemSyncJobs"), v.null()) }),
   handler: queueFilesystemSyncJob,
 });
 

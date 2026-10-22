@@ -7,6 +7,7 @@ import {
   isUnknownUploaderProfile,
   profileByIdentityId,
   publicProfile,
+  publicProfileValidator,
 } from "./lib/profiles";
 import { requireCurrentProfile, requireSystemAdmin } from "./lib/permissions";
 
@@ -22,6 +23,7 @@ export const ensureCurrent = mutation({
 
 export const current = query({
   args: { anonymousClaim: v.optional(v.string()) },
+  returns: v.union(v.null(), publicProfileValidator),
   handler: async (ctx, args) => {
     const identityId = await googlyAuth.resolveIdentity(ctx, args);
     if (identityId === null) {
@@ -39,6 +41,7 @@ export const updatePreferences = mutation({
     infiniteScroll: v.optional(v.boolean()),
     overzoom: v.optional(v.boolean()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const profile = await requireCurrentProfile(ctx, args.anonymousClaim);
     if (profile.isAnonymous) {
@@ -67,12 +70,24 @@ export const updatePreferences = mutation({
 
 export const listForAdmin = query({
   args: {},
+  returns: v.array(publicProfileValidator.extend({ lastSeenAt: v.number() })),
   handler: async (ctx) => {
     await requireSystemAdmin(ctx);
     const profiles = await ctx.db.query("profiles").order("desc").take(200);
-    return profiles
-      .filter((profile) => !isUnknownUploaderProfile(profile))
-      .map(publicProfile);
+    return await Promise.all(
+      profiles
+        .filter((profile) => !isUnknownUploaderProfile(profile))
+        .map(async (profile) => {
+          const activity = await ctx.db
+            .query("profileActivity")
+            .withIndex("by_profileId", (q) => q.eq("profileId", profile._id))
+            .unique();
+          return {
+            ...publicProfile(profile),
+            lastSeenAt: activity?.lastSeenAt ?? profile.lastSeenAt ?? 0,
+          };
+        }),
+    );
   },
 });
 
@@ -81,6 +96,7 @@ export const setSystemAdmin = mutation({
     profileId: v.id("profiles"),
     enabled: v.boolean(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const actor = await requireSystemAdmin(ctx);
     const target = await ctx.db.get("profiles", args.profileId);

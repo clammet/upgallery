@@ -1,11 +1,10 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api } from "../convex/_generated/api";
 import { anonymousClaim, authClient } from "./lib/authClient";
-import { publicGalleryRoute } from "./lib/galleryRoutes";
+import { matchingGalleryRoot, publicGalleryRoute } from "./lib/galleryRoutes";
 import { GalleryPage } from "./pages/GalleryPage";
-import { UploaderPage } from "./pages/UploaderPage";
 import { PageFrame } from "./components/PageFrame";
 import { AuthCallbackPage } from "./components/AuthCallbackPage";
 import { AccessDenied } from "./components/AccessDenied";
@@ -15,12 +14,16 @@ import { useGalleryTheme } from "./hooks/useGalleryTheme";
 const AdminPage = lazy(() =>
   import("./pages/AdminPage").then((module) => ({ default: module.AdminPage })),
 );
+const UploaderPage = lazy(() =>
+  import("./pages/UploaderPage").then((module) => ({ default: module.UploaderPage })),
+);
 
 export function App() {
   return (
     <>
       <AuthBootstrap />
       <GalleryErrorScope>
+        <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="/admin/*" element={
@@ -32,6 +35,7 @@ export function App() {
           <Route path="/up/:slug" element={<SlugGallery expectedKind="uploader" />} />
           <Route path="*" element={<HostGallery />} />
         </Routes>
+        </Suspense>
       </GalleryErrorScope>
     </>
   );
@@ -98,6 +102,7 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
     <GalleryErrorScope gallery={resolved.gallery}>
       {resolved.gallery.kind === "image" ? (
         <GalleryPage
+          key={resolved.gallery._id}
           gallery={resolved.gallery}
           rootFolder={resolved.rootFolder}
           routeRoot={`/g/${resolved.gallery.slug}`}
@@ -106,6 +111,7 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
         />
       ) : (
         <UploaderPage
+          key={resolved.gallery._id}
           gallery={resolved.gallery}
           rootFolder={resolved.rootFolder}
           routeRoot={`/up/${resolved.gallery.slug}`}
@@ -119,15 +125,26 @@ function SlugGallery(props: { expectedKind: "image" | "uploader" }) {
 
 function HostGallery() {
   const location = useLocation();
+  // Keep the original query subscribed while navigating inside its gallery.
+  // The server also returns route boundaries, so a nested gallery or a live
+  // routing change still causes a new authoritative resolution.
+  const [resolutionPath, setResolutionPath] = useState(location.pathname);
   const resolved = useQuery(api.galleries.resolveByHost, {
     anonymousClaim: anonymousClaim(),
     host: window.location.host,
-    path: location.pathname,
+    path: resolutionPath,
   });
+  const changingGallery = location.pathname !== resolutionPath &&
+    (resolved === null || (resolved !== undefined &&
+      matchingGalleryRoot(location.pathname, resolved.hostRouteRoots) !== resolved.routeRoot));
   useGalleryTheme(
-    resolved?.rootFolder ? resolved.gallery : undefined,
+    !changingGallery && resolved?.rootFolder ? resolved.gallery : undefined,
     resolved?.routeRoot,
   );
+  if (changingGallery) {
+    setResolutionPath(location.pathname);
+    return <Loading />;
+  }
   if (resolved === undefined) return <Loading />;
   if (resolved === null || resolved.rootFolder === null) {
     return <Landing />;
@@ -139,12 +156,14 @@ function HostGallery() {
     <GalleryErrorScope gallery={resolved.gallery}>
       {resolved.gallery.kind === "image" ? (
         <GalleryPage
+          key={resolved.gallery._id}
           gallery={resolved.gallery}
           rootFolder={resolved.rootFolder}
           routeRoot={resolved.routeRoot}
         />
       ) : (
         <UploaderPage
+          key={resolved.gallery._id}
           gallery={resolved.gallery}
           rootFolder={resolved.rootFolder}
           routeRoot={resolved.routeRoot}

@@ -101,7 +101,7 @@ async function completeSync(
   }
 }
 
-function seedEntry(
+async function seedEntry(
   ctx: MutationCtx,
   input: {
     galleryId: Id<"galleries">;
@@ -114,7 +114,7 @@ function seedEntry(
     thumbnailKey?: string;
   },
 ) {
-  return ctx.db.insert("entries", {
+  const entryId = await ctx.db.insert("entries", {
     galleryId: input.galleryId,
     folderId: input.folderId,
     ownerProfileId: input.ownerProfileId,
@@ -130,11 +130,16 @@ function seedEntry(
     thumbnailKey: input.thumbnailKey,
     filesystemModifiedAt: 900,
     filesystemIdentity: input.identity,
-    filesystemSyncId: input.syncId,
     state: "ready" as const,
     createdAt: 1,
     updatedAt: 1,
   });
+  if (input.syncId !== undefined) {
+    await ctx.db.insert("filesystemScanItems", {
+      folderId: input.folderId, syncId: input.syncId, itemId: entryId,
+    });
+  }
+  return entryId;
 }
 
 describe("filesystem scanner", () => {
@@ -260,7 +265,7 @@ describe("filesystem scanner", () => {
       syncId: claim.syncId,
       modifiedAt: 1000,
     });
-    // Both survived the sweep: they carry the completing sync's id.
+    // Both survived the sweep: separate scan records mark them as seen.
     expect(
       await t.run(async (ctx) => ctx.db.get("entries", entryId)),
     ).not.toBeNull();
@@ -487,7 +492,7 @@ describe("filesystem scanner", () => {
       }
       expect(remaining).toHaveLength(450);
       expect(
-        remaining.every((entry) => entry.filesystemSyncId === claim.syncId),
+        remaining.every((entry) => entry.filesystemSyncId === undefined),
       ).toBe(true);
 
       // The stale entry with a thumbnail queued its derivative cleanup.
@@ -517,4 +522,157 @@ describe("filesystem scanner", () => {
       expect(state?.lastCompletedAt).toBeTypeOf("number");
     });
   });
+  test("unchanged batches only write scan bookkeeping and enforce batch limits", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createUserGallery(t, admin.googleSubject, "unchanged-batches");
+    const first = await claimSync(t, galleryId, rootFolderId);
+    const directories = Array.from({ length: 32 }, (_, index) => ({
+      name: `child-${index}`, identity: `dir:${index}`, modifiedAt: 100,
+    }));
+    const folderIds = await t.mutation(internal.filesystemSync.reconcileFilesystemDirectories, {
+      galleryId, parentId: rootFolderId, syncId: first.syncId, directories,
+    });
+    const entryId = await t.run(ctx => seedEntry(ctx, {
+      galleryId, folderId: rootFolderId, ownerProfileId: admin.profileId,
+      storageRoot: "unchanged-batches", name: "image.jpg", identity: "file:1", syncId: first.syncId,
+    }));
+    await completeSync(t, { galleryId, folderId: rootFolderId, syncId: first.syncId, modifiedAt: 100 });
+    const before = await t.run(async ctx => ({
+      entry: await ctx.db.get("entries", entryId),
+      folders: await Promise.all(folderIds.map(id => ctx.db.get("folders", id))),
+    }));
+    const next = await claimSync(t, galleryId, rootFolderId);
+    const file = { name: "image.jpg", storageKey: "public/users/unchanged-batches/image.jpg", size: 10, modifiedAt: 900, identity: "file:1" };
+    await expect(t.mutation(internal.filesystemSync.checkFilesystemFiles, {
+      galleryId, folderId: rootFolderId, syncId: next.syncId, files: [file],
+    })).resolves.toEqual([{ kind: "unchanged" }]);
+    // Repeated batches are idempotent, including their bookkeeping.
+    await t.mutation(internal.filesystemSync.checkFilesystemFiles, {
+      galleryId, folderId: rootFolderId, syncId: next.syncId, files: [file],
+    });
+    await t.mutation(internal.filesystemSync.reconcileFilesystemDirectories, {
+      galleryId, parentId: rootFolderId, syncId: next.syncId, directories,
+    });
+    await t.run(async ctx => {
+      expect(await ctx.db.get("entries", entryId)).toEqual(before.entry);
+      expect(await Promise.all(folderIds.map(id => ctx.db.get("folders", id)))).toEqual(before.folders);
+      expect(await ctx.db.query("filesystemScanItems")
+        .withIndex("by_folderId_and_syncId_and_itemId", q => q.eq("folderId", rootFolderId).eq("syncId", next.syncId))
+        .collect()).toHaveLength(33);
+    });
+    for (const count of [0, 33]) {
+      await expect(t.mutation(internal.filesystemSync.checkFilesystemFiles, {
+        galleryId, folderId: rootFolderId, syncId: next.syncId, files: Array.from({ length: count }, () => file),
+      })).rejects.toThrow("1-32 items");
+      await expect(t.mutation(internal.filesystemSync.reconcileFilesystemDirectories, {
+        galleryId, parentId: rootFolderId, syncId: next.syncId,
+        directories: Array.from({ length: count }, () => directories[0]!),
+      })).rejects.toThrow("1-32 items");
+    }
+  });
+
+  test("expired or failed generations cannot affect replacement scan markers", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createUserGallery(t, admin.googleSubject, "lease-markers");
+    const first = await claimSync(t, galleryId, rootFolderId);
+    const entryId = await t.run(async ctx => {
+      const entryId = await seedEntry(ctx, {
+        galleryId, folderId: rootFolderId, ownerProfileId: admin.profileId,
+        storageRoot: "lease-markers", name: "image.jpg", identity: "1:1", syncId: first.syncId,
+      });
+      const state = await ctx.db.query("filesystemSyncStates").withIndex("by_folderId", q => q.eq("folderId", rootFolderId)).unique();
+      await ctx.db.patch("filesystemSyncStates", state!._id, { leaseExpiresAt: Date.now() - 1 });
+      return entryId;
+    });
+    await expect(t.mutation(internal.filesystemSync.checkFilesystemFiles, {
+      galleryId, folderId: rootFolderId, syncId: first.syncId,
+      files: [{ name: "image.jpg", storageKey: "public/users/lease-markers/image.jpg", size: 10, modifiedAt: 900, identity: "1:1" }],
+    })).rejects.toThrow("lease is no longer active");
+    const replacement = await claimSync(t, galleryId, rootFolderId);
+    await t.mutation(internal.filesystemSync.checkFilesystemFile, {
+      galleryId, folderId: rootFolderId, syncId: replacement.syncId,
+      name: "image.jpg", storageKey: "public/users/lease-markers/image.jpg", size: 10, modifiedAt: 900, identity: "1:1",
+    });
+    await t.mutation(internal.filesystemSync.failFilesystemSync, {
+      folderId: rootFolderId, syncId: first.syncId, error: "late worker failure",
+    });
+    await t.mutation(internal.filesystemSync.cleanupScanItems, { folderId: rootFolderId, syncId: first.syncId });
+    await completeSync(t, { galleryId, folderId: rootFolderId, syncId: replacement.syncId, modifiedAt: 100 });
+    expect(await t.run(ctx => ctx.db.get("entries", entryId))).not.toBeNull();
+    const failed = await claimSync(t, galleryId, rootFolderId);
+    await t.mutation(internal.filesystemSync.failFilesystemSync, { folderId: rootFolderId, syncId: failed.syncId, error: "disk unavailable" });
+    const state = await t.run(ctx => ctx.db.query("filesystemSyncStates").withIndex("by_folderId", q => q.eq("folderId", rootFolderId)).unique());
+    expect(state?.activeSyncId).toBeUndefined();
+    expect(state?.error).toBe("disk unavailable");
+    expect(await t.run(ctx => ctx.db.get("entries", entryId))).not.toBeNull();
+  });
+
+  test("scan bookkeeping cleanup is bounded and scoped to one generation", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { rootFolderId } = await createUserGallery(t, admin.googleSubject, "marker-cleanup");
+    await t.run(async ctx => {
+      for (let index = 0; index < 201; index++) {
+        await ctx.db.insert("filesystemScanItems", { folderId: rootFolderId, syncId: "old", itemId: rootFolderId });
+      }
+      await ctx.db.insert("filesystemScanItems", { folderId: rootFolderId, syncId: "new", itemId: rootFolderId });
+    });
+    await t.mutation(internal.filesystemSync.cleanupScanItems, { folderId: rootFolderId, syncId: "old" });
+    expect(await t.run(ctx => ctx.db.query("filesystemScanItems").withIndex("by_folderId_and_syncId_and_itemId", q => q.eq("folderId", rootFolderId)).collect())).toHaveLength(2);
+    await t.mutation(internal.filesystemSync.cleanupScanItems, { folderId: rootFolderId, syncId: "old" });
+    const remaining = await t.run(ctx => ctx.db.query("filesystemScanItems").withIndex("by_folderId_and_syncId_and_itemId", q => q.eq("folderId", rootFolderId)).collect());
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.syncId).toBe("new");
+  });
+
+  test("automatic checks reuse recent successful scans, while explicit scans bypass freshness", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createUserGallery(t, admin.googleSubject, "scan-freshness");
+    const initialJob = await t.run(ctx => ctx.db.query("filesystemSyncJobs")
+      .withIndex("by_folderId", q => q.eq("folderId", rootFolderId)).unique());
+    await t.mutation(internal.storageJobs.completeFilesystemSync, { jobId: initialJob!._id });
+    const first = await claimSync(t, galleryId, rootFolderId);
+    await completeSync(t, { galleryId, folderId: rootFolderId, syncId: first.syncId, modifiedAt: 100 });
+    await expect(t.mutation(internal.storageJobs.queueFilesystemSync, {
+      galleryId, folderId: rootFolderId, force: false,
+    })).resolves.toEqual({ queued: false, jobId: null });
+    for (const force of [true, undefined]) {
+      const queued = await t.mutation(internal.storageJobs.queueFilesystemSync, { galleryId, folderId: rootFolderId, force });
+      expect(queued.queued).toBe(true);
+      await expect(t.mutation(internal.storageJobs.queueFilesystemSync, { galleryId, folderId: rootFolderId, force: true }))
+        .resolves.toEqual({ queued: false, jobId: queued.jobId });
+      await t.mutation(internal.storageJobs.completeFilesystemSync, { jobId: queued.jobId! });
+    }
+    for (const patch of [{ lastCheckedAt: Date.now() - 30_001 }, { lastCheckedAt: Date.now(), error: "failed" }]) {
+      await t.run(async ctx => {
+        const state = await ctx.db.query("filesystemSyncStates").withIndex("by_folderId", q => q.eq("folderId", rootFolderId)).unique();
+        await ctx.db.patch("filesystemSyncStates", state!._id, patch);
+      });
+      const queued = await t.mutation(internal.storageJobs.queueFilesystemSync, { galleryId, folderId: rootFolderId, force: false });
+      expect(queued.queued).toBe(true);
+      await t.mutation(internal.storageJobs.completeFilesystemSync, { jobId: queued.jobId! });
+    }
+  });
+
+  test("inode lookup finds ready files beyond historical deleted collisions", async () => {
+    const t = setupTest();
+    const admin = await seedAdmin(t);
+    const { galleryId, rootFolderId } = await createUserGallery(t, admin.googleSubject, "inode-history");
+    const claim = await claimSync(t, galleryId, rootFolderId);
+    const liveId = await t.run(async ctx => {
+      for (let index = 0; index < 20; index++) {
+        const id = await seedEntry(ctx, { galleryId, folderId: rootFolderId, ownerProfileId: admin.profileId, storageRoot: "inode-history", name: `old-${index}.jpg`, identity: "reused" });
+        await ctx.db.patch("entries", id, { state: "deleted" });
+      }
+      return await seedEntry(ctx, { galleryId, folderId: rootFolderId, ownerProfileId: admin.profileId, storageRoot: "inode-history", name: "live.jpg", identity: "reused" });
+    });
+    await expect(t.mutation(internal.filesystemSync.checkFilesystemFiles, {
+      galleryId, folderId: rootFolderId, syncId: claim.syncId,
+      files: [{ name: "renamed.jpg", storageKey: "public/users/inode-history/renamed.jpg", size: 10, modifiedAt: 900, identity: "reused" }],
+    })).resolves.toEqual([{ kind: "metadata", entryId: liveId }]);
+  });
+
 });

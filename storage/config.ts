@@ -35,6 +35,8 @@ export const config = {
   storageMountRoots: parseMountRoots(process.env.STORAGE_MOUNT_ROOTS),
   storageRootSentinel: parseSentinelName(process.env.STORAGE_ROOT_SENTINEL),
   pollIntervalMs: positiveInteger("STORAGE_POLL_INTERVAL_MS", 1_000),
+  // Keep new-work discovery within a few seconds even after long idle periods.
+  idlePollMaximumMs: positiveInteger("STORAGE_IDLE_POLL_MAX_MS", 4_000),
   heartbeatIntervalMs: positiveInteger(
     "STORAGE_HEARTBEAT_INTERVAL_MS",
     30_000,

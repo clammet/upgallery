@@ -570,6 +570,63 @@ http.route({
 });
 
 http.route({
+  path: "/internal/storage/reconcile-filesystem-directories",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) return json({ error: "Unauthorized" }, 401);
+    const body: unknown = await request.json();
+    if (!isRecord(body) || typeof body.galleryId !== "string" ||
+        typeof body.parentId !== "string" || typeof body.syncId !== "string" ||
+        !Array.isArray(body.directories) || body.directories.length < 1 || body.directories.length > 32) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    const directories: Array<{ name: string; identity: string; modifiedAt?: number }> = [];
+    for (const value of body.directories) {
+      if (!isRecord(value) || typeof value.name !== "string" || typeof value.identity !== "string" ||
+          (value.modifiedAt !== undefined && typeof value.modifiedAt !== "number")) {
+        return json({ error: "Invalid directory metadata" }, 400);
+      }
+      directories.push({ name: value.name, identity: value.identity, modifiedAt: value.modifiedAt });
+    }
+    return json({ folderIds: await ctx.runMutation(internal.filesystemSync.reconcileFilesystemDirectories, {
+      galleryId: body.galleryId as Id<"galleries">,
+      parentId: body.parentId as Id<"folders">,
+      syncId: body.syncId,
+      directories,
+    }) });
+  }),
+});
+
+http.route({
+  path: "/internal/storage/check-filesystem-files",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!storageAuthorized(request)) return json({ error: "Unauthorized" }, 401);
+    const body: unknown = await request.json();
+    if (!isRecord(body) || typeof body.galleryId !== "string" ||
+        typeof body.folderId !== "string" || typeof body.syncId !== "string" ||
+        !Array.isArray(body.files) || body.files.length < 1 || body.files.length > 32) {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    const files: Array<{ name: string; storageKey: string; size: number; modifiedAt: number; identity: string }> = [];
+    for (const value of body.files) {
+      if (!isRecord(value) || typeof value.name !== "string" || typeof value.storageKey !== "string" ||
+          typeof value.size !== "number" || typeof value.modifiedAt !== "number" || typeof value.identity !== "string") {
+        return json({ error: "Invalid file metadata" }, 400);
+      }
+      files.push({ name: value.name, storageKey: value.storageKey, size: value.size,
+        modifiedAt: value.modifiedAt, identity: value.identity });
+    }
+    return json({ results: await ctx.runMutation(internal.filesystemSync.checkFilesystemFiles, {
+      galleryId: body.galleryId as Id<"galleries">,
+      folderId: body.folderId as Id<"folders">,
+      syncId: body.syncId,
+      files,
+    }) });
+  }),
+});
+
+http.route({
   path: "/internal/storage/reconcile-filesystem-file",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
@@ -881,7 +938,8 @@ http.route({
     if (
       !isRecord(body) ||
       typeof body.galleryId !== "string" ||
-      typeof body.folderId !== "string"
+      typeof body.folderId !== "string" ||
+      (body.force !== undefined && typeof body.force !== "boolean")
     ) {
       return json({ error: "Invalid request body" }, 400);
     }
@@ -890,6 +948,7 @@ http.route({
         await ctx.runMutation(internal.storageJobs.queueFilesystemSync, {
           galleryId: body.galleryId as Id<"galleries">,
           folderId: body.folderId as Id<"folders">,
+          force: body.force,
         }),
       );
     } catch (error) {

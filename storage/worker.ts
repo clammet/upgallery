@@ -9,6 +9,7 @@ import {
   type RecoverableFilesystemOperationClaim,
 } from "./convex.js";
 import { delay, runWithHeartbeat } from "./heartbeat.js";
+import { idlePollDelay, WorkerWakeups } from "./polling.js";
 import { processMaintenanceClaim } from "./maintenance.js";
 import { configureMediaConcurrency } from "./media.js";
 import { processMediaClaim } from "./mediaWorker.js";
@@ -22,6 +23,7 @@ import {
 
 let lastSuccessfulConvexAt = 0;
 const shutdown = new AbortController();
+const workerWakeups = new WorkerWakeups();
 
 // Claimed jobs currently being processed, per lane. Interrupting one is
 // recoverable (leases expire and another worker reclaims the work) but wastes
@@ -53,7 +55,7 @@ const healthServer = createServer((request, response) => {
     return;
   }
   if (request.url === "/readyz") {
-    const maximumAge = Math.max(30_000, config.pollIntervalMs * 10);
+    const maximumAge = Math.max(30_000, config.pollIntervalMs * 10, config.idlePollMaximumMs * 3);
     const ready =
       lastSuccessfulConvexAt > 0 &&
       Date.now() - lastSuccessfulConvexAt <= maximumAge;
@@ -294,7 +296,9 @@ async function runLoop(
   cycle: (signal: AbortSignal) => Promise<boolean>,
   signal: AbortSignal,
 ): Promise<void> {
+  let emptyAttempts = 0;
   while (!signal.aborted) {
+    const observedVersion = workerWakeups.version;
     let processed = false;
     try {
       processed = await cycle(signal);
@@ -303,8 +307,16 @@ async function runLoop(
         console.error(`${name} worker failed:`, error);
       }
     }
-    if (!processed && !signal.aborted) {
-      await delay(config.pollIntervalMs, signal).catch(() => undefined);
+    if (processed) {
+      emptyAttempts = 0;
+      workerWakeups.wake();
+    } else if (!signal.aborted) {
+      emptyAttempts += 1;
+      await workerWakeups.wait(
+        idlePollDelay(emptyAttempts, config.pollIntervalMs, config.idlePollMaximumMs),
+        signal,
+        observedVersion,
+      ).catch(() => undefined);
     }
   }
 }

@@ -323,6 +323,7 @@ function startStorageWorker({ storageConvexSiteUrl, storageSecret, storageEnv })
     ...environmentArguments({
       ...pick(storageEnv, [
         "STORAGE_POLL_INTERVAL_MS",
+        "STORAGE_IDLE_POLL_MAX_MS",
         "STORAGE_HEARTBEAT_INTERVAL_MS",
         "STORAGE_SHUTDOWN_GRACE_MS",
         "STORAGE_FFMPEG_TIMEOUT_MS",

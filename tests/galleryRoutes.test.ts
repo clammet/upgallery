@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  matchingGalleryRoot,
   galleryFolderHref,
   galleryFolderLocation,
   galleryFolderPathSegments,
@@ -101,5 +102,24 @@ describe("gallery folder routes", () => {
         fileName: "At the root.jpg",
       }),
     ).toBe("/At%20the%20root.jpg");
+  });
+});
+
+
+describe("host gallery navigation", () => {
+  test("keeps nested folders within the same route and distinguishes nested galleries", () => {
+    const roots = ["/", "/photos", "/photos/shared"];
+    expect(matchingGalleryRoot("/photos/trips/2026", roots)).toBe("/photos");
+    expect(matchingGalleryRoot("/photos/shared/party", roots)).toBe("/photos/shared");
+    expect(matchingGalleryRoot("/photos/shared/", roots)).toBe("/photos/shared");
+    expect(matchingGalleryRoot("/photos/shared-other", roots)).toBe("/photos");
+    expect(matchingGalleryRoot("/other/folder", roots)).toBe("/");
+  });
+
+  test("requires a complete route segment and handles a removed route", () => {
+    expect(matchingGalleryRoot("/photos-old", ["/photos"])).toBeNull();
+    expect(matchingGalleryRoot("/photos/folder", ["/videos"])).toBeNull();
+    expect(matchingGalleryRoot("/", ["/"])).toBe("/");
+    expect(matchingGalleryRoot("/", [])).toBeNull();
   });
 });

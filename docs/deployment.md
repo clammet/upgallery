@@ -76,8 +76,11 @@ edits, renames, and removals. Convex is a reactive metadata index over that
 filesystem; it is not the source of the physical hierarchy.
 
 When a user opens a folder, the browser immediately subscribes to the current
-Convex listing and separately creates a durable background job through the
-storage API. A storage worker claims that job with a renewable lease and:
+Convex listing. Once the destination folder has resolved, it separately requests
+a durable background job through the storage API. Automatic requests reuse a
+successful check from the last 30 seconds; explicit **Scan folder** requests
+bypass that freshness window. A storage worker claims the job with a renewable
+lease and:
 
 1. Resolves the requested gallery and folder to a canonical path through
    Convex. Browser input is never used directly as a filesystem path.
@@ -92,14 +95,19 @@ storage API. A storage worker claims that job with a renewable lease and:
    access settings and grants.
 5. Compares each file's name, size, modification time, and filesystem identity
    with its indexed entry. Unchanged files are marked as seen without reading
-   their contents. New or changed files are hashed and indexed, then a separate
+   their contents. File comparisons and child-directory updates are batched, up to
+   32 at a time. Seen markers live in separate scan records, so unchanged files
+   and folders do not rewrite documents used by the gallery. New or changed
+   files are hashed and indexed, then a separate
    durable media job generates their thumbnail and EXIF metadata.
 6. Removes metadata for files no longer present and retires missing folder
    subtrees in bounded background batches.
 7. Records the directory modification time only after a consistent scan.
 
-Each Convex mutation automatically updates active gallery subscriptions, so the
-page fills in and changes while the check is running. A spinning refresh icon
+Content changes update active gallery subscriptions. Scan progress uses a
+separate query, so job and lease changes do not refresh the content listing.
+Folder artwork also uses separate, bounded queries for cards near the viewport.
+A spinning refresh icon
 is shown in the header to every viewer subscribed to a folder while that folder
 is being scanned. Successful completion changes it to a tick for a moment.
 Concurrent page loads for the same folder are coalesced by the durable job and
@@ -358,12 +366,23 @@ rewrite Convex environment values in the code-deploy workflow; rerun the
 
 ### Docker images (`.github/workflows/docker.yml`)
 
-Runs on every push to `main` and publishes the `storage`, `web`, and
+Runs on every push to `main`. After CI passes, it calls the Convex deploy
+workflow for that same commit. Image publication requires both a successful
+deployment and its matching commit output; a failed, cancelled, or skipped
+deployment cannot publish images. Pull requests only build images and do not
+deploy Convex or publish. Production runs finish without being cancelled by
+newer pushes; obsolete pending revisions are skipped by the publication gate.
+
+The workflow publishes the `storage`, `web`, and
 `web-dist` image targets to `ghcr.io/<owner>/<repo>/storage`,
 `ghcr.io/<owner>/<repo>/web`, and `ghcr.io/<owner>/<repo>/web-dist`, tagged
 `latest` and with the commit SHA. Registry authentication uses the workflow's
 automatic `GITHUB_TOKEN`, and the images take all deployment values at
-runtime, so this workflow needs no configured secrets or variables at all.
+runtime. Its Convex deployment uses the existing `production` environment and
+admin-key secret described below; no additional secret or variable is needed.
+Any required environment approval must complete before images are published.
+Manually running this workflow on `main` also deploys Convex before rebuilding
+and publishing images; manual runs from other branches cannot publish.
 The Compose file as written builds images locally; to run the published
 images instead, replace its `build:` sections with `image:` references.
 
@@ -373,8 +392,10 @@ wanted.
 
 ### Convex deploy (`.github/workflows/convex-deploy.yml`)
 
-Run manually from the Actions tab; it pushes the functions, crons, schema, and
-auth config in `convex/` with `convex deploy`. Create a GitHub environment named
+Called automatically by the Docker images workflow on `main` before image
+publication. It can also run manually from the Actions tab for a backend-only
+redeploy. It pushes the functions, crons, schema, and auth config in `convex/`
+with `convex deploy`. Create a GitHub environment named
 `production` and define this environment secret:
 
 | Secret | Value |
@@ -384,8 +405,9 @@ auth config in `convex/` with `convex deploy`. Create a GitHub environment named
 The workflow supplies and verifies
 `CONVEX_SELF_HOSTED_URL=https://upgallery-convex.nyanya.org` itself. It does not
 accept a Convex Cloud deploy key and does not change deployment environment
-values. Once the production deployment is live, enable the commented-out
-`push` trigger to deploy on every `main` push if that release policy is wanted.
+values. There is no separate push trigger: the Docker workflow coordinates
+backend deployment and image publication for the same commit. If deployment
+fails, fix the cause and rerun the Docker workflow to complete the release.
 
 ## Worker recovery and concurrency
 
@@ -405,7 +427,11 @@ The storage API separately bounds active and queued uploads, downloads, and
 filesystem operations. The worker separately bounds media and filesystem-sync
 concurrency; maintenance and interrupted-operation recovery are serialized.
 Worker loops drain available jobs immediately and only sleep when a queue is
-empty.
+empty. Idle polling backs off from `STORAGE_POLL_INTERVAL_MS` (default 1000 ms)
+to `STORAGE_IDLE_POLL_MAX_MS` (default 4000 ms), with jitter. Completing work resets
+the lane's delay and wakes other worker lanes. The effective maximum is never
+lower than `STORAGE_POLL_INTERVAL_MS`. New work arriving at a fully
+idle worker can wait up to the maximum polling interval to be discovered.
 
 The defaults are conservative. Adjust the `STORAGE_MAX_*`,
 `STORAGE_*_WORKER_CONCURRENCY`, CPU, and memory settings only after observing
@@ -457,3 +483,53 @@ the deployment under representative media sizes.
   API removes stale `upload-*` directories at startup.
 - Use immutable backups or snapshots for the content roots. Test a restore that
   includes both Convex state and mounted bytes.
+
+
+## Rolling out the gallery performance changes
+
+Push to `main` as usual: the Docker workflow deploys Convex successfully for
+that commit before publishing storage and frontend images. The new worker needs
+the batch scan endpoints, and the new frontend needs the separate preview and
+scan-status queries. In `yuzuyu`, the existing image webhooks apply the published
+images; hourly timers retry updates. The storage updater waits for the API and
+worker to be idle, so no manual worker stop is required. Storage and frontend
+updates may finish at different times.
+
+The old frontend is intentionally not compatible with the new folder-list
+query. Galleries may fail between backend deployment and frontend update;
+this window includes Docker image build time. If image building or publication
+fails after the backend deploys, rerun the Docker workflow to finish the rollout.
+Already-open tabs need a refresh after the frontend updates. Existing scan
+leases expire and can be reclaimed; scan markers from an old active lease are
+accepted until that generation finishes.
+
+The schema adds `filesystemScanItems`, `folderStatsRebuilds`, and
+`profileActivity`, plus the entry index
+`by_folderId_and_filesystemIdentity_and_state`. Existing entry/profile/folder
+records remain valid. On a large deployment, stage that new entry index in a
+schema-only release of the previous backend, wait for its backfill to finish,
+then deploy this code with the index enabled. A direct deployment also works,
+but waits for the index to build before completing.
+
+Folder-size sorting initializes missing totals on demand in bounded background
+jobs. While this runs, the grid and viewer use name order and show a progress
+message. Totals are maintained when files change and folders move, disappear,
+or return. Changes during a rebuild invalidate its partial result and restart
+it, so it cannot publish a mixture of old and new counts.
+
+To prepare all existing folders ahead of traffic, run the internal
+`folderStats:backfill` mutation with `{}` against the explicitly selected
+deployment. This optional maintenance recounts direct file counters and subtree
+totals in batches. Check `folderStatsRebuilds` and scheduled-function failures
+until the jobs drain. It can also repair counters after restoring older data.
+
+Profile activity needs no eager migration: new visits populate `profileActivity`.
+Administration falls back to the old `profiles.lastSeenAt` value for profiles
+that have not returned yet. Public profile and gallery queries do not read
+activity timestamps.
+
+After release, compare uncached listing latency and documents read against the
+investigation sample. Exercise friendly nested navigation, manual scans,
+unchanged scans, restricted previews, and size ordering. Production latency and
+cross-gallery behavior still need this post-release check; local tests cannot
+measure the production host's disk or network contention.

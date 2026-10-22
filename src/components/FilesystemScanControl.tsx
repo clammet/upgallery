@@ -88,7 +88,7 @@ async function requestFilesystemScan(galleryId: string, folderId: string) {
   const response = await fetch(storageApi("/api/storage/sync-user-directory"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ galleryId, folderId }),
+    body: JSON.stringify({ galleryId, folderId, force: true }),
   });
   const body: unknown = await response.json().catch(() => null);
   if (response.ok) return;

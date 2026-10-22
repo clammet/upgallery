@@ -8,6 +8,15 @@ export type GalleryRoute = {
   routeRoot: string;
 };
 
+// Match configured roots, not arbitrary path prefixes: /photos must not match
+// /photos-old, and a nested gallery takes precedence over its enclosing route.
+export function matchingGalleryRoot(pathname: string, roots: string[]): string | null {
+  const path = `/${pathname.trim().replace(/^\/+|\/+$/g, "")}`;
+  return roots
+    .filter((root) => root === "/" || path === root || path.startsWith(`${root}/`))
+    .sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
 export function publicGalleryRoute(
   route: { host: string; rootPath: string },
   current: { protocol: string; host: string },

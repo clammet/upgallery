@@ -97,6 +97,11 @@ async function absorbProfile(
   if (source.isSystemAdmin && !target.isSystemAdmin) {
     await ctx.db.patch("profiles", targetProfileId, { isSystemAdmin: true });
   }
+  const activity = await ctx.db
+    .query("profileActivity")
+    .withIndex("by_profileId", (q) => q.eq("profileId", source._id))
+    .unique();
+  if (activity !== null) await ctx.db.delete("profileActivity", activity._id);
   await ctx.db.delete("profiles", source._id);
 }
 
@@ -125,10 +130,9 @@ export async function ensureCurrentProfile(
       image: result.identity?.pictureUrl,
       isAnonymous: result.identity === null,
       isSystemAdmin: isDefaultAdmin,
-      lastSeenAt: now,
     });
   } else {
-    await ctx.db.patch("profiles", existing._id, {
+    const patch = {
       displayName: existing.displayNameCustom
         ? existing.displayName
         : (result.identity?.name ?? existing.displayName),
@@ -137,8 +141,14 @@ export async function ensureCurrentProfile(
         result.identity === null ? existing.image : result.identity.pictureUrl,
       isAnonymous: result.identity === null,
       isSystemAdmin: existing.isSystemAdmin || isDefaultAdmin,
-      lastSeenAt: now,
-    });
+    };
+    if (
+      Object.entries(patch).some(
+        ([key, value]) => existing[key as keyof typeof patch] !== value,
+      )
+    ) {
+      await ctx.db.patch("profiles", existing._id, patch);
+    }
     profileId = existing._id;
   }
 
@@ -154,6 +164,15 @@ export async function ensureCurrentProfile(
     result.identity.emailVerified !== false
   ) {
     await absorbProfile(ctx, placeholderIdentityId(email), profileId);
+  }
+  const activity = await ctx.db
+    .query("profileActivity")
+    .withIndex("by_profileId", (q) => q.eq("profileId", profileId))
+    .unique();
+  if (activity === null) {
+    await ctx.db.insert("profileActivity", { profileId, lastSeenAt: now });
+  } else if (activity.lastSeenAt !== now) {
+    await ctx.db.patch("profileActivity", activity._id, { lastSeenAt: now });
   }
   return profileId;
 }

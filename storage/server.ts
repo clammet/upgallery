@@ -82,14 +82,15 @@ app.post("/api/storage/sync-user-directory", (request, response) => {
     typeof body.galleryId !== "string" ||
     typeof body.folderId !== "string" ||
     body.galleryId.length > 100 ||
-    body.folderId.length > 100
+    body.folderId.length > 100 ||
+    (body.force !== undefined && typeof body.force !== "boolean")
   ) {
     response.status(400).json({ error: "Invalid directory sync request" });
     return;
   }
-  void callConvex<{ queued: boolean; jobId: string }>(
+  void callConvex<{ queued: boolean; jobId: string | null }>(
     "/internal/storage/queue-filesystem-sync",
-    { galleryId: body.galleryId, folderId: body.folderId },
+    { galleryId: body.galleryId, folderId: body.folderId, force: body.force },
   )
     .then((result) => response.status(202).json(result))
     .catch((error: unknown) => {

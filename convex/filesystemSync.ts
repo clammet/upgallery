@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -13,6 +13,7 @@ import {
   adjustFolderStats,
   createFolderStats,
   deleteFolderStats,
+  reparentFolderStats,
   settleReadyEntry,
 } from "./lib/folderStats";
 import {
@@ -41,6 +42,73 @@ const SYNC_LEASE_RENEW_THRESHOLD_MS = SYNC_LEASE_MS / 2;
 // any size are handled by continuing across calls instead of failing.
 const SYNC_SWEEP_PAGE = 200;
 const CHILD_FOLDER_PAGE = 500;
+const SCAN_BATCH_SIZE = 32;
+
+const directoryMetadata = v.object({
+  name: v.string(),
+  identity: v.string(),
+  modifiedAt: v.optional(v.number()),
+});
+const fileMetadata = v.object({
+  name: v.string(),
+  storageKey: v.string(),
+  size: v.number(),
+  modifiedAt: v.number(),
+  identity: v.string(),
+});
+const fileCheckResult = v.union(
+  v.object({ kind: v.literal("unchanged") }),
+  v.object({ kind: v.literal("metadata"), entryId: v.optional(v.id("entries")) }),
+);
+
+function validateScanBatch(items: unknown[]) {
+  if (items.length < 1 || items.length > SCAN_BATCH_SIZE) {
+    throw new Error(`Filesystem batches must contain 1-${SCAN_BATCH_SIZE} items`);
+  }
+}
+
+async function markSeen(
+  ctx: MutationCtx,
+  folderId: Id<"folders">,
+  syncId: string,
+  itemId: Id<"entries"> | Id<"folders">,
+) {
+  const existing = await ctx.db.query("filesystemScanItems")
+    .withIndex("by_folderId_and_syncId_and_itemId", q =>
+      q.eq("folderId", folderId).eq("syncId", syncId).eq("itemId", itemId))
+    .unique();
+  if (existing === null) {
+    await ctx.db.insert("filesystemScanItems", { folderId, syncId, itemId });
+  }
+}
+
+async function wasSeen(
+  ctx: MutationCtx,
+  folderId: Id<"folders">,
+  syncId: string,
+  itemId: Id<"entries"> | Id<"folders">,
+) {
+  return await ctx.db.query("filesystemScanItems")
+    .withIndex("by_folderId_and_syncId_and_itemId", q =>
+      q.eq("folderId", folderId).eq("syncId", syncId).eq("itemId", itemId))
+    .unique() !== null;
+}
+
+export const cleanupScanItems = internalMutation({
+  args: { folderId: v.id("folders"), syncId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const items = await ctx.db.query("filesystemScanItems")
+      .withIndex("by_folderId_and_syncId_and_itemId", q =>
+        q.eq("folderId", args.folderId).eq("syncId", args.syncId))
+      .take(SYNC_SWEEP_PAGE);
+    for (const item of items) await ctx.db.delete("filesystemScanItems", item._id);
+    if (items.length === SYNC_SWEEP_PAGE) {
+      await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupScanItems, args);
+    }
+    return null;
+  },
+});
 
 async function requireUserDirectory(
   ctx: MutationCtx,
@@ -146,17 +214,24 @@ export const claimFilesystemSync = internalMutation({
         retryAfterMs: Math.max(1, (state.leaseExpiresAt ?? now) - now),
       };
     }
+    if (state?.activeSyncId !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupScanItems, {
+        folderId: folder._id, syncId: state.activeSyncId,
+      });
+    }
     const syncId = createToken();
     if (state === null) {
       await ctx.db.insert("filesystemSyncStates", {
         galleryId: gallery._id,
         folderId: folder._id,
         activeSyncId: syncId,
+        bookkeepingVersion: 1,
         leaseExpiresAt: now + SYNC_LEASE_MS,
       });
     } else {
       await ctx.db.patch("filesystemSyncStates", state._id, {
         activeSyncId: syncId,
+        bookkeepingVersion: 1,
         leaseExpiresAt: now + SYNC_LEASE_MS,
         error: undefined,
       });
@@ -227,6 +302,9 @@ export const compareFilesystemDirectory = internalMutation({
         lastCheckedAt: Date.now(),
         error: undefined,
       });
+      await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupScanItems, {
+        folderId: folder._id, syncId: args.syncId,
+      });
       return { shouldScan: false };
     }
     return { shouldScan: true };
@@ -253,64 +331,49 @@ export const renewFilesystemSyncLease = internalMutation({
   },
 });
 
-export const reconcileFilesystemDirectory = internalMutation({
-  args: {
-    galleryId: v.id("galleries"),
-    parentId: v.id("folders"),
-    syncId: v.string(),
-    name: v.string(),
-    identity: v.string(),
-    modifiedAt: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const { gallery, folder: parent } = await requireActiveSync(
-      ctx,
-      args.galleryId,
-      args.parentId,
-      args.syncId,
-    );
-    const name = validateFilesystemSegment(args.name);
-    if (
-      args.modifiedAt !== undefined &&
-      (!Number.isFinite(args.modifiedAt) || args.modifiedAt < 0)
-    ) {
-      throw new Error("Invalid directory modification time");
+async function reconcileDirectory(
+  ctx: MutationCtx,
+  gallery: Doc<"galleries">,
+  parent: Doc<"folders">,
+  syncId: string,
+  args: Infer<typeof directoryMetadata>,
+): Promise<Id<"folders">> {
+  const name = validateFilesystemSegment(args.name);
+  if (args.modifiedAt !== undefined &&
+      (!Number.isFinite(args.modifiedAt) || args.modifiedAt < 0)) {
+    throw new Error("Invalid directory modification time");
+  }
+  if (args.identity.length < 1 || args.identity.length > 200) {
+    throw new Error("Invalid filesystem identity");
+  }
+  const existing =
+    await ctx.db.query("folders")
+      .withIndex("by_galleryId_and_parentId_and_name", q =>
+        q.eq("galleryId", gallery._id).eq("parentId", parent._id).eq("name", name))
+      .first() ??
+    await ctx.db.query("folders")
+      .withIndex("by_galleryId_and_parentId_and_filesystemIdentity", q =>
+        q.eq("galleryId", gallery._id).eq("parentId", parent._id)
+          .eq("filesystemIdentity", args.identity))
+      .first();
+  let folderId: Id<"folders">;
+  if (existing !== null) {
+    folderId = existing._id;
+    const patch = {
+      name,
+      slug: filesystemSlug(name),
+      filesystemIdentity: args.identity,
+      filesystemMissingAt: undefined,
+      ...(args.modifiedAt === undefined ? {} : { modifiedAt: args.modifiedAt }),
+    };
+    // A seen marker must not invalidate the public folder document.
+    if (Object.entries(patch).some(([key, value]) =>
+      existing[key as keyof typeof existing] !== value)) {
+      await reparentFolderStats(ctx, existing, { filesystemMissingAt: undefined });
+      await ctx.db.patch("folders", existing._id, patch);
     }
-    if (args.identity.length < 1 || args.identity.length > 200) {
-      throw new Error("Invalid filesystem identity");
-    }
-    const existing =
-      (await ctx.db
-        .query("folders")
-        .withIndex("by_galleryId_and_parentId_and_name", (q) =>
-          q
-            .eq("galleryId", gallery._id)
-            .eq("parentId", parent._id)
-            .eq("name", name),
-        )
-        .first()) ??
-      (await ctx.db
-        .query("folders")
-        .withIndex("by_galleryId_and_parentId_and_filesystemIdentity", (q) =>
-          q
-            .eq("galleryId", gallery._id)
-            .eq("parentId", parent._id)
-            .eq("filesystemIdentity", args.identity),
-        )
-        .first()) ??
-      undefined;
-    if (existing !== undefined) {
-      await ctx.db.patch("folders", existing._id, {
-        name,
-        slug: filesystemSlug(name),
-        filesystemIdentity: args.identity,
-        filesystemSyncId: args.syncId,
-        filesystemMissingAt: undefined,
-        ...(args.modifiedAt === undefined ? {} : { modifiedAt: args.modifiedAt }),
-      });
-      return existing._id;
-    }
-    const folderId = await ctx.db.insert("folders", {
+  } else {
+    folderId = await ctx.db.insert("folders", {
       galleryId: gallery._id,
       parentId: parent._id,
       ancestorIds: [...parent.ancestorIds, parent._id],
@@ -319,76 +382,105 @@ export const reconcileFilesystemDirectory = internalMutation({
       accessPolicy: "inherit",
       discoverability: "listed",
       filesystemIdentity: args.identity,
-      filesystemSyncId: args.syncId,
       modifiedAt: args.modifiedAt,
     });
     await createFolderStats(ctx, folderId, gallery._id);
-    return folderId;
+  }
+  await markSeen(ctx, parent._id, syncId, folderId);
+  return folderId;
+}
+
+export const reconcileFilesystemDirectory = internalMutation({
+  args: {
+    galleryId: v.id("galleries"), parentId: v.id("folders"), syncId: v.string(),
+    ...directoryMetadata.fields,
+  },
+  returns: v.id("folders"),
+  handler: async (ctx, args) => {
+    const { gallery, folder } = await requireActiveSync(ctx, args.galleryId, args.parentId, args.syncId);
+    return await reconcileDirectory(ctx, gallery, folder, args.syncId, args);
   },
 });
 
+export const reconcileFilesystemDirectories = internalMutation({
+  args: {
+    galleryId: v.id("galleries"), parentId: v.id("folders"), syncId: v.string(),
+    directories: v.array(directoryMetadata),
+  },
+  returns: v.array(v.id("folders")),
+  handler: async (ctx, args) => {
+    validateScanBatch(args.directories);
+    const { gallery, folder } = await requireActiveSync(ctx, args.galleryId, args.parentId, args.syncId);
+    const ids: Id<"folders">[] = [];
+    for (const directory of args.directories) {
+      ids.push(await reconcileDirectory(ctx, gallery, folder, args.syncId, directory));
+    }
+    return ids;
+  },
+});
+
+async function checkFile(
+  ctx: MutationCtx,
+  gallery: Doc<"galleries">,
+  folder: Doc<"folders">,
+  syncId: string,
+  args: Infer<typeof fileMetadata>,
+): Promise<Infer<typeof fileCheckResult>> {
+  validateFileMetadata(args);
+  const expectedPrefix = `public/users/${gallery.storageRoot}/`;
+  if (!args.storageKey.startsWith(expectedPrefix)) {
+    throw new Error("Filesystem key is outside this gallery");
+  }
+  const exact = await ctx.db.query("entries")
+    .withIndex("by_storageKey", q => q.eq("storageKey", args.storageKey)).unique();
+  // Inode reuse leaves historical records behind; select ready entries in the
+  // index so collision history cannot grow the transaction or hide a match.
+  const byIdentity = exact === null ? await ctx.db.query("entries")
+    .withIndex("by_folderId_and_filesystemIdentity_and_state", q =>
+      q.eq("folderId", folder._id).eq("filesystemIdentity", args.identity).eq("state", "ready"))
+    .first() : null;
+  const existing = exact ?? byIdentity;
+  if (existing !== null && existing.galleryId === gallery._id &&
+      existing.folderId === folder._id && existing.state === "ready" &&
+      existing.name === args.name && existing.size === args.size &&
+      existing.filesystemModifiedAt === args.modifiedAt &&
+      existing.filesystemIdentity === args.identity) {
+    await markSeen(ctx, folder._id, syncId, existing._id);
+    return { kind: "unchanged" };
+  }
+  return {
+    kind: "metadata",
+    entryId: existing !== null && existing.galleryId === gallery._id &&
+      existing.folderId === folder._id ? existing._id : undefined,
+  };
+}
+
 export const checkFilesystemFile = internalMutation({
   args: {
-    galleryId: v.id("galleries"),
-    folderId: v.id("folders"),
-    syncId: v.string(),
-    name: v.string(),
-    storageKey: v.string(),
-    size: v.number(),
-    modifiedAt: v.number(),
-    identity: v.string(),
+    galleryId: v.id("galleries"), folderId: v.id("folders"), syncId: v.string(),
+    ...fileMetadata.fields,
   },
+  returns: fileCheckResult,
   handler: async (ctx, args) => {
-    const { gallery, folder } = await requireActiveSync(
-      ctx,
-      args.galleryId,
-      args.folderId,
-      args.syncId,
-    );
-    validateFileMetadata(args);
-    const expectedPrefix = `public/users/${gallery.storageRoot}/`;
-    if (!args.storageKey.startsWith(expectedPrefix)) {
-      throw new Error("Filesystem key is outside this gallery");
+    const { gallery, folder } = await requireActiveSync(ctx, args.galleryId, args.folderId, args.syncId);
+    return await checkFile(ctx, gallery, folder, args.syncId, args);
+  },
+});
+
+export const checkFilesystemFiles = internalMutation({
+  args: {
+    galleryId: v.id("galleries"), folderId: v.id("folders"), syncId: v.string(),
+    files: v.array(fileMetadata),
+  },
+  returns: v.array(fileCheckResult),
+  handler: async (ctx, args) => {
+    validateScanBatch(args.files);
+    const { gallery, folder } = await requireActiveSync(ctx, args.galleryId, args.folderId, args.syncId);
+    const results: Infer<typeof fileCheckResult>[] = [];
+    for (const file of args.files) {
+      results.push(await checkFile(ctx, gallery, folder, args.syncId, file));
     }
-    const exact = await ctx.db
-      .query("entries")
-      .withIndex("by_storageKey", (q) => q.eq("storageKey", args.storageKey))
-      .unique();
-    const existing =
-      exact ??
-      (await ctx.db
-        .query("entries")
-        .withIndex("by_folderId_and_filesystemIdentity", (q) =>
-          q
-            .eq("folderId", folder._id)
-            .eq("filesystemIdentity", args.identity),
-        )
-        .filter((q) => q.eq(q.field("state"), "ready"))
-        .first());
-    if (
-      existing !== null &&
-      existing.galleryId === gallery._id &&
-      existing.folderId === folder._id &&
-      existing.state === "ready" &&
-      existing.name === args.name &&
-      existing.size === args.size &&
-      existing.filesystemModifiedAt === args.modifiedAt &&
-      existing.filesystemIdentity === args.identity
-    ) {
-      await ctx.db.patch("entries", existing._id, {
-        filesystemSyncId: args.syncId,
-      });
-      return { kind: "unchanged" as const };
-    }
-    return {
-      kind: "metadata" as const,
-      entryId:
-        existing !== null &&
-        existing.galleryId === gallery._id &&
-        existing.folderId === folder._id
-          ? existing._id
-          : undefined,
-    };
+    return results;
   },
 });
 
@@ -472,7 +564,6 @@ export const reconcileFilesystemFile = internalMutation({
           createdAt: existing.createdAt,
         }),
         filesystemIdentity: args.identity,
-        filesystemSyncId: args.syncId,
         state: "ready",
         deletedAt: undefined,
         updatedAt: now,
@@ -525,6 +616,7 @@ export const reconcileFilesystemFile = internalMutation({
         mediaKind: args.mediaKind,
         alreadyProcessed: args.thumbnailKey !== undefined,
       });
+      await markSeen(ctx, folder._id, args.syncId, existing._id);
       return existing._id;
     }
 
@@ -554,7 +646,6 @@ export const reconcileFilesystemFile = internalMutation({
         createdAt: now,
       }),
       filesystemIdentity: args.identity,
-      filesystemSyncId: args.syncId,
       state: "ready",
       createdAt: now,
       updatedAt: now,
@@ -578,6 +669,7 @@ export const reconcileFilesystemFile = internalMutation({
       mediaKind: args.mediaKind,
       alreadyProcessed: args.thumbnailKey !== undefined,
     });
+    await markSeen(ctx, folder._id, args.syncId, entryId);
     return entryId;
   },
 });
@@ -624,7 +716,8 @@ export const completeFilesystemSync = internalMutation({
       for (const entry of page.page) {
         if (
           entry.storageKind === "user" &&
-          entry.filesystemSyncId !== args.syncId
+          !(state.bookkeepingVersion === undefined && entry.filesystemSyncId === args.syncId) &&
+          !(await wasSeen(ctx, folder._id, args.syncId, entry._id))
         ) {
           const counter = await ctx.db
             .query("entryCounters")
@@ -677,12 +770,16 @@ export const completeFilesystemSync = internalMutation({
       .withIndex("by_galleryId_and_parentId", (q) =>
         q.eq("galleryId", gallery._id).eq("parentId", folder._id),
       )
-      .paginate({ numItems: SYNC_SWEEP_PAGE, cursor: innerCursor });
+      // Removing a child updates its ancestor totals, bounded by tree depth.
+      .paginate({ numItems: SCAN_BATCH_SIZE, cursor: innerCursor });
     for (const child of children.page) {
-      if (child.filesystemSyncId !== args.syncId) {
-        await ctx.db.patch("folders", child._id, {
-          filesystemMissingAt: Date.now(),
-        });
+      if (!(state.bookkeepingVersion === undefined && child.filesystemSyncId === args.syncId) &&
+          !(await wasSeen(ctx, folder._id, args.syncId, child._id))) {
+        if (child.filesystemMissingAt === undefined) {
+          const patch = { filesystemMissingAt: Date.now() };
+          await reparentFolderStats(ctx, child, patch);
+          await ctx.db.patch("folders", child._id, patch);
+        }
         await ctx.scheduler.runAfter(
           0,
           internal.filesystemSync.cleanupMissingFolder,
@@ -705,7 +802,12 @@ export const completeFilesystemSync = internalMutation({
       lastCompletedAt: now,
       error: undefined,
     });
-    await ctx.db.patch("folders", folder._id, { modifiedAt: args.modifiedAt });
+    if (folder.modifiedAt !== args.modifiedAt) {
+      await ctx.db.patch("folders", folder._id, { modifiedAt: args.modifiedAt });
+    }
+    await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupScanItems, {
+      folderId: folder._id, syncId: args.syncId,
+    });
     return { done: true as const };
   },
 });
@@ -748,6 +850,9 @@ export const failFilesystemSync = internalMutation({
       .query("filesystemSyncStates")
       .withIndex("by_folderId", (q) => q.eq("folderId", args.folderId))
       .unique();
+    await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupScanItems, {
+      folderId: args.folderId, syncId: args.syncId,
+    });
     if (state !== null && state.activeSyncId === args.syncId) {
       await ctx.db.patch("filesystemSyncStates", state._id, {
         activeSyncId: undefined,
@@ -835,9 +940,9 @@ export const cleanupMissingFolder = internalMutation({
     if (children.length > 0) {
       for (const child of children) {
         if (child.filesystemMissingAt === undefined) {
-          await ctx.db.patch("folders", child._id, {
-            filesystemMissingAt: Date.now(),
-          });
+          const patch = { filesystemMissingAt: Date.now() };
+          await reparentFolderStats(ctx, child, patch);
+          await ctx.db.patch("folders", child._id, patch);
         }
         await ctx.scheduler.runAfter(
           0,
@@ -867,6 +972,15 @@ export const cleanupMissingFolder = internalMutation({
         internal.filesystemSync.cleanupMissingFolder,
         args,
       );
+      return null;
+    }
+    // Also remove generations abandoned before their normal completion cleanup.
+    const scanItems = await ctx.db.query("filesystemScanItems")
+      .withIndex("by_folderId_and_syncId_and_itemId", q => q.eq("folderId", folder._id))
+      .take(SYNC_SWEEP_PAGE);
+    for (const item of scanItems) await ctx.db.delete("filesystemScanItems", item._id);
+    if (scanItems.length === SYNC_SWEEP_PAGE) {
+      await ctx.scheduler.runAfter(0, internal.filesystemSync.cleanupMissingFolder, args);
       return null;
     }
     const syncState = await ctx.db
@@ -1132,6 +1246,7 @@ export const completeFilesystemOperation = internalMutation({
         .first();
       if (existing !== null) {
         folderId = existing._id;
+        await reparentFolderStats(ctx, existing, { filesystemMissingAt: undefined });
         await ctx.db.patch("folders", existing._id, {
           accessPolicy,
           discoverability,
@@ -1162,9 +1277,9 @@ export const completeFilesystemOperation = internalMutation({
       const folder = await ctx.db.get("folders", folderId);
       if (folder !== null && folder.galleryId === gallery._id) {
         if (folder.filesystemMissingAt === undefined) {
-          await ctx.db.patch("folders", folder._id, {
-            filesystemMissingAt: Date.now(),
-          });
+          const patch = { filesystemMissingAt: Date.now() };
+          await reparentFolderStats(ctx, folder, patch);
+          await ctx.db.patch("folders", folder._id, patch);
         }
         await ctx.scheduler.runAfter(
           0,
@@ -1185,6 +1300,9 @@ export const completeFilesystemOperation = internalMutation({
       ) {
         throw new Error("Folder is no longer available");
       }
+      await reparentFolderStats(ctx, folder, {
+        parentId: parent._id, filesystemMissingAt: undefined,
+      });
       await ctx.db.patch("folders", folder._id, {
         parentId: parent._id,
         ancestorIds: [...parent.ancestorIds, parent._id],
@@ -1200,6 +1318,9 @@ export const completeFilesystemOperation = internalMutation({
       }
       // The folder's settings are not touched here: they were applied when
       // the rename was requested, and may have been edited again since.
+      const folder = await ctx.db.get("folders", folderId);
+      if (folder === null) throw new Error("Folder is no longer available");
+      await reparentFolderStats(ctx, folder, { filesystemMissingAt: undefined });
       await ctx.db.patch("folders", folderId, {
         name: operation.name,
         slug: filesystemSlug(operation.name),

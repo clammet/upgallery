@@ -6,6 +6,8 @@ import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { createPasswordHash } from "./lib/crypto";
+import { ensureCurrentProfile } from "./lib/ensureProfile";
+import { createFolderAccessResolver } from "./lib/permissions";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -15,6 +17,25 @@ function setupTest() {
   const t = convexTest(schema, modules);
   authComponent.register(t);
   return t;
+}
+
+// Exercise the independent preview subscription with the same bounded batches
+// used by the gallery, while retaining the listing assertions below.
+async function listWithPreviews(
+  client: Pick<TestConvex<typeof schema>, "query">,
+  args: { galleryId: Id<"galleries">; folderId: Id<"folders">; previewSeed: number },
+) {
+  const { previewSeed, ...listingArgs } = args;
+  const listing = await client.query(api.folders.list, { ...listingArgs, includeEntries: false });
+  const folderPreviews = [];
+  for (let offset = 0; offset < listing.folders.length; offset += 12) {
+    folderPreviews.push(...await client.query(api.folders.previews, {
+      galleryId: args.galleryId,
+      folderIds: listing.folders.slice(offset, offset + 12).map((folder) => folder._id),
+      previewSeed,
+    }));
+  }
+  return { ...listing, folderPreviews };
 }
 
 // Seeds the live counters the way a gallery with existing content would
@@ -1348,6 +1369,42 @@ describe("upgallery backend", () => {
     });
   });
 
+  test("sign-in activity changes without rewriting the stable profile", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const t = setupTest();
+      const admin = await seedProfile(t, { email: "admin@example.com", admin: true });
+      const client = asUser(t, admin.googleSubject, "admin@example.com");
+      const before = await client.query(api.profiles.current, {});
+      const oldActivity = await t.run(async (ctx) =>
+        ctx.db.query("profileActivity")
+          .withIndex("by_profileId", (q) => q.eq("profileId", admin.profileId)).unique(),
+      );
+      vi.advanceTimersByTime(60_000);
+      const profilePatchCount = await client.run(async (ctx) => {
+        const patch = vi.spyOn(ctx.db, "patch");
+        await ensureCurrentProfile(ctx, {});
+        const count = patch.mock.calls.filter((call) => call[0] === "profiles").length;
+        patch.mockRestore();
+        return count;
+      });
+      expect(profilePatchCount).toBe(0);
+      expect(await client.query(api.profiles.current, {})).toEqual(before);
+      expect(before).not.toHaveProperty("lastSeenAt");
+      const newActivity = await t.run(async (ctx) =>
+        ctx.db.query("profileActivity")
+          .withIndex("by_profileId", (q) => q.eq("profileId", admin.profileId)).unique(),
+      );
+      expect(newActivity?.lastSeenAt).toBe(oldActivity!.lastSeenAt + 60_000);
+      expect(await client.query(api.profiles.listForAdmin, {})).toContainEqual({
+        ...before, lastSeenAt: newActivity!.lastSeenAt,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("Google sign-in upgrades an anonymous profile without losing ownership", async () => {
     const t = setupTest();
     const anonymousClaim = "a".repeat(64);
@@ -1874,7 +1931,7 @@ describe("upgallery backend", () => {
       }
     });
 
-    const inherited = await authed.query(api.folders.list, {
+    const inherited = await listWithPreviews(authed, {
       galleryId,
       folderId: gallery!.rootFolderId!,
       previewSeed: 11,
@@ -1909,7 +1966,7 @@ describe("upgallery backend", () => {
       previewMode: "custom",
       previewSource: "DELTA.JPG",
     });
-    const customFilename = await authed.query(api.folders.list, {
+    const customFilename = await listWithPreviews(authed, {
       galleryId,
       folderId: gallery!.rootFolderId!,
       previewSeed: 11,
@@ -1928,7 +1985,7 @@ describe("upgallery backend", () => {
       previewMode: "custom",
       previewSource: customUrl,
     });
-    const customUrlListing = await authed.query(api.folders.list, {
+    const customUrlListing = await listWithPreviews(authed, {
       galleryId,
       folderId: gallery!.rootFolderId!,
       previewSeed: 11,
@@ -1948,7 +2005,7 @@ describe("upgallery backend", () => {
     });
     const randomNames = new Set<string>();
     for (const previewSeed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-      const listing = await authed.query(api.folders.list, {
+      const listing = await listWithPreviews(authed, {
         galleryId,
         folderId: gallery!.rootFolderId!,
         previewSeed,
@@ -1965,7 +2022,7 @@ describe("upgallery backend", () => {
       accessPolicy: "public",
       discoverability: "listed",
     });
-    const reset = await authed.query(api.folders.list, {
+    const reset = await listWithPreviews(authed, {
       galleryId,
       folderId: gallery!.rootFolderId!,
       previewSeed: 11,
@@ -1977,7 +2034,7 @@ describe("upgallery backend", () => {
       folderPreviewMode: "custom",
       folderPreviewSource: "bravo.JPG",
     });
-    const customDefault = await authed.query(api.folders.list, {
+    const customDefault = await listWithPreviews(authed, {
       galleryId,
       folderId: gallery!.rootFolderId!,
       previewSeed: 11,
@@ -2039,6 +2096,24 @@ describe("upgallery backend", () => {
       const deepId = await createFolder(nestedId, "Deep", "public", "listed");
       const hiddenId = await createFolder(albumId, "Hidden", "restricted", "listed");
       const secretId = await createFolder(albumId, "Secret", "public", "unlisted");
+      const secretChildId = await createFolder(secretId, "Listed child", "public", "listed");
+      await t.run(async (ctx) => {
+        await ctx.db.patch("folders", nestedId, { accessPolicy: "inherit" });
+        await ctx.db.patch("folders", deepId, { accessPolicy: "inherit" });
+        const [storedGallery, profile, nested, deep] = await Promise.all([
+          ctx.db.get("galleries", galleryId), ctx.db.get("profiles", viewer.profileId),
+          ctx.db.get("folders", nestedId), ctx.db.get("folders", deepId),
+        ]);
+        const get = vi.spyOn(ctx.db, "get");
+        const query = vi.spyOn(ctx.db, "query");
+        const access = createFolderAccessResolver(ctx, storedGallery!, profile);
+        await Promise.all([access.resolve(nested!), access.resolve(deep!), access.resolve(deep!)]);
+        expect(query.mock.calls.filter((call) => call[0] === "galleryRoles")).toHaveLength(1);
+        expect(get.mock.calls.filter((call) => call.includes(albumId))).toHaveLength(1);
+        expect(get.mock.calls.filter((call) => call[0] === "galleries")).toHaveLength(0);
+        get.mockRestore();
+        query.mockRestore();
+      });
       await t.run(async (ctx) => {
         const files: Array<[Id<"folders">, string]> = [
           [albumId, "own.jpg"],
@@ -2047,6 +2122,7 @@ describe("upgallery backend", () => {
           [deepId, "deep2.jpg"],
           [hiddenId, "aaa.jpg"],
           [secretId, "bbb.jpg"],
+          [secretChildId, "hidden-child.jpg"],
         ];
         for (const [index, [folderId, name]] of files.entries()) {
           await ctx.db.insert("entries", {
@@ -2071,7 +2147,7 @@ describe("upgallery backend", () => {
       });
 
       // Off by default: the tile only shows the folder's own image.
-      const flat = await viewerClient.query(api.folders.list, {
+      const flat = await listWithPreviews(viewerClient, {
         galleryId,
         folderId: gallery!.rootFolderId!,
         previewSeed: 7,
@@ -2089,7 +2165,7 @@ describe("upgallery backend", () => {
 
       // The viewer's tile fills from listed public descendants only: the
       // restricted and unlisted subfolders never leak into it.
-      const recursive = await viewerClient.query(api.folders.list, {
+      const recursive = await listWithPreviews(viewerClient, {
         galleryId,
         folderId: gallery!.rootFolderId!,
         previewSeed: 7,
@@ -2099,7 +2175,7 @@ describe("upgallery backend", () => {
       ).toEqual(["own.jpg", "mid.jpg", "deep1.jpg"]);
 
       // A tile with one own image still tops up from its grandchildren.
-      const albumListing = await viewerClient.query(api.folders.list, {
+      const albumListing = await listWithPreviews(viewerClient, {
         galleryId,
         folderId: albumId,
         previewSeed: 7,
@@ -2112,7 +2188,7 @@ describe("upgallery backend", () => {
       ).toEqual(["mid.jpg", "deep1.jpg", "deep2.jpg"]);
 
       // The admin can see the restricted subfolder, so its image may fill in.
-      const adminListing = await authed.query(api.folders.list, {
+      const adminListing = await listWithPreviews(authed, {
         galleryId,
         folderId: gallery!.rootFolderId!,
         previewSeed: 7,
@@ -2129,7 +2205,7 @@ describe("upgallery backend", () => {
         folderPreviewMode: "custom",
         folderPreviewSource: "deep2.jpg",
       });
-      const customRecursive = await viewerClient.query(api.folders.list, {
+      const customRecursive = await listWithPreviews(viewerClient, {
         galleryId,
         folderId: gallery!.rootFolderId!,
         previewSeed: 7,
@@ -2138,6 +2214,20 @@ describe("upgallery backend", () => {
         mode: "custom",
         entries: [{ name: "deep2.jpg" }],
       });
+      await authed.mutation(api.galleries.update, {
+        galleryId,
+        folderPreviewSource: "hidden-child.jpg",
+      });
+      const hiddenDescendant = await viewerClient.query(api.folders.previews, {
+        galleryId, folderIds: [albumId], previewSeed: 7,
+      });
+      expect(hiddenDescendant[0]?.entries).toEqual([]);
+      expect(await viewerClient.query(api.folders.previews, {
+        galleryId, folderIds: [hiddenId, secretId],
+      })).toEqual([]);
+      await expect(viewerClient.query(api.folders.previews, {
+        galleryId, folderIds: Array.from({ length: 13 }, () => albumId),
+      })).rejects.toThrow("limited to 12");
     } finally {
       vi.useRealTimers();
     }
@@ -2162,6 +2252,11 @@ describe("upgallery backend", () => {
       ctx.db.get("galleries", galleryId),
     );
     const folderId = gallery!.rootFolderId!;
+    const beforeScan = await authed.query(api.folders.list, {
+      galleryId, folderId, includeEntries: false,
+    });
+    expect(beforeScan).not.toHaveProperty("folderPreviews");
+    expect(beforeScan).not.toHaveProperty("filesystemSync");
 
     const firstClaim = await t.mutation(
       internal.filesystemSync.claimFilesystemSync,
@@ -2171,13 +2266,13 @@ describe("upgallery backend", () => {
     if (firstClaim.kind !== "ready")
       throw new Error("Sync was unexpectedly busy");
     expect(firstClaim.folderSegments).toEqual([]);
+    expect(await authed.query(api.folders.list, {
+      galleryId, folderId, includeEntries: false,
+    })).toEqual(beforeScan);
+    await expect(t.query(api.folders.scanStatus, { galleryId, folderId }))
+      .rejects.toThrow("Unauthorized");
     expect(
-      (
-        await authed.query(api.folders.list, {
-          galleryId,
-          folderId,
-        })
-      ).filesystemSync,
+      await authed.query(api.folders.scanStatus, { galleryId, folderId }),
     ).toMatchObject({
       isRunning: true,
       hasError: false,
@@ -2252,11 +2347,12 @@ describe("upgallery backend", () => {
       folderId,
     });
     expect(listing.folders.map((folder) => folder._id)).toContain(newFolderId);
-    expect(listing.filesystemSync).toMatchObject({
+    const scanStatus = await authed.query(api.folders.scanStatus, { galleryId, folderId });
+    expect(scanStatus).toMatchObject({
       isRunning: false,
       hasError: false,
     });
-    expect(listing.filesystemSync?.lastFinishedAt).toBeTypeOf("number");
+    expect(scanStatus?.lastFinishedAt).toBeTypeOf("number");
     expect(listing.entries).toMatchObject([
       {
         name: "photo one.jpg",
@@ -2285,12 +2381,7 @@ describe("upgallery backend", () => {
       }),
     ).toEqual({ shouldScan: false });
     expect(
-      (
-        await authed.query(api.folders.list, {
-          galleryId,
-          folderId,
-        })
-      ).filesystemSync,
+      await authed.query(api.folders.scanStatus, { galleryId, folderId }),
     ).toMatchObject({
       isRunning: false,
       hasError: false,

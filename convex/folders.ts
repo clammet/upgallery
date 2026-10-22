@@ -11,6 +11,7 @@ import {
   folderDiscoverability,
   folderPreviewMode,
   gallerySortOrder,
+  thumbnailState,
 } from "./lib/validators";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -25,12 +26,14 @@ import {
   validateFilesystemSegment,
 } from "./lib/normalize";
 import { createToken, sha256 } from "./lib/crypto";
-import { createFolderStats, markFolderModified } from "./lib/folderStats";
+import { createFolderStats, markFolderModified, reparentFolderStats } from "./lib/folderStats";
 import { folderPathKey } from "./lib/folderPath";
-import { sortedChildFolders } from "./lib/folderOrder";
+import { sortedChildFoldersResult } from "./lib/folderOrder";
 import {
   assertCanManageGallery,
   canManageGallery,
+  createFolderAccessResolver,
+  type FolderAccessResolver,
   getCurrentProfile,
   getEffectiveRole,
   isOwningProfile,
@@ -38,12 +41,12 @@ import {
   requireGalleryRole,
   resolveFolderAccess,
   roleAtLeast,
-  shouldListFolder,
   unauthorizedError,
 } from "./lib/permissions";
 import { readFilesystemSyncStatus } from "./lib/filesystemSyncStatus";
 import { uploaderAttribution } from "./lib/profiles";
 import { scheduleSortTimestampBackfill } from "./entrySort";
+import schema from "./schema";
 
 type FolderPreviewMode =
   | "first"
@@ -177,9 +180,8 @@ async function descendantPreviewEntries(
     folder: Doc<"folders">;
     probe: PreviewProbe;
     count: number;
-    profile: Doc<"profiles"> | null;
-    anonymousClaim: string | undefined;
-    folderVisibility: Map<Id<"folders">, boolean>;
+    access: FolderAccessResolver;
+    folderVisibility: Map<string, Promise<boolean>>;
   },
 ): Promise<Array<Doc<"entries">>> {
   const prefix = folderPathKey(input.folder);
@@ -258,7 +260,7 @@ async function descendantPreviewEntries(
   const picked: Array<Doc<"entries">> = [];
   for (const entry of scanned) {
     if (picked.length >= input.count) break;
-    if (await descendantFolderVisible(ctx, entry.folderId, input)) {
+    if (await descendantFolderVisible(entry.folderId, input)) {
       picked.push(entry);
     }
   }
@@ -266,22 +268,28 @@ async function descendantPreviewEntries(
 }
 
 async function descendantFolderVisible(
-  ctx: QueryCtx,
   folderId: Id<"folders">,
   input: {
-    profile: Doc<"profiles"> | null;
-    anonymousClaim: string | undefined;
-    folderVisibility: Map<Id<"folders">, boolean>;
+    folder: Doc<"folders">;
+    access: FolderAccessResolver;
+    folderVisibility: Map<string, Promise<boolean>>;
   },
 ): Promise<boolean> {
-  const cached = input.folderVisibility.get(folderId);
+  const key = `${input.folder._id}:${folderId}`;
+  const cached = input.folderVisibility.get(key);
   if (cached !== undefined) return cached;
-  const folder = await ctx.db.get("folders", folderId);
-  const visible =
-    folder !== null &&
-    folder.filesystemMissingAt === undefined &&
-    (await shouldListFolder(ctx, folder, input.profile, input.anonymousClaim));
-  input.folderVisibility.set(folderId, visible);
+  const visible = (async () => {
+    const folder = await input.access.folder(folderId);
+    if (folder === null || !(await input.access.shouldList(folder))) return false;
+    const rootIndex = folder.ancestorIds.indexOf(input.folder._id);
+    if (rootIndex === -1) return false;
+    for (const ancestorId of folder.ancestorIds.slice(rootIndex + 1)) {
+      const ancestor = await input.access.folder(ancestorId);
+      if (ancestor === null || !(await input.access.shouldList(ancestor))) return false;
+    }
+    return true;
+  })();
+  input.folderVisibility.set(key, visible);
   return visible;
 }
 
@@ -363,11 +371,24 @@ export const list = query({
     anonymousClaim: v.optional(v.string()),
     galleryId: v.id("galleries"),
     folderId: v.id("folders"),
-    previewSeed: v.optional(v.number()),
-    // GalleryPage loads entries through its paginated query. UploaderPage and
-    // older callers retain the embedded first page by omitting this flag.
+    // Image galleries use their compact paginated listing; uploaders include
+    // their protected first page here.
     includeEntries: v.optional(v.boolean()),
   },
+  returns: v.object({
+    gallery: schema.doc("galleries"),
+    folder: schema.doc("folders"),
+    folders: v.array(schema.doc("folders")),
+    sizeSortPending: v.boolean(),
+    entries: v.array(schema.doc("entries")
+      .omit("passwordSalt", "passwordHash", "passwordIterations")
+      .extend({ uploader: v.string(), passwordProtected: v.boolean(), canDelete: v.boolean(), views: v.number() })),
+    breadcrumbs: v.array(v.object({ _id: v.id("folders"), name: v.string() })),
+    access: v.object({
+      role: v.union(v.literal("owner"), v.literal("editor"), v.literal("viewer"), v.null()),
+      canUpload: v.boolean(), canEditFolder: v.boolean(), canManage: v.boolean(), canAdminGallery: v.boolean(),
+    }),
+  }),
   handler: async (ctx, args) => {
     const [gallery, folder] = await Promise.all([
       ctx.db.get("galleries", args.galleryId),
@@ -377,112 +398,30 @@ export const list = query({
       gallery === null ||
       gallery.deletedAt !== undefined ||
       folder === null ||
-      folder.galleryId !== gallery._id
+      folder.galleryId !== gallery._id ||
+      folder.filesystemMissingAt !== undefined
     ) {
       throw new Error("Folder not found");
     }
     const profile = await getCurrentProfile(ctx, args.anonymousClaim);
-    const folderAccess = await resolveFolderAccess(
-      ctx,
-      gallery._id,
-      folder,
-      profile,
-      args.anonymousClaim,
-    );
+    const access = createFolderAccessResolver(ctx, gallery, profile, args.anonymousClaim);
+    const folderAccess = await access.resolve(folder);
     if (!folderAccess.canView) {
       throw unauthorizedError();
     }
     const role = folderAccess.role;
-    const filesystemSync =
-      gallery.storageKind === "user"
-        ? await readFilesystemSyncStatus(ctx, folder._id)
-        : null;
     const canUpload =
       gallery.pendingMigrationId === undefined && roleAtLeast(role, "editor");
 
-    const candidateFolders = await sortedChildFolders(
+    const { folders: candidateFolders, sizeSortPending } = await sortedChildFoldersResult(
       ctx,
       gallery,
       folder,
     );
-    const folders = [];
-    for (const child of candidateFolders) {
-      if (
-        child.filesystemMissingAt === undefined &&
-        (await shouldListFolder(ctx, child, profile, args.anonymousClaim))
-      ) {
-        folders.push(child);
-      }
-    }
-
-    const previewSeed = Math.trunc(args.previewSeed ?? 0);
-    if (!Number.isSafeInteger(previewSeed)) {
-      throw new Error("Invalid folder preview seed");
-    }
-    const recursivePreviews = gallery.folderPreviewRecursive === true;
-    const folderVisibility = new Map<Id<"folders">, boolean>();
-    const folderPreviews = await Promise.all(
-      folders.map(async (child) => {
-        const mode =
-          child.previewMode ?? gallery.folderPreviewMode ?? "first";
-        const previewSource =
-          child.previewMode === "custom"
-            ? child.previewSource
-            : child.previewMode === undefined && mode === "custom"
-              ? gallery.folderPreviewSource
-              : undefined;
-        const count = mode === "first3" || mode === "random3" ? 3 : 1;
-        let probe: PreviewProbe | null = null;
-        let customUrl: string | undefined;
-        if (mode === "custom") {
-          const source = normalizePreviewSource(previewSource);
-          if (source !== undefined) {
-            if (isPreviewUrl(source)) {
-              customUrl = source;
-            } else {
-              probe = { kind: "nameKey", nameKey: entryNameKey(source) };
-            }
-          }
-        } else if (mode === "first" || mode === "first3") {
-          probe = { kind: "first" };
-        } else {
-          probe = { kind: "random", seed: previewSeed };
-        }
-        let candidates =
-          probe === null
-            ? []
-            : await ownFolderPreviewEntries(ctx, child._id, probe, count);
-        if (
-          recursivePreviews &&
-          probe !== null &&
-          candidates.length < count
-        ) {
-          candidates = [
-            ...candidates,
-            ...(await descendantPreviewEntries(ctx, {
-              gallery,
-              folder: child,
-              probe,
-              count: count - candidates.length,
-              profile,
-              anonymousClaim: args.anonymousClaim,
-              folderVisibility,
-            })),
-          ];
-        }
-        return {
-          folderId: child._id,
-          mode,
-          ...(customUrl === undefined ? {} : { customUrl }),
-          entries: candidates.map((entry) => ({
-            _id: entry._id,
-            name: entry.name,
-            thumbnailKey: entry.thumbnailKey,
-            thumbnailState: entry.thumbnailState,
-          })),
-        };
-      }),
+    const visibility = await Promise.all(
+      candidateFolders.map((child) => access.shouldList(child)),
     );
+    const folders = candidateFolders.filter((_child, index) => visibility[index]);
 
     const entries =
       args.includeEntries === false
@@ -555,19 +494,13 @@ export const list = query({
       gallery.rootFolderId !== undefined &&
       gallery.rootFolderId !== folder._id
     ) {
-      const galleryRoot = await ctx.db.get("folders", gallery.rootFolderId);
-      galleryRole = await getEffectiveRole(
-        ctx,
-        gallery._id,
-        galleryRoot,
-        profile,
-        args.anonymousClaim,
-      );
+      const galleryRoot = await access.folder(gallery.rootFolderId);
+      galleryRole = (await access.resolve(galleryRoot)).role;
     }
 
     const breadcrumbs = [];
     for (const ancestorId of folder.ancestorIds) {
-      const ancestor = await ctx.db.get("folders", ancestorId);
+      const ancestor = await access.folder(ancestorId);
       if (ancestor !== null) {
         breadcrumbs.push({ _id: ancestor._id, name: ancestor.name });
       }
@@ -578,13 +511,9 @@ export const list = query({
       gallery,
       folder,
       folders,
-      folderPreviews,
       entries: items,
+      sizeSortPending,
       breadcrumbs,
-      filesystemSync:
-        gallery.storageKind === "user"
-          ? filesystemSync
-          : null,
       access: {
         role,
         canUpload,
@@ -593,6 +522,120 @@ export const list = query({
         canAdminGallery: roleAtLeast(galleryRole, "owner"),
       },
     };
+  },
+});
+
+export const scanStatus = query({
+  args: { anonymousClaim: v.optional(v.string()), galleryId: v.id("galleries"), folderId: v.id("folders") },
+  returns: v.union(v.null(), v.object({
+    status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running")),
+    isRunning: v.boolean(), lastFinishedAt: v.optional(v.number()), hasError: v.boolean(),
+  })),
+  handler: async (ctx, args) => {
+    const [gallery, folder, profile] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId), ctx.db.get("folders", args.folderId),
+      getCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (gallery === null || gallery.deletedAt !== undefined || folder === null ||
+      folder.galleryId !== gallery._id || folder.filesystemMissingAt !== undefined) throw new Error("Folder not found");
+    const access = await createFolderAccessResolver(ctx, gallery, profile, args.anonymousClaim).resolve(folder);
+    if (!access.canView) throw unauthorizedError();
+    return gallery.storageKind === "user" ? await readFilesystemSyncStatus(ctx, folder._id) : null;
+  },
+});
+
+export const previews = query({
+  args: {
+    anonymousClaim: v.optional(v.string()), galleryId: v.id("galleries"),
+    folderIds: v.array(v.id("folders")), previewSeed: v.optional(v.number()),
+  },
+  returns: v.array(v.object({
+    folderId: v.id("folders"), mode: folderPreviewMode, customUrl: v.optional(v.string()),
+    entries: v.array(v.object({
+      _id: v.id("entries"), name: v.string(), thumbnailKey: v.optional(v.string()), thumbnailState: v.optional(thumbnailState),
+    })),
+  })),
+  handler: async (ctx, args) => {
+    if (args.folderIds.length > 12) throw new Error("Folder previews are limited to 12 folders per request");
+    const [gallery, profile] = await Promise.all([
+      ctx.db.get("galleries", args.galleryId), getCurrentProfile(ctx, args.anonymousClaim),
+    ]);
+    if (gallery === null || gallery.deletedAt !== undefined) throw new Error("Gallery not found");
+    const access = createFolderAccessResolver(ctx, gallery, profile, args.anonymousClaim);
+    const candidates = await Promise.all([...new Set(args.folderIds)].map((id) => access.folder(id)));
+    const folders: Array<Doc<"folders">> = [];
+    for (const folder of candidates) {
+      if (folder !== null && folder.galleryId === gallery._id && await access.shouldList(folder)) folders.push(folder);
+    }
+    const previewSeed = Math.trunc(args.previewSeed ?? 0);
+    if (!Number.isSafeInteger(previewSeed)) {
+      throw new Error("Invalid folder preview seed");
+    }
+    const recursivePreviews = gallery.folderPreviewRecursive === true;
+    const folderVisibility = new Map<string, Promise<boolean>>();
+    const folderPreviews = await Promise.all(
+      folders.map(async (child) => {
+        const mode =
+          child.previewMode ?? gallery.folderPreviewMode ?? "first";
+        const previewSource =
+          child.previewMode === "custom"
+            ? child.previewSource
+            : child.previewMode === undefined && mode === "custom"
+              ? gallery.folderPreviewSource
+              : undefined;
+        const count = mode === "first3" || mode === "random3" ? 3 : 1;
+        let probe: PreviewProbe | null = null;
+        let customUrl: string | undefined;
+        if (mode === "custom") {
+          const source = normalizePreviewSource(previewSource);
+          if (source !== undefined) {
+            if (isPreviewUrl(source)) {
+              customUrl = source;
+            } else {
+              probe = { kind: "nameKey", nameKey: entryNameKey(source) };
+            }
+          }
+        } else if (mode === "first" || mode === "first3") {
+          probe = { kind: "first" };
+        } else {
+          probe = { kind: "random", seed: previewSeed };
+        }
+        let candidates =
+          probe === null
+            ? []
+            : await ownFolderPreviewEntries(ctx, child._id, probe, count);
+        if (
+          recursivePreviews &&
+          probe !== null &&
+          candidates.length < count
+        ) {
+          candidates = [
+            ...candidates,
+            ...(await descendantPreviewEntries(ctx, {
+              gallery,
+              folder: child,
+              probe,
+              count: count - candidates.length,
+              access,
+              folderVisibility,
+            })),
+          ];
+        }
+        return {
+          folderId: child._id,
+          mode,
+          ...(customUrl === undefined ? {} : { customUrl }),
+          entries: candidates.map((entry) => ({
+            _id: entry._id,
+            name: entry.name,
+            thumbnailKey: entry.thumbnailKey,
+            thumbnailState: entry.thumbnailState,
+          })),
+        };
+      }),
+    );
+
+    return folderPreviews;
   },
 });
 
@@ -759,6 +802,15 @@ export const removeMany = mutation({
     galleryId: v.id("galleries"),
     folderIds: v.array(v.id("folders")),
   },
+  returns: v.union(
+    v.object({ kind: v.literal("complete") }),
+    v.object({
+      kind: v.literal("filesystem"),
+      operations: v.array(v.object({
+        folderId: v.id("folders"), operationId: v.id("filesystemOperations"), token: v.string(),
+      })),
+    }),
+  ),
   handler: async (ctx, args) => {
     const folderIds = [...new Set(args.folderIds)];
     if (folderIds.length < 1 || folderIds.length > MAX_BULK_FOLDERS) {
@@ -831,6 +883,7 @@ export const removeMany = mutation({
       // filesystemMissingAt doubles as the tombstone for app-initiated
       // deletes: every listing and destination check already excludes it,
       // and cleanupMissingFolder removes the subtree behind it.
+      await reparentFolderStats(ctx, folder, { filesystemMissingAt: now });
       await ctx.db.patch("folders", folder._id, {
         filesystemMissingAt: now,
       });
@@ -858,6 +911,15 @@ export const moveMany = mutation({
     destinationFolderId: v.id("folders"),
     folderIds: v.array(v.id("folders")),
   },
+  returns: v.union(
+    v.object({ kind: v.literal("complete"), moved: v.number() }),
+    v.object({
+      kind: v.literal("filesystem"), moved: v.number(),
+      operations: v.array(v.object({
+        folderId: v.id("folders"), operationId: v.id("filesystemOperations"), token: v.string(),
+      })),
+    }),
+  ),
   handler: async (ctx, args) => {
     const folderIds = [...new Set(args.folderIds)];
     if (folderIds.length < 1 || folderIds.length > MAX_BULK_FOLDERS) {
@@ -1045,6 +1107,7 @@ export const moveMany = mutation({
     }
     for (const folder of movingFolders) {
       await markFolderModified(ctx, folder.parentId!);
+      await reparentFolderStats(ctx, folder, { parentId: destination._id });
       await ctx.db.patch("folders", folder._id, {
         parentId: destination._id,
         ancestorIds: [...destination.ancestorIds, destination._id],

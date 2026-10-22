@@ -38,6 +38,7 @@ import { scheduleSortTimestampBackfill } from "./entrySort";
 import { scheduleFolderPathKeyBackfill } from "./folderPathKeys";
 
 import { enabledUploadExpiryOptions } from "./lib/uploadExpiry";
+import schema from "./schema";
 
 const hostInput = v.object({
   host: v.string(),
@@ -386,6 +387,18 @@ export const resolveByHost = query({
     host: v.string(),
     path: v.string(),
   },
+  returns: v.union(v.null(), v.object({
+    gallery: schema.doc("galleries"),
+    rootFolder: v.union(schema.doc("folders"), v.null()),
+    access: v.object({
+      role: v.union(v.literal("owner"), v.literal("editor"), v.literal("viewer"), v.null()),
+      canView: v.boolean(),
+      canUpload: v.boolean(),
+      canManage: v.boolean(),
+    }),
+    routeRoot: v.string(),
+    hostRouteRoots: v.array(v.string()),
+  })),
   handler: async (ctx, args) => {
     const host = normalizeHost(args.host);
     const path = normalizeRootPath(args.path);
@@ -411,6 +424,7 @@ export const resolveByHost = query({
     return {
       ...(await galleryResult(ctx, gallery, args.anonymousClaim)),
       routeRoot: matching.rootPath,
+      hostRouteRoots: routes.map((route) => route.rootPath),
     };
   },
 });

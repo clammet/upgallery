@@ -3,6 +3,7 @@ name: Docker images
 # On pull requests the images are built but not pushed: this is the check
 # that proves a dependency bump (sharp, libvips, base image) still compiles
 # and passes the in-image HEIC verification before it can merge.
+# Publication on main deploys Convex for the same commit before any image push.
 on:
   push:
     branches: [main]
@@ -11,7 +12,8 @@ on:
 
 concurrency:
   group: docker-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish production deployments and publication; only supersede PR builds.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -34,12 +36,31 @@ jobs:
         id: gate
         uses: yuzuyuzuyu/repo-automation/actions/publication@a57240cdeefc9253ed7930312b445a9a0999657b # v1.0.5
 
-  build-and-push:
-    if: needs.publication-ready.outputs.ready == 'true'
+  deploy-convex:
     needs: publication-ready
+    if: needs.publication-ready.outputs.ready == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/convex-deploy.yml
+    secrets:
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+
+  build-and-push:
+    needs: [publication-ready, deploy-convex]
+    # A skipped backend deploy is allowed only for PRs, which never push images.
+    # Match the deployment output to this build's commit, not just job success:
+    # the deployment's own freshness gate can skip an obsolete revision.
+    if: >-
+      !cancelled() && needs.publication-ready.outputs.ready == 'true' &&
+      (github.event_name == 'pull_request' ||
+       (needs.deploy-convex.result == 'success' &&
+        needs.deploy-convex.outputs.deployed-commit == github.sha))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
