@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   renovate:
-    uses: yuzuyuzuyu/repo-automation/.github/workflows/renovate-runner.yml@a57240cdeefc9253ed7930312b445a9a0999657b # v1.0.5
+    uses: yuzuyuzuyu/repo-automation/.github/workflows/renovate-runner.yml@ecf21e09c31ccb57e2d528ba7c1a1a7d56294744 # v1.0.12
     with:
       app-client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
       native-automerge: true
