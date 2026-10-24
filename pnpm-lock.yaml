@@ -170,8 +170,8 @@ importers:
   .:
     dependencies:
       '@clammet/convex-googly-auth':
-        specifier: 1.0.1
-        version: 1.0.1(convex@1.47.0(react@19.3.1))(react@19.3.1)
+        specifier: 1.0.2
+        version: 1.0.2(convex@1.47.0(react@19.3.1))(react@19.3.1)
       busboy:
         specifier: 1.6.0
         version: 1.6.0
@@ -283,8 +283,8 @@ packages:
     resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
     engines: {node: '>=6.9.0'}
 
-  '@clammet/convex-googly-auth@1.0.1':
-    resolution: {integrity: sha512-d/UdXmspETcpPt87YbHRTm7Ztv3tXJLtrjN8qxLh6KSEA1ghLJlreL6Wp6yP0LhgoZ5ChMnGP9c/4/X3aTQawg==}
+  '@clammet/convex-googly-auth@1.0.2':
+    resolution: {integrity: sha512-ckgkNdON4NZ4ypG02mA5Y7F0eYVTqJ8vYHTL20acbgPjaofpdwiojx65LlkiW5erjZl3dYjT8itzbH7T2ULc/A==}
     peerDependencies:
       convex: ^1.43.0
       react: ^18.3.1 || ^19.0.0
@@ -2311,7 +2311,7 @@ snapshots:
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@clammet/convex-googly-auth@1.0.1(convex@1.47.0(react@19.3.1))(react@19.3.1)':
+  '@clammet/convex-googly-auth@1.0.2(convex@1.47.0(react@19.3.1))(react@19.3.1)':
     dependencies:
       convex: 1.47.0(react@19.3.1)
       react: 19.3.1
