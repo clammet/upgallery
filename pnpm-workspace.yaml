@@ -1,5 +1,5 @@
 minimumReleaseAgeExclude:
-  - "@clammet/*"
+  - "@clammet/convex-googly-auth"
 
 allowBuilds:
   esbuild: true
@@ -7,3 +7,11 @@ allowBuilds:
 # Security fix for request query parsing until the parents update their locks.
 overrides:
   "qs@<6.16.0": "6.16.1"
+minimumReleaseAge: 4320
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+verifyStoreIntegrity: true
+strictStorePkgContentCheck: true
+saveExact: true
