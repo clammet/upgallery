@@ -8,11 +8,12 @@ The implementation is split deliberately:
 - Convex stores gallery metadata, users, roles, folder access policies, counters,
   upload intents, download tickets, and storage jobs.
 - The Node storage API streams shared/protected files to hash-sharded mounts
-  and stores every generated thumbnail and preview in a central derivative
-  root. A separate process from the same image claims durable Convex jobs for
+  and streams user-backed originals as their mapped filesystem owner. It
+  stores every generated thumbnail and preview in a central derivative root.
+  A separate process from the same image claims durable Convex jobs for
   user-backed reconciliation, media processing, deletion, and migration.
-- Nginx serves the React application, image-gallery originals, and only the
-  `derivatives/gallery` subtree directly. Protected uploader originals and the
+- Nginx serves the React application, shared gallery originals, and the
+  `derivatives/gallery` subtree directly, and proxies user-backed originals. Protected uploader originals and the
   `derivatives/up` subtree are never mounted into an Nginx location.
 - The `@clammet/convex-googly-auth` component supplies Google OIDC sessions and
   anonymous identities. Credentials and refresh tokens stay inside the
@@ -219,9 +220,11 @@ a folder enqueues a durable background modification-time check and, when
 changed, a recursive reconciliation. The header shows shared reactive progress
 for the folder currently being scanned. Direct item links in user-backed
 galleries use the gallery's configured public host/path and preserve the real
-folder and file names. The production edge must map that route to the gallery's
-curated `public/users` root, serving regular files directly and falling back to
-the SPA for directories and missing paths.
+folder and file names. The production edge must proxy that route to the
+storage API's matching
+`/media/users/<storageRoot>/` path, falling back to the SPA on a 404 for
+directories and missing paths. User-backed originals are read as the storage
+owner, so private filesystem modes from SFTP uploads do not break the gallery.
 Uploader files are stored below `protected/uploaders` and can only be read
 through an expiring, password-aware download ticket.
 Generated assets are stored separately below `derivatives/gallery` and

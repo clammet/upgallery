@@ -477,6 +477,11 @@ reuse a successful check from the last 30 seconds. **Scan folder** always reques
 a fresh check. Scan progress updates the indicator; files and folders change only
 when their content or settings change.
 
+Files added through SFTP or SCP can keep their normal private filesystem
+permissions. Originals open through the gallery as long as the gallery's
+storage service can read them and their folders. You do not need to make them
+readable by everyone on the server.
+
 Files discovered in that directory may show **Unknown** as their uploader.
 In **Permissions**, **Take Unknown** beside a whole-gallery Owner grant assigns
 the gallery's currently unclaimed files to that owner. The transfer runs in the

@@ -13,7 +13,7 @@ and derivative storage zones:
 | Zone | Container path | Writer | Reader | URL behavior |
 | --- | --- | --- | --- | --- |
 | Shared image galleries | `/data/media/public/shared` | storage services | Nginx read-only mount | direct `/media/shared/...` |
-| User-based image galleries | `/data/media/public/users` | storage services | Nginx read-only mount | configured gallery host/path, mapped to its curated user root |
+| User-based image galleries | `/data/media/public/users` | storage services | storage API as the mapped owner | edge proxies `/media/users/...` and configured gallery host/path |
 | Uploader originals | `/data/media/protected/uploaders` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
 | Image-gallery derivatives | `/data/media/derivatives/gallery` | storage services | Nginx read-only mount | direct `/media/derivatives/gallery/...` |
 | Uploader derivatives | `/data/media/derivatives/up` | storage services | storage API only | expiring `/api/storage/files/...` ticket |
@@ -131,7 +131,7 @@ Application uploads to a user-backed gallery write the original file name
 directly into the current directory. Folder creation and renaming are executed
 against the mounted filesystem first and only then committed to Convex.
 
-Direct Nginx reads and remote SFTP/SCP writes need a common filesystem view.
+Storage API reads and remote SFTP/SCP writes need a common filesystem view.
 Pick one of these host-side arrangements, then expose the resulting directory
 as the single `UPGALLERY_USER_ROOT` bind mount:
 
@@ -146,7 +146,7 @@ as the single `UPGALLERY_USER_ROOT` bind mount:
 3. **SFTP/SCP/rsync staging.** Make
    `/srv/upgallery-users/<account>` the canonical local mirror. Users may
    transfer directly into that tree through a restricted SFTP account, or a
-   host-side `scp`/`rsync` job may update it. The app and Nginx always read the
+   host-side `scp`/`rsync` job may update it. The storage API always reads the
    mirror; remote-copy orchestration remains outside the containers.
 
 Recommended host tree:
@@ -331,15 +331,23 @@ replicate; the load-bearing behaviors are:
 - `/api/storage/` proxies to the storage API with request buffering disabled,
   hour-long read/send timeouts, and the original `Host` header preserved
   (required for gallery host resolution).
-- `/media/` aliases: the `users` tree is served `must-revalidate` (editable
-  in place), while `shared` and `derivatives/gallery` are content-addressed
+- Proxy `/media/users/` unchanged to the storage API, with response buffering
+  disabled for large originals. The API reads through the same owner mapping
+  used for uploads and scans, and serves files with `must-revalidate`, ETags,
+  HEAD and byte-range support. This works for existing and new user galleries,
+  including files and parent directories created with owner-only SFTP modes.
+  Do not rely on public Unix read bits or inherited ACLs: transfer clients can
+  replace them. No recursive chmod or permission repair is needed.
+- The `shared` and `derivatives/gallery` media aliases remain content-addressed
   and served `immutable`. Never expose `protected/uploaders` or
-  `derivatives/up`; those must pass through the storage API.
-- Each user-backed gallery's configured public host/path must also map to that
-  gallery's exact `public/users/<storageRoot>` directory. Serve regular files
-  from that alias with `must-revalidate`, but send directories and missing
-  paths to `/index.html` so friendly folder navigation remains an SPA route.
-  Keep directory listings disabled and retain the dotfile/PHP-source guards.
+  `derivatives/up`; those require the storage API's download tickets.
+- Proxy each user-backed gallery's configured public host/path to its exact
+  `/media/users/<storageRoot>/` prefix on the storage API. Intercept only 404
+  responses and serve the gallery's SPA shell, so directories and missing paths
+  remain gallery routes. The API does not redirect directory requests. Keep
+  the dotfile/PHP-source guards on friendly paths. Preserve escaped filenames
+  and query strings when replacing the prefix; use a static `proxy_pass` URI
+  or a correctly escaped rewrite. Other upstream failures must remain errors.
 
 ## GitHub Actions configuration
 
