@@ -134,6 +134,8 @@ app.use(
     dotfiles: "deny",
   }),
 );
+// User-backed originals are read as the mapped storage owner. The edge proxies
+// this route so SFTP-created 0700 directories and 0600 files remain readable.
 app.use(
   "/media/users",
   express.static(`${config.storageRoot}/public/users`, {
@@ -141,7 +143,11 @@ app.use(
     maxAge: 0,
     etag: true,
     index: false,
+    redirect: false,
     dotfiles: "allow",
+    setHeaders: (response) => {
+      response.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+    },
   }),
 );
 app.use(
@@ -162,8 +168,20 @@ app.use(
     response: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error(error);
-    response.status(500).json({ error: "Storage service error" });
+    // Static-file misses and directory requests must remain 404s so the edge
+    // can serve the gallery shell for friendly folder URLs.
+    const status =
+      isRecord(error) &&
+      typeof error.status === "number" &&
+      Number.isInteger(error.status) &&
+      error.status >= 400 &&
+      error.status < 500
+        ? error.status
+        : 500;
+    if (status === 500) console.error(error);
+    response.status(status).json({
+      error: status === 404 ? "File not found" : "Storage service error",
+    });
   },
 );
 
