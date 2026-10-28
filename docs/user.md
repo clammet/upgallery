@@ -138,8 +138,9 @@ In a gallery, **Next** after the last file opens the next visible sibling folder
 **Previous** before the first file opens the previous sibling's last file. If
 there are no more siblings in that direction, navigation checks the parent's
 siblings, continuing upward if needed. Files follow each folder's sort order.
-An empty destination opens its folder listing. While the viewer is open, gallery
-thumbnails wait so the current image and nearby image preloads get priority.
+An empty destination opens its folder listing. File thumbnails and folder
+previews remain visible behind the viewer. Infinite scrolling waits until you
+close the viewer before loading more files into the grid.
 
 Use the mouse wheel over an image or video to zoom, then drag to pan when zoomed
 in. On a touch screen, swipe left or right while zoomed out to change files.

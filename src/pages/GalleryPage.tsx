@@ -433,7 +433,7 @@ export function GalleryPage(props: {
   const grid = useRef<HTMLDivElement>(null);
   const folderPreviews = useFolderPreviews({
     gallery: props.gallery, folderId, folders: listing?.folders, grid,
-    suspended: viewerEntryId !== null || profile === undefined || listing === undefined, seed: previewSeed,
+    suspended: profile === undefined || listing === undefined, seed: previewSeed,
   });
   const metadataEntry = useQuery(api.entries.getGalleryViewerEntry,
     metadataEntryId === null || resolvingPath || invalidPath ? "skip" : {
@@ -1879,7 +1879,6 @@ export function GalleryPage(props: {
               folder.name,
             ])}
             preview={folderPreviews.get(folder._id)}
-            suspendThumbnails={viewerEntryId !== null}
             selectMode={selectMode}
             selected={selectedFolderIds.has(folder._id)}
             dropTarget={
@@ -1932,7 +1931,6 @@ export function GalleryPage(props: {
           <GalleryEntryCard
             key={entry._id}
             entry={entry}
-            suspendThumbnails={viewerEntryId !== null}
             selectMode={selectMode}
             selected={
               allEntriesSelected
@@ -2413,7 +2411,6 @@ export function GalleryPage(props: {
 
 function FolderPreview(props: {
   preview?: FolderPreviewData;
-  suspended: boolean;
 }) {
   const [topIndex, setTopIndex] = useState<number | null>(null);
   const entries = props.preview?.entries ?? [];
@@ -2450,13 +2447,13 @@ function FolderPreview(props: {
         aria-hidden="true"
         strokeWidth={1.1}
       />
-      {!props.suspended && props.preview?.customUrl !== undefined ? (
+      {props.preview?.customUrl !== undefined ? (
         <MediaThumbnail
           className={styles.folderPreviewSingle}
           src={props.preview.customUrl}
         />
       ) : null}
-      {!props.suspended && entries.map((entry, index) => (
+      {entries.map((entry, index) => (
         <MediaThumbnail
           className={
             isFan
@@ -2485,7 +2482,6 @@ function GalleryFolderCard(props: {
   folder: Doc<"folders">;
   href: string;
   preview?: FolderPreviewData;
-  suspendThumbnails: boolean;
   selectMode: boolean;
   selected: boolean;
   dropTarget: boolean;
@@ -2501,10 +2497,7 @@ function GalleryFolderCard(props: {
 }) {
   const content = (
     <>
-      <FolderPreview
-        preview={props.preview}
-        suspended={props.suspendThumbnails}
-      />
+      <FolderPreview preview={props.preview} />
       <span className={styles.folderName}>{props.folder.name}</span>
       {props.folder.accessPolicy !== "inherit" ? (
         <small>{props.folder.accessPolicy}</small>
@@ -2570,7 +2563,6 @@ function GalleryFolderCard(props: {
 // functions and a card re-renders only when its own entry or flags change.
 const GalleryEntryCard = memo(function GalleryEntryCard(props: {
   entry: GalleryEntry;
-  suspendThumbnails: boolean;
   selectMode: boolean;
   selected: boolean;
   draggable: boolean;
@@ -2587,7 +2579,7 @@ const GalleryEntryCard = memo(function GalleryEntryCard(props: {
   const content = (
     <>
       <span className={styles.thumbnailFrame}>
-        {props.suspendThumbnails ? null : props.entry.mediaKind === "image" ||
+        {props.entry.mediaKind === "image" ||
         props.entry.mediaKind === "video" ? (
           <MediaThumbnail
             className={styles.fileThumb}
