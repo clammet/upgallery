@@ -27,7 +27,7 @@
     "convex:deploy": "convex deploy"
   },
   "dependencies": {
-    "@clammet/convex-googly-auth": "1.0.2",
+    "@clammet/convex-googly-auth": "1.0.3",
     "busboy": "1.6.0",
     "convex": "1.48.0",
     "convex-helpers": "0.1.129",
