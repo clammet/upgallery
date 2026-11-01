@@ -6,7 +6,7 @@ allowBuilds:
 
 # Security fix for request query parsing until the parents update their locks.
 overrides:
-  "qs@<6.16.0": "6.17.0"
+  "qs@<6.16.0": "6.17.1"
 minimumReleaseAge: 4320
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
