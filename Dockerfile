@@ -104,7 +104,7 @@ RUN node scripts/storage-package.mjs \
   && pnpm prune --prod --config.confirmModulesPurge=false \
   && node scripts/check-sharp-heic.mjs
 
-FROM nginx:1.31-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606 AS web
+FROM nginx:1.31-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09 AS web
 RUN apk upgrade --no-cache
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --chmod=755 deploy/render-config.sh /docker-entrypoint.d/40-render-config.sh
