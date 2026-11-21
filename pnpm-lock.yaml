@@ -180,16 +180,16 @@ importers:
     dependencies:
       '@clammet/convex-googly-auth':
         specifier: 1.0.3
-        version: 1.0.3(convex@1.50.0(react@19.3.1))(react@19.3.1)
+        version: 1.0.3(convex@1.51.0(react@19.3.1))(react@19.3.1)
       busboy:
         specifier: 1.6.0
         version: 1.6.0
       convex:
-        specifier: 1.50.0
-        version: 1.50.0(react@19.3.1)
+        specifier: 1.51.0
+        version: 1.51.0(react@19.3.1)
       convex-helpers:
         specifier: 0.1.135
-        version: 0.1.135(convex@1.50.0(react@19.3.1))(prettier@3.9.10)(react@19.3.1)(typescript@7.0.2)
+        version: 0.1.135(convex@1.51.0(react@19.3.1))(prettier@3.9.10)(react@19.3.1)(typescript@7.0.2)
       exifr:
         specifier: 7.1.3
         version: 7.1.3
@@ -256,7 +256,7 @@ importers:
         version: 10.0.7
       convex-test:
         specifier: 0.0.62
-        version: 0.0.62(convex@1.50.0(react@19.3.1))
+        version: 0.0.62(convex@1.51.0(react@19.3.1))
       node-addon-api:
         specifier: 8.9.2
         version: 8.9.2
@@ -1286,8 +1286,8 @@ packages:
     peerDependencies:
       convex: ^1.43.0
 
-  convex@1.50.0:
-    resolution: {integrity: sha512-WzzCad5hyzU4zzW0ChyUGB3Mil4LgRYMYii9cyQtC24WQnfaRgkZB0IKyhIIgRm1a2IXiGJoZnVYYSfttiap3Q==}
+  convex@1.51.0:
+    resolution: {integrity: sha512-Y5gS+JmT2JBq76S3CrQDrdL/Ijs4ZRKsvz3cu5EmHf/QxW18QrHunb5j9WC6lAbWbWc/gvmqpa5lvXzLXFQVJA==}
     engines: {node: '>=22.0.0', npm: '>=7.0.0'}
     hasBin: true
     peerDependencies:
@@ -2301,9 +2301,9 @@ snapshots:
 
   '@babel/helper-validator-identifier@8.0.6': {}
 
-  '@clammet/convex-googly-auth@1.0.3(convex@1.50.0(react@19.3.1))(react@19.3.1)':
+  '@clammet/convex-googly-auth@1.0.3(convex@1.51.0(react@19.3.1))(react@19.3.1)':
     dependencies:
-      convex: 1.50.0(react@19.3.1)
+      convex: 1.51.0(react@19.3.1)
       react: 19.3.1
 
   '@edge-runtime/primitives@6.0.0': {}
@@ -2925,19 +2925,19 @@ snapshots:
 
   content-type@2.1.0: {}
 
-  convex-helpers@0.1.135(convex@1.50.0(react@19.3.1))(prettier@3.9.10)(react@19.3.1)(typescript@7.0.2):
+  convex-helpers@0.1.135(convex@1.51.0(react@19.3.1))(prettier@3.9.10)(react@19.3.1)(typescript@7.0.2):
     dependencies:
-      convex: 1.50.0(react@19.3.1)
+      convex: 1.51.0(react@19.3.1)
     optionalDependencies:
       prettier: 3.9.10
       react: 19.3.1
       typescript: 7.0.2
 
-  convex-test@0.0.62(convex@1.50.0(react@19.3.1)):
+  convex-test@0.0.62(convex@1.51.0(react@19.3.1)):
     dependencies:
-      convex: 1.50.0(react@19.3.1)
+      convex: 1.51.0(react@19.3.1)
 
-  convex@1.50.0(react@19.3.1):
+  convex@1.51.0(react@19.3.1):
     dependencies:
       esbuild: 0.27.0
       prettier: 3.9.10
