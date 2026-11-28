@@ -213,8 +213,8 @@ importers:
         specifier: 11.12.0
         version: 11.12.0
       lucide-react:
-        specifier: 1.78.0
-        version: 1.78.0(@types/react@19.3.1)(react@19.3.1)
+        specifier: 1.80.0
+        version: 1.80.0(@types/react@19.3.1)(react@19.3.1)
       mime-types:
         specifier: 3.0.2
         version: 3.0.2
@@ -1661,8 +1661,8 @@ packages:
   longest-streak@3.1.0:
     resolution: {integrity: sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==}
 
-  lucide-react@1.78.0:
-    resolution: {integrity: sha512-61NFdT5ZfAY8xs3LWKkB78GVeuiCcjYFEXeHWxWP+mQhP+UWLGsA9hJZQPtIyXRDhOvT8kgmWwAIyH5L7RIhAA==}
+  lucide-react@1.80.0:
+    resolution: {integrity: sha512-f9cQkUMFp2ZrOek9FucpRqQVI67gT09clXcHs3yCvdhJnsK4RW4og/rqoC0YAHd6FV/GPkeiIR3Rdxr2pPRwHA==}
     peerDependencies:
       '@types/react': '*'
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
@@ -3331,7 +3331,7 @@ snapshots:
 
   longest-streak@3.1.0: {}
 
-  lucide-react@1.78.0(@types/react@19.3.1)(react@19.3.1):
+  lucide-react@1.80.0(@types/react@19.3.1)(react@19.3.1):
     dependencies:
       react: 19.3.1
     optionalDependencies:
